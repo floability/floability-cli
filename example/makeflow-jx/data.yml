@@ -1,2 +1,6 @@
-- source: https://ccl.cse.nd.edu/images/capitol.jpg
-  path: capitol.jpg
+data:
+  - name: capitol
+    source_type: url
+    source: https://ccl.cse.nd.edu/images/capitol.jpg
+    url: https://ccl.cse.nd.edu/images/capitol.jpg
+    target: capitol.jpg
