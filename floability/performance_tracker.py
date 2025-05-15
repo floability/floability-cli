@@ -30,12 +30,15 @@ class PerformanceTracker:
             return
         
         elapsed = time.time() - self.timers[name]
+        timestamp = datetime.now().isoformat()
+        
         if "timers" not in self.metrics:
             self.metrics["timers"] = {}
             
         self.metrics["timers"][name] = {
             "elapsed_seconds": elapsed,
-            "description": description or name
+            "description": description or name,
+            "report_time": timestamp
         }
         
         # Also print immediately for feedback
@@ -43,18 +46,21 @@ class PerformanceTracker:
         
         return elapsed
     
-    def record_metric(self, category, name, value, unit=None, description=None):
+    def record_metric(self, category, name, value, unit=None, description=None, report_time=None):
         """Record a metric value"""
         if not self.enabled:
             return
-            
+        if not report_time:
+            report_time = datetime.now().isoformat()
+        
         if category not in self.metrics:
             self.metrics[category] = {}
             
         self.metrics[category][name] = {
             "value": value,
             "unit": unit,
-            "description": description or name
+            "description": description or name,
+            "report_time": report_time
         }
         
         # Also print immediately for feedback
