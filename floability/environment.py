@@ -18,6 +18,7 @@ def create_conda_pack_from_yml(
     base_dir: str = "/tmp",
     run_dir: str = "/tmp",
     manager_name: str = None,
+    is_worker_env: bool = False,
 ) -> str:
     common_env_dir = os.path.join(base_dir, "flo_common_env")
     os.makedirs(common_env_dir, exist_ok=True)
@@ -39,7 +40,12 @@ def create_conda_pack_from_yml(
         )
         return output_file
 
-    required_packages = ["python", "jupyter", "ndcctools", "cloudpickle"]
+    if is_worker_env:
+        required_packages = ["python", "cloudpickle"]
+        print("[environment] Creating worker environment (no Jupyter or ndcctools required)")
+    else:
+        required_packages = ["python", "jupyter", "ndcctools", "cloudpickle"]
+        print("[environment] Creating manager environment with Jupyter and ndcctools")
 
     temp_dir = tempfile.mkdtemp(prefix="conda_env_")
     env_path = os.path.join(temp_dir, "env")

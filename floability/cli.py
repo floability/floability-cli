@@ -16,6 +16,7 @@ from .cleanup import CleanupManager, install_signal_handlers
 from .jupyter_runner import start_jupyterlab, execute_notebook
 from .utils import create_unique_directory, safe_extract_tar, update_manager_name_in_env
 from .data_handler import ensure_data_is_fetched
+from .performance_tracker import PerformanceTracker
 
 
 def get_parsed_arguments() -> argparse.Namespace:
@@ -80,7 +81,7 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
     
     parser.add_argument(
         "--worker-environment",
-        help="Path to worker-environment.yml or worker_environment.tar.gz (optional).",
+        help="Path to worker-environment.yml or worker-environment.tar.gz (optional).",
     )
     
     parser.add_argument("--notebook", help="Path to a .ipynb file (optional).")
@@ -143,6 +144,12 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
     parser.add_argument(
         "--python-script", 
         help="Path to a Python (.py) file to execute (optional).",
+    )
+    
+    parser.add_argument(
+        "--measure-performance",
+        action="store_true",
+        help="Enable performance measurements and generate a report.",
     )
 
 
@@ -242,9 +249,14 @@ def run_floability(
     Orchestrates data fetching, environment creation/extraction, starting
     workers and JupyterLab, and manages cleanup.
     """
-    resolve_backpack_args(args)
-
+    resolve_backpack_args(args)    
+    
     run_dir = create_unique_directory(base_dir=args.base_dir, prefix="floability_run")
+
+    perf_enabled = args.measure_performance
+    perf = PerformanceTracker(output_dir=run_dir, enabled=perf_enabled)
+    
+    perf.start_timer("total_run_time")
 
     print(
         f"[floability] Floability run directory: {run_dir}. All logs will be stored here."
@@ -253,7 +265,9 @@ def run_floability(
     # 1) Fetch data if data_spec is provided
     if args.data_spec:
         print(f"[floability] Fetching data from {args.data_spec}")
+        perf.start_timer("data_fetch")
         ensure_data_is_fetched(args.data_spec, args.backpack_root)
+        perf.end_timer("data_fetch", "Time to fetch data from spec")
 
     # Generate a unique manager name if none is provided
     if args.manager_name is None:
@@ -275,6 +289,7 @@ def run_floability(
         else:
             print(f"[floability] Creating conda-pack from '{args.environment}'")
 
+            perf.start_timer("manager_env_creation")
             environment_pack = create_conda_pack_from_yml(
                 env_yml=args.environment,
                 solver="libmamba",
@@ -283,15 +298,22 @@ def run_floability(
                 run_dir=run_dir,
                 manager_name=args.manager_name,
             )
+            perf.end_timer("manager_env_creation", "Time to create manager conda environment")
+            perf.measure_file_size(environment_pack, "environment_pack")
+
 
         env_dir = os.path.join(run_dir, "current_conda_env")
         os.makedirs(env_dir, exist_ok=True)
 
         # 2a) Extract the environment
         try:
+            perf.start_timer("extract_environment")
             safe_extract_tar(Path(environment_pack), Path(env_dir))
+            perf.end_timer("extract_environment", "Time to extract conda environment")
+            perf.measure_file_size(env_dir, "extracted_environment")
         except Exception as e:
             print(f"[floability] Error extracting environment: {e}")
+            # perf.record_metric("errors", "environment_extraction", str(e))
             cleanup_manager.cleanup()
             return
 
@@ -330,14 +352,17 @@ def run_floability(
             print(f"[floability] Using conda-pack from '{args.worker_environment}'")
         else:
             print(f"[floability] Creating conda-pack from '{args.worker_environment}'")
-
+            perf.start_timer("worker_env_creation")
             worker_environment_pack = create_conda_pack_from_yml(
                 env_yml=args.worker_environment,
                 solver="libmamba",
                 force=False,
                 base_dir=args.base_dir,
                 run_dir=run_dir,
+                is_worker_env=True,
             )
+            perf.end_timer("worker_env_creation", "Time to create worker conda environment")
+            perf.measure_file_size(worker_environment_pack, "worker_environment_pack")
     else:
         worker_environment_pack = environment_pack
         
@@ -381,9 +406,11 @@ def run_floability(
                 script_path=args.python_script, run_dir=run_dir, conda_env_dir=env_dir,
             )
         elif args.notebook:
+            perf.start_timer("notebook_execute_time")
             execute_notebook(
                 notebook_path=args.notebook, run_dir=run_dir, conda_env_dir=env_dir,
             )
+            perf.end_timer("notebook_execute_time", "Time to execute notebook in execute mode")
         cleanup_manager.cleanup()
 
     # 4) Main loop
@@ -406,6 +433,11 @@ def run_floability(
         # but if we get here, do a final fallback cleanup:
         print("[floability] KeyboardInterrupt in main loop. Cleaning up...")
         cleanup_manager.cleanup()
+    finally:
+        if perf_enabled:
+            perf.end_timer("total_run_time", "Total run time")
+            perf.save_report()
+            print(f"[floability] Performance report saved to {run_dir}")
 
     print("[floability] Exiting main.")
 
