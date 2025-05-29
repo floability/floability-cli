@@ -77,35 +77,14 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
     parser.add_argument(
         "--environment",
         help="Path to environment.yml or environment.tar.gz (optional).",
-    )
-    
+    )   
     parser.add_argument(
         "--worker-environment",
         help="Path to worker-environment.yml or worker-environment.tar.gz (optional).",
     )
-    
+        
     parser.add_argument("--notebook", help="Path to a .ipynb file (optional).")
-    parser.add_argument(
-        "--batch-type",
-        default="local",
-        choices=["local", "condor", "uge", "slurm"],
-        help="Batch system for vine_factory (default=local).",
-    )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=5,
-        help="Maximum number of workers for vine_factory (default=5).",
-    )
-    parser.add_argument(
-        "--cores-per-worker",
-        type=int,
-        default=1,
-        help="Cores requested per worker (default=1).",
-    )
-    parser.add_argument(
-        "--manager-name", help="TaskVine manager name. Used for factory"
-    )
+
     parser.add_argument(
         "--jupyter-port",
         type=int,
@@ -126,10 +105,7 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
         default=".",
         help="Path to the root of the backpack (default='.').",
     )
-    parser.add_argument(
-        "--compute-spec",
-        help="Path to compute.yml file specifying resource requirements.",
-    )
+
     parser.add_argument(
         "--no-worker",
         action="store_true",
@@ -150,6 +126,46 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
         "--measure-performance",
         action="store_true",
         help="Enable performance measurements and generate a report.",
+    )
+    
+    # vine_factory specific arguments
+    vf_group = parser.add_argument_group(
+        "vine_factory",
+        "Options for starting the vine_factor",
+    )
+    
+    vf_group.add_argument(
+        "--batch-type",
+        default="local",
+        choices=["local", "condor", "uge", "slurm"],
+        help="Batch system for vine_factory (default=local).",
+    )
+    
+    vf_group.add_argument(
+        "--workers",
+        type=int,
+        default=5,
+        help="Maximum number of workers for vine_factory (default=5).",
+    )
+    
+    vf_group.add_argument(
+        "--cores-per-worker",
+        type=int,
+        default=1,
+        help="Cores requested per worker (default=1).",
+    )
+    
+    vf_group.add_argument(
+        "--manager-name", help="TaskVine manager name. Used for factory"
+    )
+    
+    vf_group.add_argument(
+        "--batch-options", help="Generic batch system options. This will be passed to the factory as is."
+    )
+        
+    vf_group.add_argument(
+        "--compute-spec",
+        help="Path to compute.yml file specifying resource requirements. CLI args will override the options from this file.",
     )
 
 
