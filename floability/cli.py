@@ -398,6 +398,7 @@ def run_floability(
             poncho_env=worker_environment_pack,
             run_dir=run_dir,
             scratch_dir=run_dir,
+            batch_options=args.batch_options,
             config_yml=args.compute_spec,
         )
         cleanup_manager.register_subprocess(factory_proc)
