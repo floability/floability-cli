@@ -1,5 +1,0 @@
-data:
-  - name: capitol
-    source_type: url
-    source: https://ccl.cse.nd.edu/images/capitol.jpg
-    target_location: capitol.jpg
