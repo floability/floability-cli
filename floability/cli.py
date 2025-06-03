@@ -17,6 +17,7 @@ from .jupyter_runner import start_jupyterlab, execute_notebook
 from .utils import create_unique_directory, safe_extract_tar, update_manager_name_in_env
 from .data_handler import ensure_data_is_fetched
 from .performance_tracker import PerformanceTracker
+from .audit.audit import audit
 
 
 def get_parsed_arguments() -> argparse.Namespace:
@@ -65,8 +66,29 @@ def get_parsed_arguments() -> argparse.Namespace:
     # verify sub-command
     verify_parser = subparsers.add_parser("verify", help="Verify a Floability backpack")
 
+    # floability-env sub-command
+    env_parser = subparsers.add_parser(
+        "audit", help="Generate environment and data dependencies for a notebook"
+    )
+    _add_audit_args(env_parser)
+
     return parser.parse_args()
 
+def _add_audit_args(parser: argparse.ArgumentParser) -> None:
+    """
+    Add arguments specific to the 'audit' sub-command.
+    This command generates environment and data dependencies for a notebook.
+    """
+    parser.add_argument(
+        "--notebook",
+        required=True,
+        help="Path to the Jupyter notebook for which to generate environment and data dependencies."
+    )
+    parser.add_argument(
+        "--kernel",
+        required=True,
+        help="Kernel to use when analyzing the notebook."
+    )
 
 def _add_execution_args(parser: argparse.ArgumentError) -> None:
     parser.add_argument(
@@ -550,5 +572,16 @@ def main():
         print("[floability] 'pack' command not yet implemented.")
     elif args.command == "verify":
         print("[floability] 'verify' command not yet implemented.")
+    elif args.command == "audit":
+        if not args.notebook or not args.kernel:
+            print(
+                "[floability] 'audit' command requires --notebook and --kernel arguments."
+            )
+            return
+        print(f"[floability] Generating environment for notebook: {args.notebook} with kernel: {args.kernel}")
+        
+
+        audit(args.notebook, args.kernel)
+
     else:
         print("[floability] No command provided. Exiting.")
