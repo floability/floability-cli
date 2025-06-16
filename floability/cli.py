@@ -274,7 +274,15 @@ def run_floability(
     resolve_backpack_args(args)    
     
     run_dir = create_unique_directory(base_dir=args.base_dir, prefix="floability_run")
-
+    
+    # Create a symlink to the most recent run directory
+    latest_run_symlink = Path(args.base_dir) / "latest_floability_run"
+    if latest_run_symlink.exists():
+        latest_run_symlink.unlink()
+    latest_run_symlink.symlink_to(run_dir)
+    
+    print(f"[floability] Created symlink to latest run: {os.path.abspath(latest_run_symlink)}")
+    
     perf_enabled = args.measure_performance
     perf = PerformanceTracker(output_dir=run_dir, enabled=perf_enabled)
     
