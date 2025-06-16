@@ -167,6 +167,12 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
         "--compute-spec",
         help="Path to compute.yml file specifying resource requirements. CLI args will override the options from this file.",
     )
+    
+    vf_group.add_argument(
+        "--debug-workers",
+        action="store_true",
+        help="Enable debug mode for workers",
+    )
 
 
 def resolve_backpack_args(args: argparse.Namespace) -> None:
@@ -400,6 +406,7 @@ def run_floability(
             scratch_dir=run_dir,
             batch_options=args.batch_options,
             config_yml=args.compute_spec,
+            debug_workers=args.debug_workers,
         )
         cleanup_manager.register_subprocess(factory_proc)
     else:
