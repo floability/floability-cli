@@ -93,7 +93,7 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
     )
     parser.add_argument(
         "--base-dir",
-        default="/tmp",
+        default=".",
         help="Base directory for floability run directory files (default=/tmp).",
     )
     parser.add_argument(
