@@ -309,18 +309,26 @@ def run_floability(
     environment_pack = None
     worker_environment_pack = None
     env_dir = None
-
-
+    
+    backpack_name = None
+    if args.backpack:
+        backpack_name = Path(args.backpack).stem
+    
+    notebook_name = None
+    if args.notebook:
+        notebook_name = Path(args.notebook).name
+        
     # send catalog update on start up
     send_catalog_update(
         manager_name=args.manager_name,
         jupyter_port=args.jupyter_port,
         run_dir=run_dir,
-        backpack_name=args.backpack,
-        notebook_name=args.notebook,
+        backpack_name=backpack_name,
+        event="startup",
+        notebook_name=notebook_name,
+        mode = mode,
     )
     
-
     if args.environment:
         env_file_path = Path(args.environment)
         ext = Path(args.environment).suffix
