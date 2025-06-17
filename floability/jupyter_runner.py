@@ -82,9 +82,9 @@ def start_jupyterlab(
     try:
         stdout_file = os.path.join(run_dir, "jupyterlab.stdout")
 
-        print(f"[jupyter] JupyterLab stdout: {stdout_file}")
+        print(f"[jupyter] JupyterLab stdout: {os.path.abspath(stdout_file)}")
 
-        # note: conda run opens a temprary bash process to run the command.
+        # note: conda run opens a temporary bash process to run the command.
         # This bash process is the parent of the jupyterlab process.
         # That is causing some problem with the cleanup.py script.
         # this combination seems to work. but we should revisit this.
@@ -138,7 +138,7 @@ def execute_notebook(
     try:
         stdout_file = os.path.join(run_dir, "jupyterlab.stdout")
 
-        print(f"[jupyter] JupyterLab stdout: {stdout_file}")
+        print(f"[jupyter] JupyterLab stdout: {os.path.abspath(stdout_file)}")
 
         with open(stdout_file, "w") as stdout:
             proc = subprocess.Popen(

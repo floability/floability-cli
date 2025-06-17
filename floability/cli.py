@@ -17,6 +17,7 @@ from .jupyter_runner import start_jupyterlab, execute_notebook
 from .utils import create_unique_directory, safe_extract_tar, update_manager_name_in_env
 from .data_handler import ensure_data_is_fetched
 from .performance_tracker import PerformanceTracker
+from .catalog import send_catalog_update
 
 
 def get_parsed_arguments() -> argparse.Namespace:
@@ -289,7 +290,7 @@ def run_floability(
     perf.start_timer("total_run_time")
 
     print(
-        f"[floability] Floability run directory: {run_dir}. All logs will be stored here."
+        f"[floability] Floability run directory: {os.path.abspath(run_dir)}. All logs will be stored here."
     )
 
     # 1) Fetch data if data_spec is provided
@@ -308,6 +309,17 @@ def run_floability(
     environment_pack = None
     worker_environment_pack = None
     env_dir = None
+
+
+    # send catalog update on start up
+    send_catalog_update(
+        manager_name=args.manager_name,
+        jupyter_port=args.jupyter_port,
+        run_dir=run_dir,
+        backpack_name=args.backpack,
+        notebook_name=args.notebook,
+    )
+    
 
     if args.environment:
         env_file_path = Path(args.environment)
@@ -469,7 +481,7 @@ def run_floability(
         if perf_enabled:
             perf.end_timer("total_run_time", "Total run time")
             perf.save_report()
-            print(f"[floability] Performance report saved to {run_dir}")
+            print(f"[floability] Performance report saved to {os.path.abspath(run_dir)}")
 
     print("[floability] Exiting main.")
 

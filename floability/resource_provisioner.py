@@ -100,7 +100,7 @@ def start_vine_factory(
     try:
         stdout_file = os.path.join(run_dir, "vine_factory.stdout")
 
-        print(f"[provision] vine_factory stdout: {stdout_file}")
+        print(f"[provision] vine_factory stdout: {os.path.abspath(stdout_file)}")
 
         with open(stdout_file, "w") as stdout:
             proc = subprocess.Popen(
