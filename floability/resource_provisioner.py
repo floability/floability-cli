@@ -16,6 +16,7 @@ def start_vine_factory(
     run_dir: str = "/tmp/",
     batch_options: str = None,
     config_yml: str = None,
+    debug_workers: bool = False,
 ):
     cmd = [
         "vine_factory",
@@ -89,13 +90,17 @@ def start_vine_factory(
     if batch_options:
         # from vine_factory help: --batch-options=<file>
         cmd.append(f"--batch-options={batch_options}")
+    
+    if debug_workers:
+        # from vine_factory help: --debug-workers
+        cmd.append("--debug-workers")
 
     print(f"[provision] Launching vine_factory: {' '.join(cmd)}")
 
     try:
         stdout_file = os.path.join(run_dir, "vine_factory.stdout")
 
-        print(f"[provision] vine_factory stdout: {stdout_file}")
+        print(f"[provision] vine_factory stdout: {os.path.abspath(stdout_file)}")
 
         with open(stdout_file, "w") as stdout:
             proc = subprocess.Popen(

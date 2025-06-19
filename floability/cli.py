@@ -18,6 +18,7 @@ from .utils import create_unique_directory, safe_extract_tar, update_manager_nam
 from .data_handler import ensure_data_is_fetched
 from .performance_tracker import PerformanceTracker
 from .audit.audit import audit
+from .catalog import send_catalog_update
 
 
 def get_parsed_arguments() -> argparse.Namespace:
@@ -127,7 +128,7 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
     )
     parser.add_argument(
         "--base-dir",
-        default="/tmp",
+        default=".",
         help="Base directory for floability run directory files (default=/tmp).",
     )
     parser.add_argument(
@@ -200,6 +201,12 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
     vf_group.add_argument(
         "--compute-spec",
         help="Path to compute.yml file specifying resource requirements. CLI args will override the options from this file.",
+    )
+    
+    vf_group.add_argument(
+        "--debug-workers",
+        action="store_true",
+        help="Enable debug mode for workers",
     )
 
 
@@ -302,14 +309,22 @@ def run_floability(
     resolve_backpack_args(args)    
     
     run_dir = create_unique_directory(base_dir=args.base_dir, prefix="floability_run")
-
+    
+    # Create a symlink to the most recent run directory
+    latest_run_symlink = Path(args.base_dir) / "latest_floability_run"
+    if latest_run_symlink.exists():
+        latest_run_symlink.unlink()
+    latest_run_symlink.symlink_to(run_dir)
+    
+    print(f"[floability] Created symlink to latest run: {os.path.abspath(latest_run_symlink)}")
+    
     perf_enabled = args.measure_performance
     perf = PerformanceTracker(output_dir=run_dir, enabled=perf_enabled)
     
     perf.start_timer("total_run_time")
 
     print(
-        f"[floability] Floability run directory: {run_dir}. All logs will be stored here."
+        f"[floability] Floability run directory: {os.path.abspath(run_dir)}. All logs will be stored here."
     )
 
     # 1) Fetch data if data_spec is provided
@@ -328,7 +343,26 @@ def run_floability(
     environment_pack = None
     worker_environment_pack = None
     env_dir = None
-
+    
+    backpack_name = None
+    if args.backpack:
+        backpack_name = Path(args.backpack).stem
+    
+    notebook_name = None
+    if args.notebook:
+        notebook_name = Path(args.notebook).name
+        
+    # send catalog update on start up
+    send_catalog_update(
+        manager_name=args.manager_name,
+        jupyter_port=args.jupyter_port,
+        run_dir=run_dir,
+        backpack_name=backpack_name,
+        event="startup",
+        notebook_name=notebook_name,
+        mode = mode,
+    )
+    
     if args.environment:
         env_file_path = Path(args.environment)
         ext = Path(args.environment).suffix
@@ -434,6 +468,7 @@ def run_floability(
             scratch_dir=run_dir,
             batch_options=args.batch_options,
             config_yml=args.compute_spec,
+            debug_workers=args.debug_workers,
         )
         cleanup_manager.register_subprocess(factory_proc)
     else:
@@ -488,7 +523,7 @@ def run_floability(
         if perf_enabled:
             perf.end_timer("total_run_time", "Total run time")
             perf.save_report()
-            print(f"[floability] Performance report saved to {run_dir}")
+            print(f"[floability] Performance report saved to {os.path.abspath(run_dir)}")
 
     print("[floability] Exiting main.")
 
