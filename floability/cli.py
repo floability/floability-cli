@@ -67,10 +67,10 @@ def get_parsed_arguments() -> argparse.Namespace:
     verify_parser = subparsers.add_parser("verify", help="Verify a Floability backpack")
 
     # floability-env sub-command
-    env_parser = subparsers.add_parser(
+    audit_parser = subparsers.add_parser(
         "audit", help="Generate environment and data dependencies for a notebook"
     )
-    _add_audit_args(env_parser)
+    _add_audit_args(audit_parser)
 
     return parser.parse_args()
 
@@ -86,8 +86,20 @@ def _add_audit_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--kernel",
-        required=True,
+        required=False,
+        default="python3",
         help="Kernel to use when analyzing the notebook."
+    )
+    parser.add_argument(
+        "--manager-port",
+        required=False,
+        default=9123,
+        help="Port on which the TaskVine manager will listen (default=9123)."
+    )
+    parser.add_argument(
+        "--manager-name",
+        required=False,
+        help="Name of the TaskVine manager"
     )
 
 def _add_execution_args(parser: argparse.ArgumentError) -> None:
@@ -573,7 +585,7 @@ def main():
     elif args.command == "verify":
         print("[floability] 'verify' command not yet implemented.")
     elif args.command == "audit":
-        if not args.notebook or not args.kernel:
+        if not args.notebook:
             print(
                 "[floability] 'audit' command requires --notebook and --kernel arguments."
             )
@@ -581,7 +593,7 @@ def main():
         print(f"[floability] Generating environment for notebook: {args.notebook} with kernel: {args.kernel}")
         
 
-        audit(args.notebook, args.kernel)
+        audit(args.notebook, args.kernel, args.manager_port, args.manager_name)
 
     else:
         print("[floability] No command provided. Exiting.")

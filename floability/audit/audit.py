@@ -28,19 +28,27 @@ def add_code_to_notebook(notebook_path, code):
         with open(notebook_path, 'w') as f:
             nbformat.write(nb, f)
 
-def audit(notebook_path, kernel_name):
+def audit(notebook_path, kernel_name, manager_name, manager_port):
     """
     Main function to audit a Jupyter notebook for dependencies.
     """
     # Ensure the notebook path is absolute
     
 
-    strace_worker = os.getcwd()+"/strace_worker.txt"
-    strace_manager = os.getcwd()+"/strace_manager.txt"
-    open_trace_log = os.getcwd()+"/open_trace.log"
+    tmp_dir = os.getcwd() + "/tmp"
+    os.mkdir(tmp_dir, exist_ok=True)
+    
+    strace_worker = tmp_dir+"/strace_worker.txt"
+    strace_manager = tmp_dir+"/strace_manager.txt"
+    open_trace_log = tmp_dir+"/open_trace.log"
 
     notebook_path = notebook_path.strip()
     kernel_name = kernel_name.strip()
+
+    if manager_port:
+        manager_port = manager_port.strip()
+    if manager_name:
+        manager_name = ('-M', manager_name.strip())
 
     notebook_name = notebook_path.split("/")[-1]
     notebook_path_str = '/'.join(notebook_path.split("/")[:-1])
@@ -58,7 +66,11 @@ def audit(notebook_path, kernel_name):
     print("Added code to the top of the notebook.")
 
     print("Starting vine workers with strace...")
-    p_worker = subprocess.Popen(['strace', '-qqq', '-r', '-z', '-f', '-o', strace_worker, '-e', 'trace=openat,fstat,newfstatat', 'vine_worker', 'localhost', '9123'], start_new_session=True)
+    p_worker = None
+    if manager_name:
+         p_worker = subprocess.Popen(['strace', '-qqq', '-r', '-z', '-f', '-o', strace_worker, '-e', 'trace=openat,fstat,newfstatat', 'vine_worker', 'localhost', '-M', manager_name], start_new_session=True)
+    else:
+         p_worker = subprocess.Popen(['strace', '-qqq', '-r', '-z', '-f', '-o', strace_worker, '-e', 'trace=openat,fstat,newfstatat', 'vine_worker', 'localhost', manager_port], start_new_session=True)
     worker_pid = p_worker.pid
     print("worker_pid:", worker_pid)
 
