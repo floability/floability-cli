@@ -36,7 +36,7 @@ def audit(notebook_path, kernel_name, manager_name, manager_port):
     
 
     tmp_dir = os.getcwd() + "/tmp"
-    os.mkdir(tmp_dir, exist_ok=True)
+    os.makedirs(tmp_dir, exist_ok=True)
     
     strace_worker = tmp_dir+"/strace_worker.txt"
     strace_manager = tmp_dir+"/strace_manager.txt"
@@ -47,8 +47,9 @@ def audit(notebook_path, kernel_name, manager_name, manager_port):
 
     if manager_port:
         manager_port = manager_port.strip()
+
     if manager_name:
-        manager_name = ('-M', manager_name.strip())
+        manager_name = manager_name.strip()
 
     notebook_name = notebook_path.split("/")[-1]
     notebook_path_str = '/'.join(notebook_path.split("/")[:-1])

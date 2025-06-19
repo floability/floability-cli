@@ -100,6 +100,7 @@ def _add_audit_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--manager-name",
         required=False,
+        default=None,
         help="Name of the TaskVine manager"
     )
 
@@ -628,7 +629,7 @@ def main():
         print(f"[floability] Generating environment for notebook: {args.notebook} with kernel: {args.kernel}")
         
 
-        audit(args.notebook, args.kernel, args.manager_port, args.manager_name)
+        audit(args.notebook, args.kernel, args.manager_name, args.manager_port)
 
     else:
         print("[floability] No command provided. Exiting.")
