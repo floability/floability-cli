@@ -2,6 +2,7 @@ import json
 import subprocess
 import os
 from pathlib import Path
+import random
 from . import __version__ as floability_version
 
 
@@ -27,6 +28,7 @@ def send_catalog_update(
         "mode": mode if mode else "default",
         "notebook_name": notebook_name if notebook_name else "none",
         "backpack": backpack_name if backpack_name else "none",
+        "port": random.randint(30000, 60000), #Catalog update requires a port to uniquely identify entry on host. This is temporary.
     }
 
     # Create update file
