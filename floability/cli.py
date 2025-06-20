@@ -19,6 +19,7 @@ from .data_handler import ensure_data_is_fetched
 from .performance_tracker import PerformanceTracker
 from .audit.audit import audit
 from .catalog import send_catalog_update
+from . import __version__
 
 
 def get_parsed_arguments() -> argparse.Namespace:
@@ -73,6 +74,10 @@ def get_parsed_arguments() -> argparse.Namespace:
         "audit", help="Generate environment and data dependencies for a notebook"
     )
     _add_audit_args(audit_parser)
+
+    parser.add_argument(
+        "-v", "--version", action="version", version=f"%(prog)s {__version__}"
+    )
 
     return parser.parse_args()
 
