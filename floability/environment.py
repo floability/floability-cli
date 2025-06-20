@@ -42,7 +42,9 @@ def create_conda_pack_from_yml(
 
     if is_worker_env:
         required_packages = ["python", "cloudpickle"]
-        print("[environment] Creating worker environment (no Jupyter or ndcctools required)")
+        print(
+            "[environment] Creating worker environment (no Jupyter or ndcctools required)"
+        )
     else:
         required_packages = ["python", "jupyter", "ndcctools", "cloudpickle"]
         print("[environment] Creating manager environment with Jupyter and ndcctools")

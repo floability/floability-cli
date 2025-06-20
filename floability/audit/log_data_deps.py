@@ -1,8 +1,6 @@
-
-
 def get_code_to_log_data_deps():
 
-    return '''
+    return """
     import builtins
     import os
 
@@ -25,4 +23,4 @@ def get_code_to_log_data_deps():
             log.write(str(file) + "\\n")
         return original_open(file, mode, *args, **kwargs)
     builtins.open = traced_open
-    '''
+    """

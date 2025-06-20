@@ -86,11 +86,11 @@ def start_vine_factory(
     if poncho_env:
         # from vine_factory help: --poncho-env=<file.tar.gz>
         cmd.append(f"--poncho-env={poncho_env}")
-    
+
     if batch_options:
         # from vine_factory help: --batch-options=<file>
         cmd.append(f"--batch-options={batch_options}")
-    
+
     if debug_workers:
         # from vine_factory help: --debug-workers
         cmd.append("--debug-workers")
