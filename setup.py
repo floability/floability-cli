@@ -19,6 +19,7 @@ setup(
         "pyyaml",
         "requests",
         "tqdm",
+        "nbformat",
     ],
     entry_points={
         "console_scripts": [
