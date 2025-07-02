@@ -14,7 +14,7 @@ from .environment import create_conda_pack_from_yml
 from .resource_provisioner import start_vine_factory
 from .cleanup import CleanupManager, install_signal_handlers
 from .jupyter_runner import start_jupyterlab, execute_notebook
-from .utils import create_unique_directory, safe_extract_tar, update_manager_name_in_env
+from .utils import create_unique_directory, safe_extract_tar, update_manager_info_in_env
 from .data_handler import ensure_data_is_fetched
 from .performance_tracker import PerformanceTracker
 from .audit.audit import audit
@@ -135,6 +135,14 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
         default=8888,
         help="Port on which JupyterLab will listen (default=8888).",
     )
+    
+    parser.add_argument(
+        "--manager-ports",
+        required=False,
+        default=9123,
+        help="Comma-separated list of ports for the TaskVine manager (default=9123).",
+    )
+    
     parser.add_argument(
         "--base-dir",
         default=".",
@@ -418,7 +426,7 @@ def run_floability(
             return
 
         # 2b) Update the manager name in the environment
-        update_manager_name_in_env(env_dir, args.manager_name)
+        update_manager_info_in_env(env_dir, args.manager_name, args.manager_ports)
 
         # 2c) Run conda-unpack.This fixes the path after extracting the environment
         try:
