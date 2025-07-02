@@ -6,6 +6,9 @@ import yaml
 
 
 def _create_strace_wrapper_script(run_dir: str, output_file: str) -> str:
+    # Ensure run_dir is an absolute path
+    run_dir = os.path.abspath(run_dir)
+    
     # If output_file is not an absolute path, make it relative to run_dir
     if not os.path.isabs(output_file):
         output_file = os.path.join(run_dir, output_file)
@@ -13,7 +16,7 @@ def _create_strace_wrapper_script(run_dir: str, output_file: str) -> str:
     # Create the directory for the output file if it doesn't exist
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     
-    # Define the path for the wrapper script
+    # Define the path for the wrapper script (using absolute path)
     wrapper_script_path = os.path.join(run_dir, "strace_worker.sh")
     
     # Write the wrapper script
