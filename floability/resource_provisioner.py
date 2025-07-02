@@ -5,6 +5,38 @@ import threading
 import yaml
 
 
+def _create_strace_wrapper_script(run_dir: str, output_file: str) -> str:
+    # If output_file is not an absolute path, make it relative to run_dir
+    if not os.path.isabs(output_file):
+        output_file = os.path.join(run_dir, output_file)
+        
+    # Create the directory for the output file if it doesn't exist
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    
+    # Define the path for the wrapper script
+    wrapper_script_path = os.path.join(run_dir, "strace_worker.sh")
+    
+    # Write the wrapper script
+    with open(wrapper_script_path, "w") as f:
+        f.write(f"""#!/bin/bash
+# Strace wrapper for vine_worker - created by Floability
+# Captures system call traces for debugging
+
+# Generate a unique log file using PID
+LOG_FILE="{output_file}_$$.log"
+
+# Run vine_worker with strace
+exec strace -qqq -r -z -f -o "${{LOG_FILE}}" \\
+    -e trace=openat,fstat,newfstatat \\
+    vine_worker "$@"
+""")
+    
+    # Make the script executable
+    os.chmod(wrapper_script_path, 0o755)
+    
+    return wrapper_script_path
+
+
 def start_vine_factory(
     batch_type: str,
     manager_name: str,
@@ -17,6 +49,8 @@ def start_vine_factory(
     batch_options: str = None,
     config_yml: str = None,
     debug_workers: bool = False,
+    enable_worker_tracing: bool = False,
+    worker_trace_output: str = "strace_worker.log",
 ):
     cmd = [
         "vine_factory",
@@ -86,6 +120,18 @@ def start_vine_factory(
     if poncho_env:
         # from vine_factory help: --poncho-env=<file.tar.gz>
         cmd.append(f"--poncho-env={poncho_env}")
+    
+    # If worker tracing is enabled, create a wrapper script and use it as custom worker binary
+    if enable_worker_tracing:
+        # Create strace wrapper script
+        wrapper_script_path = _create_strace_wrapper_script(run_dir, worker_trace_output)
+        
+        # Tell vine_factory to use our wrapper script
+        cmd.append(f"--worker-binary={wrapper_script_path}")
+        
+        # Get absolute path for display in log message
+        log_path = worker_trace_output if os.path.isabs(worker_trace_output) else os.path.join(run_dir, worker_trace_output)
+        print(f"[provision] Worker tracing enabled. Strace logs will be in {os.path.abspath(log_path)}_*.log")
 
     if batch_options:
         # from vine_factory help: --batch-options=<file>
