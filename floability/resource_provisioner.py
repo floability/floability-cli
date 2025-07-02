@@ -8,35 +8,68 @@ import yaml
 def _create_strace_wrapper_script(run_dir: str, output_file: str) -> str:
     # Ensure run_dir is an absolute path
     run_dir = os.path.abspath(run_dir)
-    
+
     # If output_file is not an absolute path, make it relative to run_dir
     if not os.path.isabs(output_file):
         output_file = os.path.join(run_dir, output_file)
-        
+
     # Create the directory for the output file if it doesn't exist
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
-    
+
+    # Find the vine_worker binary and copy it to the run directory
+    try:
+        # Find the path to vine_worker using 'which'
+        result = subprocess.run(
+            ["which", "vine_worker"], capture_output=True, text=True, check=True
+        )
+        vine_worker_path = result.stdout.strip()
+
+        # Copy the vine_worker binary to the run directory
+        local_worker_path = os.path.join(run_dir, "vine_worker")
+        subprocess.run(["cp", vine_worker_path, local_worker_path], check=True)
+
+        # Make the local copy executable
+        os.chmod(local_worker_path, 0o755)
+
+        print(
+            f"[provision] Copied vine_worker from {vine_worker_path} to {local_worker_path}"
+        )
+    except subprocess.CalledProcessError:
+        print(
+            "[provision] Error: Could not find vine_worker binary. Please ensure it's installed and in your PATH."
+        )
+        sys.exit(1)
+    except Exception as e:
+        print(f"[provision] Error copying vine_worker: {e}")
+        sys.exit(1)
+
     # Define the path for the wrapper script (using absolute path)
-    wrapper_script_path = os.path.join(run_dir, "strace_worker.sh")
-    
+    wrapper_script_path = os.path.join(run_dir, "scripts", "strace_worker.sh")
+    os.makedirs(os.path.dirname(wrapper_script_path), exist_ok=True)
+
     # Write the wrapper script
     with open(wrapper_script_path, "w") as f:
-        f.write(f"""#!/bin/bash
+        f.write(
+            f"""#!/bin/bash
 # Strace wrapper for vine_worker - created by Floability
 # Captures system call traces for debugging
+
+# Get script directory for finding local vine_worker
+SCRIPT_DIR="$( cd "$( dirname "${{BASH_SOURCE[0]}}" )" && pwd )"
 
 # Generate a unique log file using PID
 LOG_FILE="{output_file}_$$.log"
 
-# Run vine_worker with strace
+# Run local vine_worker copy with strace
 exec strace -qqq -r -z -f -o "${{LOG_FILE}}" \\
     -e trace=openat,fstat,newfstatat \\
-    vine_worker "$@"
-""")
-    
+    "${{SCRIPT_DIR}}/vine_worker" "$@"
+"""
+        )
+
     # Make the script executable
     os.chmod(wrapper_script_path, 0o755)
-    
+
     return wrapper_script_path
 
 
@@ -123,7 +156,7 @@ def start_vine_factory(
     if poncho_env:
         # from vine_factory help: --poncho-env=<file.tar.gz>
         cmd.append(f"--poncho-env={poncho_env}")
-    
+
     # If worker tracing is enabled, create a wrapper script and use it as custom worker binary
     if enable_worker_tracing:
         # Create strace wrapper script
@@ -131,16 +164,36 @@ def start_vine_factory(
         
         # Tell vine_factory to use our wrapper script
         cmd.append(f"--worker-binary={wrapper_script_path}")
-        
+
+        if batch_type == "condor":
+            wrapper_script_name = os.path.basename(wrapper_script_path)
+
+            batch_transfer_files = f"transfer_input_files={wrapper_script_name}, vine_worker"
+            
+            if poncho_env:
+                batch_transfer_files += f", {os.path.basename(poncho_env)}"
+
+            if batch_options:
+                # preserve user batch options
+                batch_options = f"{batch_transfer_files} {batch_options}"
+            else:
+                batch_options = batch_transfer_files
+
         # Get absolute path for display in log message
-        log_path = worker_trace_output if os.path.isabs(worker_trace_output) else os.path.join(run_dir, worker_trace_output)
-        print(f"[provision] Worker tracing enabled. Strace logs will be in {os.path.abspath(log_path)}_*.log")
+        log_path = (
+            worker_trace_output
+            if os.path.isabs(worker_trace_output)
+            else os.path.join(run_dir, worker_trace_output)
+        )
+        print(
+            f"[provision] Worker tracing enabled. Strace logs will be in {os.path.abspath(log_path)}_*.log"
+        )
 
     if batch_options:
         # from vine_factory help: --batch-options=<file>
         cmd.append(f"--batch-options={batch_options}")
 
-    if debug_workers:
+    if debug_workers or enable_worker_tracing:
         # from vine_factory help: --debug-workers
         cmd.append("--debug-workers")
 

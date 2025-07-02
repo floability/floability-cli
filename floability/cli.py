@@ -218,18 +218,19 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
         action="store_true",
         help="Enable debug mode for workers",
     )
-    
+
     vf_group.add_argument(
         "--enable-worker-tracing",
         action="store_true",
         help="Enable tracing of worker executions",
     )
-    
+
     vf_group.add_argument(
         "--worker-trace-output",
         default="strace_worker.log",
         help="File to store worker trace output. If not provided, a default file will be used.",
     )
+
 
 def resolve_backpack_args(args: argparse.Namespace) -> None:
     """
