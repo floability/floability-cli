@@ -324,7 +324,8 @@ def run_floability(
 
     # Create a symlink to the most recent run directory
     latest_run_symlink = Path(args.base_dir) / "latest_floability_run"
-    if latest_run_symlink.exists():
+    # Check if symlink exists (even if broken) and remove it
+    if latest_run_symlink.is_symlink() or latest_run_symlink.exists():
         latest_run_symlink.unlink()
     latest_run_symlink.symlink_to(run_dir)
 
