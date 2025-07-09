@@ -1,17 +1,23 @@
+# Following is a sample execution of this script:
+
+import argparse
 import shutil
 import os
 import subprocess
 import signal
-import time
 import nbformat
+import time
+from jupyter_client.kernelspec import KernelSpecManager
 
-from floability.audit.generate_requirements import main as generate_requirements
-from floability.audit.generate_verified_env_yaml import (
+from .tracing_code import get_code_to_add
+from .generate_requirements import main as generate_requirements
+from .generate_verified_environment_yaml import (
     main as generate_verified_env_yaml,
 )
-from floability.audit.generate_data_deps import main as generate_data_deps
-from floability.audit.log_data_deps import get_code_to_log_data_deps
-from jupyter_client.kernelspec import KernelSpecManager
+from .generate_data_deps import main as generate_data_deps
+from .generate_cell_level_dependencies import (
+    main as generate_cell_level_dependencies,
+)
 
 def update_notebook_kernel(notebook_path, kernel_name):
     # Load available kernels
@@ -39,36 +45,45 @@ def update_notebook_kernel(notebook_path, kernel_name):
     with open(notebook_path, 'w', encoding='utf-8') as f:
         nbformat.write(nb, f)
 
+def get_parsed_arguments():
+    """
+    Parse command-line arguments for the Floability-ENV CLI.
+    """
+    parser = argparse.ArgumentParser(
+            description="Floability-ENV CLI: Capture dependencies of notebooks in Floability environments."
+        )
+
+    parser.add_argument("--notebook", help="path of the notebook file")
+    return parser.parse_args()
+
+# use nbformat to add the code to the top of the notebook
 def add_code_to_notebook(notebook_path, code):
     """
     Add code to the top of a Jupyter notebook.
     """
-    with open(notebook_path, "r") as f:
+    with open(notebook_path, 'r') as f:
         nb = nbformat.read(f, as_version=4)
 
     # Create a new code cell
     new_cell = nbformat.v4.new_code_cell(code)
-
+    
     # Insert the new cell at the beginning
     nb.cells.insert(0, new_cell)
 
     # Write the modified notebook back to the file
-    with open(notebook_path, "w") as f:
+    with open(notebook_path, 'w') as f:
         nbformat.write(nb, f)
 
-
 def audit(notebook_path, kernel_name, manager_name, manager_port):
-    """
-    Main function to audit a Jupyter notebook for dependencies.
-    """
-    # Ensure the notebook path is absolute
-
+     
     tmp_dir = os.getcwd() + "/tmp"
     os.makedirs(tmp_dir, exist_ok=True)
 
     strace_worker = tmp_dir + "/strace_worker.txt"
     strace_manager = tmp_dir + "/strace_manager.txt"
     open_trace_log = tmp_dir + "/open_trace.log"
+    start_file = tmp_dir + "/7ffdc7bb937.txt"
+    end_file = tmp_dir + "/89101756618.txt"
 
     notebook_path = notebook_path.strip()
     kernel_name = kernel_name.strip()
@@ -88,9 +103,9 @@ def audit(notebook_path, kernel_name, manager_name, manager_port):
     shutil.copy(notebook_path, notebook_copy_path)
     print("Created temp copy of the notebook: ", notebook_name)
 
-    # Add code to the top of the notebook to capture data dependencies
-    code_to_add = get_code_to_log_data_deps().replace("open_trace_log", open_trace_log)
-
+    code_to_add = get_code_to_add().replace("open_trace_log", open_trace_log)
+    code_to_add = code_to_add.replace("start_file", start_file) 
+    code_to_add = code_to_add.replace("end_file", end_file)
     add_code_to_notebook(notebook_copy_path, code_to_add)
     print("Added code to the top of the notebook.")
 
@@ -126,7 +141,7 @@ def audit(notebook_path, kernel_name, manager_name, manager_port):
                 "-o",
                 strace_worker,
                 "-e",
-                "trace=openat,fstat,newfstatat",
+                "trace=openat,fstat,newfstatat,write",
                 "vine_worker",
                 "localhost",
                 manager_port,
@@ -137,7 +152,6 @@ def audit(notebook_path, kernel_name, manager_name, manager_port):
     print("worker_pid:", worker_pid)
 
     start = time.time()
-    # Execute the notebook in background using the specified kernel
 
     # update notebook kernel
     update_notebook_kernel(notebook_copy_path, kernel_name)
@@ -153,7 +167,7 @@ def audit(notebook_path, kernel_name, manager_name, manager_port):
             "-o",
             strace_manager,
             "-e",
-            "trace=openat,fstat,newfstatat",
+            "trace=openat,fstat,newfstatat,write",
             "jupyter",
             "execute",
             notebook_copy_path,
@@ -169,9 +183,16 @@ def audit(notebook_path, kernel_name, manager_name, manager_port):
     os.killpg(os.getpgid(worker_pid), signal.SIGTERM)
     print("Removed vine worker process tree.")
 
-    start = time.time()
     # Find the dependencies and generate YAML file
     generate_requirements(strace_manager, strace_worker)
+
+
+    # find data dependencies and generate txt file
+    generate_data_deps(open_trace_log, strace_manager, strace_worker)
+    print("time taken to generate data dep file: ", time.time() - start)
+
+    # find cell level dependencies and generate yml file
+    generate_cell_level_dependencies(strace_manager, notebook_name, open_trace_log)
 
     # Generate verified YAML files for worker and manager
     generate_verified_env_yaml(
@@ -185,8 +206,3 @@ def audit(notebook_path, kernel_name, manager_name, manager_port):
     print("Generated verified YAML files for worker and manager.")
 
     print("time taken to generate verified YAML files: ", time.time() - start)
-
-    start = time.time()
-    # Find data dependencies and generate TXT file
-    generate_data_deps(open_trace_log, strace_manager, strace_worker)
-    print("time taken to generate data dep file: ", time.time() - start)
