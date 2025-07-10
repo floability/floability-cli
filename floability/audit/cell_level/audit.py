@@ -76,7 +76,8 @@ def audit(notebook_path, kernel_name, manager_name, manager_port):
     end_file = tmp_dir + "/89101756618.txt"
 
     notebook_path = notebook_path.strip()
-    kernel_name = kernel_name.strip()
+    if kernel_name:
+        kernel_name = kernel_name.strip()
 
     if manager_port:
         manager_port = manager_port.strip()
@@ -99,6 +100,14 @@ def audit(notebook_path, kernel_name, manager_name, manager_port):
     add_code_to_notebook(notebook_copy_path, code_to_add)
     print("Added code to the top of the notebook.")
 
+    # update notebook kernel
+    if kernel_name:
+        try:
+            update_notebook_kernel(notebook_copy_path, kernel_name)
+        except ValueError as e:
+            print(f"Error updating notebook kernel: {kernel_name}")
+            return
+
     print("Starting vine workers with strace...")
     p_worker = None
     if manager_name:
@@ -112,7 +121,7 @@ def audit(notebook_path, kernel_name, manager_name, manager_port):
                 "-o",
                 strace_worker,
                 "-e",
-                "trace=openat,fstat,newfstatat",
+                "trace=openat,fstat,newfstatat,write",
                 "vine_worker",
                 "localhost",
                 "-M",
@@ -143,8 +152,6 @@ def audit(notebook_path, kernel_name, manager_name, manager_port):
 
     start = time.time()
 
-    # update notebook kernel
-    update_notebook_kernel(notebook_copy_path, kernel_name)
     
     print("Starting the notebook with strace... ")
     p_manager = subprocess.run(

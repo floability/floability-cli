@@ -71,7 +71,8 @@ def audit(notebook_path, kernel_name, manager_name, manager_port):
     open_trace_log = tmp_dir + "/open_trace.log"
 
     notebook_path = notebook_path.strip()
-    kernel_name = kernel_name.strip()
+    if kernel_name:
+        kernel_name = kernel_name.strip()
 
     if manager_port:
         manager_port = manager_port.strip()
@@ -139,8 +140,13 @@ def audit(notebook_path, kernel_name, manager_name, manager_port):
     start = time.time()
     # Execute the notebook in background using the specified kernel
 
-    # update notebook kernel
-    update_notebook_kernel(notebook_copy_path, kernel_name)
+    if kernel_name:
+        try:
+        # update notebook kernel
+            update_notebook_kernel(notebook_copy_path, kernel_name)
+        except ValueError as e:
+            print(f"Error updating notebook kernel: {kernel_name}")
+            return
     
     print("Starting the notebook with strace... ")
     p_manager = subprocess.run(

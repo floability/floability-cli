@@ -96,7 +96,7 @@ def _add_audit_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--kernel",
         required=False,
-        default="python3",
+        default=None,
         help="Kernel to use when analyzing the notebook.",
     )
     parser.add_argument(
