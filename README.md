@@ -99,14 +99,15 @@ floability run --backpack example/matrix-multiplication --batch-type condor
 
 ## Floability Audit
 
-The user needs to run the following example command from the terminal:
+The user needs to run the following command for matrix multiplication example from the terminal:
 
 ```bash
 floability audit --notebook example/matrix-multiplication --kernel "kernel_name"  --manager-name "manager_name" --manager-port 9123
 ```
 
-`floability audi` command executes the Jupyter notebook and audits the execution using `strace`. It then extracts and gathers the dependencies for both worker and manager code into `manager_environment.yml` and `worder_environment.yml` file (example shown below):
+`floability audit` command executes the Jupyter notebook and audits the execution using `strace`. It then extracts and gathers the dependencies for both worker and manager code into `manager_environment.yml` and `worker_environment.yml` files (example shown below):
 
+Manager Environment:
 ```
 name: autoenv
 channels:
@@ -116,6 +117,7 @@ channels:
 - ndcctools
 ```
 
+Worker Environment:
 ```
 name: autoenv
 channels:

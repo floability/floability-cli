@@ -45,16 +45,6 @@ def update_notebook_kernel(notebook_path, kernel_name):
     with open(notebook_path, 'w', encoding='utf-8') as f:
         nbformat.write(nb, f)
 
-def get_parsed_arguments():
-    """
-    Parse command-line arguments for the Floability-ENV CLI.
-    """
-    parser = argparse.ArgumentParser(
-            description="Floability-ENV CLI: Capture dependencies of notebooks in Floability environments."
-        )
-
-    parser.add_argument("--notebook", help="path of the notebook file")
-    return parser.parse_args()
 
 # use nbformat to add the code to the top of the notebook
 def add_code_to_notebook(notebook_path, code):
