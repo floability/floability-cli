@@ -18,6 +18,7 @@ from .utils import create_unique_directory, safe_extract_tar, update_manager_inf
 from .data_handler import ensure_data_is_fetched
 from .performance_tracker import PerformanceTracker
 from .audit.audit import audit
+from .audit.cell_level.audit import audit as cell_level_audit
 from .catalog import send_catalog_update
 from . import __version__
 
@@ -95,13 +96,13 @@ def _add_audit_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--kernel",
         required=False,
-        default="python3",
+        default=None,
         help="Kernel to use when analyzing the notebook.",
     )
     parser.add_argument(
         "--manager-port",
         required=False,
-        default=9123,
+        default="9123",
         help="Port on which the TaskVine manager will listen (default=9123).",
     )
     parser.add_argument(
@@ -109,6 +110,11 @@ def _add_audit_args(parser: argparse.ArgumentParser) -> None:
         required=False,
         default=None,
         help="Name of the TaskVine manager",
+    )
+    parser.add_argument(
+        "--cell-level",
+        action="store_true",
+        help="Generate dependencies at the cell level instead of notebook level"
     )
 
 
@@ -668,7 +674,10 @@ def main():
             f"[floability] Generating environment for notebook: {args.notebook} with kernel: {args.kernel}"
         )
 
-        audit(args.notebook, args.kernel, args.manager_name, args.manager_port)
+        if args.cell_level:
+            cell_level_audit(args.notebook, args.kernel, args.manager_name, args.manager_port)
+        else:
+            audit(args.notebook, args.kernel, args.manager_name, args.manager_port)
 
     else:
         print("[floability] No command provided. Exiting.")
