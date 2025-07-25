@@ -9,3 +9,4 @@ dependencies:
   - pip
   - pytest
   - nbformat
+  - jupyter_client
