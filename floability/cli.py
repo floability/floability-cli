@@ -14,7 +14,7 @@ from .environment import create_conda_pack_from_yml
 from .resource_provisioner import start_vine_factory
 from .cleanup import CleanupManager, install_signal_handlers
 from .jupyter_runner import start_jupyterlab, execute_notebook
-from .utils import create_unique_directory, safe_extract_tar, update_manager_info_in_env
+from .utils import create_unique_directory, safe_extract_tar, update_env_vars_in_conda
 from .data_handler import ensure_data_is_fetched
 from .performance_tracker import PerformanceTracker
 from .audit.audit import audit
@@ -114,7 +114,7 @@ def _add_audit_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--cell-level",
         action="store_true",
-        help="Generate dependencies at the cell level instead of notebook level"
+        help="Generate dependencies at the cell level instead of notebook level",
     )
 
 
@@ -141,14 +141,14 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
         default=8888,
         help="Port on which JupyterLab will listen (default=8888).",
     )
-    
+
     parser.add_argument(
         "--manager-ports",
         required=False,
         default=9123,
         help="Comma-separated list of ports for the TaskVine manager (default=9123).",
     )
-    
+
     parser.add_argument(
         "--base-dir",
         default=".",
@@ -184,6 +184,12 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
         "--measure-performance",
         action="store_true",
         help="Enable performance measurements and generate a report.",
+    )
+
+    parser.add_argument(
+        "--env-vars",
+        required=False,
+        help="Comma-separated list of KEY=VALUE pairs to set inside the conda environment.",
     )
 
     # vine_factory specific arguments
@@ -432,7 +438,9 @@ def run_floability(
             return
 
         # 2b) Update the manager name in the environment
-        update_manager_info_in_env(env_dir, args.manager_name, args.manager_ports)
+        update_env_vars_in_conda(
+            env_dir, args.manager_name, args.manager_ports, args.env_vars
+        )
 
         # 2c) Run conda-unpack.This fixes the path after extracting the environment
         try:
@@ -675,7 +683,9 @@ def main():
         )
 
         if args.cell_level:
-            cell_level_audit(args.notebook, args.kernel, args.manager_name, args.manager_port)
+            cell_level_audit(
+                args.notebook, args.kernel, args.manager_name, args.manager_port
+            )
         else:
             audit(args.notebook, args.kernel, args.manager_name, args.manager_port)
 

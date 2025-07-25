@@ -83,7 +83,7 @@ def safe_extract_tar(tar_file: Path, dest_dir: Path) -> None:
     print(f"Extraction complete for '{tar_file}'.")
 
 
-def update_manager_info_in_env(env_dir: str, manager_name: str, manager_ports: str):
+def update_env_vars_in_conda(env_dir: str, manager_name: str, manager_ports: str, additional_env_vars: str):
     """
     Adds/updates the VINE_MANAGER_NAME environment variable in the
     conda environment's activation script.
@@ -96,7 +96,15 @@ def update_manager_info_in_env(env_dir: str, manager_name: str, manager_ports: s
     with open(env_vars_file, "a", encoding="utf-8") as f:
         f.write(f"\nexport VINE_MANAGER_NAME={manager_name}\n")
         f.write(f"export VINE_MANAGER_PORTS={manager_ports}\n")
-        
+
+        if additional_env_vars:
+            for pair in additional_env_vars.split(","):
+                if "=" in pair:
+                    key, value = pair.split("=")
+                    f.write(f"export {key.strip()}={value.strip()}\n")
+
+                    print(f"[environment] Added {key.strip()}={value.strip()} to {env_vars_file}")
+
     print(
         f"[environment] Updated environment variable VINE_MANAGER_NAME={manager_name} in {env_vars_file}"
     )
