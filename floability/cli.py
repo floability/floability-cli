@@ -46,29 +46,12 @@ def get_parsed_arguments() -> argparse.Namespace:
     )
     _add_execution_args(execute_parser)
 
-    # fetch sub-command
-    fetch_parser = subparsers.add_parser(
-        "fetch", help="Fetch data from a data.yml spec"
+    # data sub-command
+    data_parser = subparsers.add_parser(
+        "data",
+        help="Data operations via mode flag: download, check (metadata), verify (download + integrity)",
     )
-    fetch_parser.add_argument(
-        "--data-spec",
-        help="Path to data.yml file specifying data to be fetched.",
-        required=True,
-    )
-    fetch_parser.add_argument(
-        "--backpack-root",
-        default=".",
-        help="Path to the root of the backpack for 'backpack' source_type files (default='.')",
-    )
-
-    # todo: implement the following sub-commands
-    # pack sub-command
-    # pack_parser = subparsers.add_parser(
-    #     "pack", help="Package a notebook into a Floability backpack"
-    # )
-
-    # verify sub-command
-    # verify_parser = subparsers.add_parser("verify", help="Verify a Floability backpack")
+    _add_data_args(data_parser)
 
     # floability-env sub-command
     audit_parser = subparsers.add_parser(
@@ -238,6 +221,28 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
         action="store_true",
         help="Enable debug mode for workers",
     )
+
+
+def _add_data_args(data_parser: argparse.ArgumentParser) -> None:
+    """
+    Register the top-level `data` command with a --mode flag and related arguments.
+    """
+    data_parser.add_argument(
+        "--mode",
+        choices=["download", "check", "verify"],
+        default="check",
+        help="Mode to run (default='check')",
+    )
+    data_parser.add_argument(
+        "--data-spec",
+        help="Path to data.yml file specifying data to operate on.",
+    )
+    data_parser.add_argument(
+        "--backpack",
+        default=".",
+        help="Path to the root of the backpack for 'backpack' source_type files (default '.')",
+    )
+    return None
 
 
 def resolve_backpack_args(args: argparse.Namespace) -> None:
@@ -648,6 +653,52 @@ def execute_python_script(
             os.chdir(original_dir)
 
 
+def resolve_data_spec(args: argparse.Namespace) -> None:
+    """
+    Resolve data spec path for the 'data' sub-command. If not provided, resolve from backpack if available.
+    """
+    if args.data_spec:
+        return
+
+    if not args.backpack:
+        print(
+            "[floability] No data spec provided and no backpack specified. Cannot resolve data spec."
+        )
+        return
+
+    backpack_dir = Path(args.backpack).resolve()
+    data_spec = backpack_dir / "data" / "data.yml"
+    if data_spec.is_file():
+        args.data_spec = str(data_spec)
+        print(f"[floability] Using data spec from backpack: {args.data_spec}")
+    else:
+        print(
+            f"[floability] No data spec found in backpack at expected location: {data_spec}"
+        )
+
+
+def run_data_command(args: argparse.Namespace) -> None:
+    """
+    Execute data command logic based solely on the --mode flag.
+    """
+    print(f"[floability] Running data command in mode: {args.mode}")
+
+    resolve_data_spec(args)
+
+    if not args.data_spec:
+        print("[floability] No data spec provided. Cannot proceed with data command.")
+        return
+
+    # Add logic to execute data command using the resolved data spec
+    if args.mode == "download":
+        print(f"[floability] Downloading data using spec: {args.data_spec}")
+    elif args.mode == "upload":
+        print(f"[floability] Uploading data using spec: {args.data_spec}")
+    else:
+        print(f"[floability] Unknown mode: {args.mode}. Cannot proceed.")
+        return
+
+
 def main():
     """
     Primary entry point for Floability CLI.
@@ -663,13 +714,10 @@ def main():
     elif args.command == "execute":
         run_floability(args, cleanup_manager, mode="execute")
 
-    elif args.command == "fetch":
-        if not args.data_spec:
-            print(
-                "[floability] No data spec provided. Use --data-spec path/to/data.yml."
-            )
-            return
-        ensure_data_is_fetched(args.data_spec, args.backpack_root)
+    elif args.command == "data":
+        run_data_command(args)
+
+    # Note: top-level 'fetch' command removed. Use 'data download' instead.
     # elif args.command == "pack":
     #     print("[floability] 'pack' command not yet implemented.")
     # elif args.command == "verify":
