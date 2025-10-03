@@ -20,13 +20,16 @@ from .performance_tracker import PerformanceTracker
 from .audit.audit import audit
 from .audit.cell_level.audit import audit as cell_level_audit
 from .catalog import send_catalog_update
+
+from .data.data_handler_new import check_data_spec, fetch_data_from_spec, verify_data_from_spec
+
 from . import __version__
 
 
 def get_parsed_arguments() -> argparse.Namespace:
     """
     Parse command-line arguments for the Floability CLI.
-    """
+    """ 
 
     parser = argparse.ArgumentParser(
         description="Floability CLI: run distributed Jupyter-based workflows with TaskVine."
@@ -229,7 +232,7 @@ def _add_data_args(data_parser: argparse.ArgumentParser) -> None:
     """
     data_parser.add_argument(
         "--mode",
-        choices=["download", "check", "verify"],
+        choices=["check", "fetch", "verify"],
         default="check",
         help="Mode to run (default='check')",
     )
@@ -241,6 +244,16 @@ def _add_data_args(data_parser: argparse.ArgumentParser) -> None:
         "--backpack",
         default=".",
         help="Path to the root of the backpack for 'backpack' source_type files (default '.')",
+    )
+    data_parser.add_argument(
+        "--backpack-root",
+        default=".",
+        help="Path to the root of the backpack (default='.').",
+    )
+    data_parser.add_argument(
+        "--check-details",
+        action="store_true",
+        help="After summary, print detailed metadata for each item (check mode only).",
     )
     return None
 
@@ -688,15 +701,19 @@ def run_data_command(args: argparse.Namespace) -> None:
     if not args.data_spec:
         print("[floability] No data spec provided. Cannot proceed with data command.")
         return
-
-    # Add logic to execute data command using the resolved data spec
-    if args.mode == "download":
-        print(f"[floability] Downloading data using spec: {args.data_spec}")
-    elif args.mode == "upload":
-        print(f"[floability] Uploading data using spec: {args.data_spec}")
-    else:
-        print(f"[floability] Unknown mode: {args.mode}. Cannot proceed.")
+    
+    if  args.mode == "check":
+        print("[floability] 'data check' selected — metadata-only checks (existence, size, file type).")
+        check_data_spec(args.data_spec, Path(args.backpack), show_details=getattr(args, "check_details", False))
         return
+    elif args.mode == "fetch":
+        print(f"[floability] Fetching data from {args.data_spec}")
+        fetch_data_from_spec(args.data_spec, args.backpack)
+        # ensure_data_is_fetched(args.data_spec, args.backpack)
+        return
+    elif args.mode == "verify":
+        print("[floability] 'data verify' selected — download + integrity checks (checksum/size). Not yet implemented.")
+        return 
 
 
 def main():

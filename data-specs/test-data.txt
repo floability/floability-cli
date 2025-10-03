@@ -1,0 +1,105 @@
+schema_version: 1.0   # required, schema version for validation
+default_profile: test # which profile to use if not specified at CLI
+
+profiles:
+  test:
+    policy:
+      retry_attempts: 3              # int, how many times to retry failed transfers (default: 0)
+      timeout: 60                    # int seconds, per-request timeout (default: 30)
+      size_tolerance_bytes: 1024     # int, allow +/- bytes difference when comparing sizes (default: 0)
+
+    data:
+      - name: book1                  # string, logical identifier; unique in profile
+        source_type: http            # http | fs | pelican | s3 | multi; if omitted, inferred from source
+        source: https://www.gutenberg.org/cache/epub/2600/pg2600.txt
+        expected_size: 3359652       # int bytes; optional, validates against Content-Length or fs.stat
+        content_type: text/plain     # MIME type (e.g., text/plain, text/csv, application/zip); optional
+        target_path: books/war_and_peace.txt   # relative to backpack root
+        checksum: sha256:d4d61133... # string, "<algo>:<hex>"; used only in verify mode; optional
+        post_process:                # list of ops applied after fetch/verify; optional
+          - operation: zip           # zip | gzip | gunzip | unzip | tar | custom
+            remove_original: false   # bool (default: true), whether to delete the original file
+            target_path: books/war_and_peace.zip  # optional, overrides default output name
+
+      - name: book2
+        source_type: multi           # usually inferred if 'sources:' provided
+        sources:                     # ordered fallback list of sources
+          - source_type: fs
+            source: books/pg1342.txt
+          - source_type: http
+            source: https://www.gutenberg.org/cache/epub/1342/pg1342.txt
+        expected_size: 772429
+        content_type: text/plain
+        target_path: books/pride_and_prejudice.txt
+        post_process:
+          - operation: gzip
+            remove_original: true
+
+      - name: ghcnd-stations
+        source_type: pelican
+        source: osdf:///aws-opendata/us-east-1/noaa-ghcn-pds/ghcnd-stations.txt
+        # expected_size: …            # optional; can be added once known
+        content_type: text/plain
+        target_path: data/ghcnd/ghcnd-stations.txt
+        post_process:
+          - operation: zip
+            remove_original: false
+
+      - name: ghcnd-station-csv
+        source_type: pelican
+        source: osdf:///aws-opendata/us-east-1/noaa-ghcn-pds/csv/by_station/USW00014837.csv
+        content_type: text/csv
+        target_path: data/ghcnd/USW00014837.csv
+        post_process:
+          - operation: gzip
+            remove_original: true
+
+  production:
+    policy:
+      retry_attempts: 5              # int, higher for prod to improve reliability
+      timeout: 60                    # int seconds (default: 30)
+      size_tolerance_bytes: 1024     # int bytes (default: 0)
+
+    data:
+      - name: book1
+        source_type: http
+        source: https://www.gutenberg.org/cache/epub/2600/pg2600.txt
+        expected_size: 3359652
+        content_type: text/plain
+        checksum: sha256:d4d61133... # sha256 required in prod verify mode
+        target_path: books/war_and_peace.txt
+        post_process:
+          - operation: zip
+            remove_original: false
+
+      - name: book2
+        source_type: multi
+        sources:
+          - source_type: fs
+            source: books/pg1342.txt
+          - source_type: http
+            source: https://www.gutenberg.org/cache/epub/1342/pg1342.txt
+        expected_size: 772429
+        content_type: text/plain
+        target_path: books/pride_and_prejudice.txt
+        post_process:
+          - operation: gzip
+            remove_original: true
+
+      - name: ghcnd-stations
+        source_type: pelican
+        source: osdf:///aws-opendata/us-east-1/noaa-ghcn-pds/ghcnd-stations.txt
+        content_type: text/plain
+        target_path: data/ghcnd/ghcnd-stations.txt
+        post_process:
+          - operation: zip
+            remove_original: false
+
+      - name: ghcnd-station-csv
+        source_type: pelican
+        source: osdf:///aws-opendata/us-east-1/noaa-ghcn-pds/csv/by_station/USW00014837.csv
+        content_type: text/csv
+        target_path: data/ghcnd/USW00014837.csv
+        post_process:
+          - operation: gzip
+            remove_original: true

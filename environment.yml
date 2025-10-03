@@ -10,3 +10,9 @@ dependencies:
   - pytest
   - nbformat
   - jupyter_client
+  - python-magic  # for MIME type guessing
+  - tqdm          # progress bars for streaming
+  - aiohttp       # optional async HTTP client
+  - fsspec
+  - pip:
+      - pelicans
