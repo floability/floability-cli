@@ -109,9 +109,124 @@ def fetch_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: bo
         print("[data:fetch] Completed.")
 
 
-def verify_data_from_spec(data_spec: str, backpack_root: Path):
-    """Placeholder verify implementation (will implement later)."""
-    print(f"[data:verify] Not yet implemented for spec: {data_spec}")
+def verify_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: bool = False, force: bool = False):
+    """Verify data items: ensure present (download/copy if needed) then validate integrity.
+
+    Integrity signals supported:
+      * checksum: (algorithm:hex) or plain hex (algorithm inferred by length)
+      * expected_size (+ policy.size_tolerance_bytes)
+      * content_type (best-effort using remote metadata as in check mode)
+
+    Produces a summary table and (if verbose) per-item details.
+    """
+    spec_path = Path(data_spec)
+    if not spec_path.is_file():
+        print(f"[data:verify] Spec file not found: {spec_path}")
+        return
+
+    if backpack_root is None:
+        if spec_path.parent.name == "data":
+            backpack_root = spec_path.parent.parent
+        else:
+            backpack_root = spec_path.parent
+    backpack_root = Path(backpack_root).resolve()
+
+    try:
+        raw = _load_yaml(spec_path)
+    except Exception as e:
+        print(f"[data:verify] Failed loading YAML: {e}")
+        return
+
+    try:
+        profile_name, profile, _ = _select_profile(raw)
+    except ValueError as e:
+        print(f"[data:verify] {e}")
+        return
+
+    items = profile.get("data", []) or []
+    policy = profile.get("policy", {})
+    tolerance = int(policy.get("size_tolerance_bytes", 0) or 0)
+
+    if verbose:
+        print(f"[data:verify] Profile '{profile_name}' items={len(items)} tolerance={tolerance} backpack_root={backpack_root}")
+
+    normalized_items = [_normalize_item(i) for i in items]
+
+    results: List[Dict[str, Any]] = []
+    total = len(normalized_items)
+    for idx, item in enumerate(normalized_items, start=1):
+        name = item.get("name", "<unnamed>")
+        if verbose:
+            print(f"[data:verify] Processing {idx}/{total}: {name} (force={force})")
+        # Ensure fetched (may skip if exists and not force)
+        chosen_source = _fetch_single_item(item, backpack_root, verbose=verbose, force=force)
+        # Evaluate integrity on local target
+        target_path = _resolve_target_path(item, backpack_root)
+        local_exists = target_path.exists()
+        is_dir = target_path.is_dir() if local_exists else False
+
+        expected_size = item.get("expected_size")
+        actual_size = target_path.stat().st_size if (local_exists and target_path.is_file()) else None
+        size_ok = None
+        size_note = None
+        if expected_size is not None and isinstance(expected_size, int):
+            if actual_size is None:
+                size_ok = False
+                size_note = "no-actual-size"
+            else:
+                diff = abs(actual_size - expected_size)
+                size_ok = diff <= tolerance
+                size_note = f"diff={diff}" if diff else "exact"
+
+        # Remote metadata (for content_type) – reuse logic (best-effort)
+        remote_meta = _metadata_for_source(item if item.get('source_type') != 'multi' else (chosen_source or item), backpack_root)
+        expected_ct = item.get("content_type")
+        content_type_ok = None
+        content_type_actual = remote_meta.get("type")
+        if expected_ct and content_type_actual:
+            ct_actual = str(content_type_actual)
+            content_type_ok = ct_actual.startswith(expected_ct) or ct_actual == expected_ct
+
+        # Checksum verification
+        checksum_spec = _extract_checksum_field(item)
+        checksum_alg = None
+        checksum_expected = None
+        checksum_actual = None
+        checksum_ok = None
+        if checksum_spec and local_exists and not is_dir:
+            checksum_alg, checksum_expected = _parse_checksum_spec(checksum_spec)
+            if checksum_alg and checksum_expected:
+                try:
+                    checksum_actual = _compute_checksum(target_path, checksum_alg)
+                    checksum_ok = (checksum_actual == checksum_expected)
+                except Exception as e:
+                    checksum_ok = False
+                    if verbose:
+                        print(f"[data:verify] Error computing checksum for '{name}': {e}")
+
+        results.append({
+            "name": name,
+            "exists": local_exists,
+            "is_dir": is_dir,
+            "target_path": str(target_path),
+            "expected_size": expected_size,
+            "actual_size": actual_size,
+            "size_ok": size_ok,
+            "size_note": size_note,
+            "checksum_alg": checksum_alg,
+            "checksum_expected": checksum_expected,
+            "checksum_actual": checksum_actual,
+            "checksum_ok": checksum_ok,
+            "content_type_expected": expected_ct,
+            "content_type_actual": content_type_actual,
+            "content_type_ok": content_type_ok,
+        })
+        if verbose:
+            print(f"[data:verify] Finished {idx}/{total}: {name} exists={local_exists} size_ok={size_ok} checksum_ok={checksum_ok} ct_ok={content_type_ok}")
+
+    _print_verify_summary(results)
+    if verbose:
+        _print_verify_details(results)
 
 
 # --------------------------- Parsing / Normalization ---------------------------
@@ -240,7 +355,7 @@ def _resolve_target_path(item: Dict[str, Any], backpack_root: Path) -> Path:
     return (backpack_root / target_rel).resolve()
 
 
-def _fetch_single_item(item: Dict[str, Any], backpack_root: Path, verbose: bool = False, force: bool = False) -> None:
+def _fetch_single_item(item: Dict[str, Any], backpack_root: Path, verbose: bool = False, force: bool = False) -> Optional[Dict[str, Any]]:
     name = item.get("name", "<unnamed>")
     stype = item.get("source_type")
     target_path = _resolve_target_path(item, backpack_root)
@@ -249,7 +364,7 @@ def _fetch_single_item(item: Dict[str, Any], backpack_root: Path, verbose: bool 
     if target_path.exists() and not force:
         if verbose:
             print(f"[data:fetch] Skipping '{name}' target exists: {target_path} (use --force-fetch to overwrite)")
-        return
+        return None
     elif target_path.exists() and force:
         if verbose:
             print(f"[data:fetch] Removing existing target for '{name}': {target_path}")
@@ -267,19 +382,21 @@ def _fetch_single_item(item: Dict[str, Any], backpack_root: Path, verbose: bool 
             if _attempt_fetch_source(s_norm, target_path, backpack_root, verbose=verbose, force=force):
                 if verbose:
                     print(f"[data:fetch] '{name}' fetched via multi source type={s_norm.get('source_type')} -> {target_path}")
-                return
+                return s_norm
         if verbose:
             print(f"[data:fetch] FAILED multi sources for '{name}'")
-        return
+        return None
 
     if verbose:
         print(f"[data:fetch] Fetching '{name}' source_type={stype} source={item.get('source')} -> {target_path}")
     if _attempt_fetch_source(item, target_path, backpack_root, verbose=verbose, force=force):
         if verbose:
             print(f"[data:fetch] '{name}' fetched -> {target_path}")
+        return item
     else:
         if verbose:
             print(f"[data:fetch] FAILED '{name}'")
+    return None
 
 
 def _attempt_fetch_source(item: Dict[str, Any], target_path: Path, backpack_root: Path, verbose: bool = False, force: bool = False) -> bool:
@@ -316,6 +433,73 @@ def _attempt_fetch_source(item: Dict[str, Any], target_path: Path, backpack_root
             print(f"[data:fetch] Error fetching {stype} source '{src}': {e}")
         return False
     return False
+
+
+# --------------------------- Integrity Helpers ---------------------------
+def _extract_checksum_field(item: Dict[str, Any]) -> Optional[str]:
+    # Spec may define at top-level 'checksum' OR under legacy 'verification.checksum'
+    if "checksum" in item and item["checksum"]:
+        return str(item["checksum"]).strip()
+    ver = item.get("verification") or {}
+    cs = ver.get("checksum") if isinstance(ver, dict) else None
+    return str(cs).strip() if cs else None
+
+
+def _parse_checksum_spec(spec: str) -> Tuple[Optional[str], Optional[str]]:
+    s = spec.strip().lower()
+    if ":" in s:
+        alg, hexval = s.split(":", 1)
+        return alg.strip(), hexval.strip()
+    # infer by length (common digests)
+    hexlen = len(s)
+    if hexlen == 32:
+        return "md5", s
+    if hexlen == 40:
+        return "sha1", s
+    if hexlen == 64:
+        return "sha256", s
+    return "sha256", s  # default
+
+
+def _compute_checksum(path: Path, alg: str, chunk_size: int = 1024 * 1024) -> str:
+    h = hashlib.new(alg)
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+# --------------------------- Verify Reporting ---------------------------
+def _print_verify_summary(results: List[Dict[str, Any]]) -> None:
+    print("[data:verify] Summary:")
+    headers = ["name", "exists", "size_ok", "checksum_ok", "content_type_ok", "expected_size", "actual_size", "checksum_alg"]
+    colw = {h: max(len(h), *(len(str(r.get(h, ''))) for r in results)) for h in headers} if results else {h: len(h) for h in headers}
+    def fmt_row(r: Dict[str, Any]):
+        return " ".join(str(r.get(h, "")).ljust(colw[h]) for h in headers)
+    print(fmt_row({h: h for h in headers}))
+    for r in results:
+        print(fmt_row(r))
+    total = len(results)
+    missing = sum(1 for r in results if not r.get("exists"))
+    size_fail = sum(1 for r in results if r.get("size_ok") is False)
+    checksum_fail = sum(1 for r in results if r.get("checksum_ok") is False)
+    ctype_fail = sum(1 for r in results if r.get("content_type_ok") is False)
+    print(f"[data:verify] Items: {total}, missing: {missing}, size_fail: {size_fail}, checksum_fail: {checksum_fail}, content_type_fail: {ctype_fail}")
+
+
+def _print_verify_details(results: List[Dict[str, Any]]) -> None:
+    print("\n[data:verify] Detailed results:")
+    for r in results:
+        print(f"--- {r.get('name')} ---")
+        print(f"  target_path: {r.get('target_path')}")
+        print(f"  exists: {r.get('exists')} is_dir={r.get('is_dir')}")
+        print(f"  expected_size: {r.get('expected_size')} actual_size: {r.get('actual_size')} size_ok={r.get('size_ok')} note={r.get('size_note')}")
+        print(f"  checksum_alg: {r.get('checksum_alg')} checksum_expected: {r.get('checksum_expected')} checksum_actual: {r.get('checksum_actual')} checksum_ok={r.get('checksum_ok')}")
+        print(f"  content_type_expected: {r.get('content_type_expected')} content_type_actual: {r.get('content_type_actual')} content_type_ok={r.get('content_type_ok')}")
+    print("[data:verify] End of detailed report")
 
 
 def _print_check_summary(results: List[Dict[str, Any]]) -> None:

@@ -722,7 +722,8 @@ def run_data_command(args: argparse.Namespace) -> None:
         # ensure_data_is_fetched(args.data_spec, args.backpack)
         return
     elif args.mode == "verify":
-        print("[floability] 'data verify' selected — download + integrity checks (checksum/size). Not yet implemented.")
+        print("[floability] 'data verify' selected — download + integrity checks (checksum/size/content-type).")
+        verify_data_from_spec(args.data_spec, Path(args.backpack) if args.backpack else None, verbose=getattr(args, "verbose", False), force=getattr(args, "force_fetch", False))
         return 
 
 
