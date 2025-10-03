@@ -255,6 +255,16 @@ def _add_data_args(data_parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="After summary, print detailed metadata for each item (check mode only).",
     )
+    data_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging for data operations (fetch/check/verify).",
+    )
+    data_parser.add_argument(
+        "--force-fetch",
+        action="store_true",
+        help="Re-fetch (overwrite) targets even if they already exist.",
+    )
     return None
 
 
@@ -704,11 +714,11 @@ def run_data_command(args: argparse.Namespace) -> None:
     
     if  args.mode == "check":
         print("[floability] 'data check' selected — metadata-only checks (existence, size, file type).")
-        check_data_spec(args.data_spec, Path(args.backpack), show_details=getattr(args, "check_details", False))
+        check_data_spec(args.data_spec, Path(args.backpack), show_details=getattr(args, "check_details", False), verbose=getattr(args, "verbose", False))
         return
     elif args.mode == "fetch":
         print(f"[floability] Fetching data from {args.data_spec}")
-        fetch_data_from_spec(args.data_spec, args.backpack)
+        fetch_data_from_spec(args.data_spec, Path(args.backpack) if args.backpack else None, verbose=getattr(args, "verbose", False), force=getattr(args, "force_fetch", False))
         # ensure_data_is_fetched(args.data_spec, args.backpack)
         return
     elif args.mode == "verify":

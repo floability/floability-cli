@@ -1,17 +1,17 @@
 from __future__ import annotations
 from pathlib import Path
-from typing import Dict, Any, Iterable, List, Tuple, Optional
+from typing import Dict, Any, Iterable, List, Tuple, Optional, Callable
 import yaml
 import hashlib
 
 # Reuse existing low-level helpers
-from .http_file_utils import http_file_metadata
-from .pelican_file_utils import pelican_file_metadata
-from .fs_file_utils import fs_file_metadata
+from .http_file_utils import http_file_metadata, http_file_download
+from .pelican_file_utils import pelican_file_metadata, pelican_file_download
+from .fs_file_utils import fs_file_metadata, fs_file_copy
 
 
 # --------------------------- Public API (stubs for now) ---------------------------
-def check_data_spec(data_spec: str, backpack_root: Path, show_details: bool = False):
+def check_data_spec(data_spec: str, backpack_root: Path, show_details: bool = False, verbose: bool = False):
     """High-level entry: perform metadata-only checks for each data item.
 
     Steps:
@@ -41,7 +41,8 @@ def check_data_spec(data_spec: str, backpack_root: Path, show_details: bool = Fa
     policy = profile.get("policy", {})
     tolerance = int(policy.get("size_tolerance_bytes", 0) or 0)
 
-    print(f"[data:check] Profile: {profile_name} (items={len(items)}, size_tolerance={tolerance})")
+    if verbose:
+        print(f"[data:check] Profile: {profile_name} (items={len(items)}, size_tolerance={tolerance})")
 
     normalized_items = [_normalize_item(i) for i in items]
 
@@ -51,13 +52,61 @@ def check_data_spec(data_spec: str, backpack_root: Path, show_details: bool = Fa
         results.append(result)
 
     _print_check_summary(results)
-    if show_details:
+    if show_details or verbose:
         _print_detailed_results(results)
 
 
-def fetch_data_from_spec(data_spec: str, backpack_root: Path):
-    """Placeholder fetch implementation (will implement later)."""
-    print(f"[data:fetch] Not yet implemented for spec: {data_spec}")
+def fetch_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: bool = False, force: bool = False):
+    """Fetch (download/copy) all data items defined in the selected profile.
+
+    Rules:
+      * If backpack_root is None, infer as spec_path.parent.parent (grand-parent) to match
+        expected structure: <backpack_root>/data/data.yml.
+      * All relative sources (for fs) and target_path resolutions are relative to backpack_root.
+      * multi source_type: iterate sources until first successful fetch.
+      * For now, post_process is ignored (placeholder).
+    """
+    spec_path = Path(data_spec)
+    if not spec_path.is_file():
+        print(f"[data:fetch] Spec file not found: {spec_path}")
+        return
+
+    if backpack_root is None:
+        # infer as grand parent of spec file: /path/to/<backpack>/data/data.yml -> <backpack>
+        if spec_path.parent.name == "data":
+            backpack_root = spec_path.parent.parent
+        else:
+            backpack_root = spec_path.parent  # fallback
+    backpack_root = Path(backpack_root).resolve()
+
+    try:
+        raw = _load_yaml(spec_path)
+    except Exception as e:
+        print(f"[data:fetch] Failed loading YAML: {e}")
+        return
+
+    try:
+        profile_name, profile, _ = _select_profile(raw)
+    except ValueError as e:
+        print(f"[data:fetch] {e}")
+        return
+
+    items = profile.get("data", []) or []
+    if verbose:
+        print(f"[data:fetch] Profile '{profile_name}' items={len(items)} backpack_root={backpack_root}")
+
+    normalized_items = [_normalize_item(i) for i in items]
+
+    total = len(normalized_items)
+    for idx, item in enumerate(normalized_items, start=1):
+        if verbose:
+            print(f"[data:fetch] Fetching {idx}/{total}: {item.get('name','<unnamed>')} (force={force})")
+        _fetch_single_item(item, backpack_root, verbose=verbose, force=force)
+        if verbose:
+            print(f"[data:fetch] Finished {idx}/{total}: {item.get('name','<unnamed>')}")
+
+    if verbose:
+        print("[data:fetch] Completed.")
 
 
 def verify_data_from_spec(data_spec: str, backpack_root: Path):
@@ -183,6 +232,90 @@ def _metadata_for_source(item: Dict[str, Any], backpack_root: Path) -> Dict[str,
         return fs_file_metadata(str(p))
     # Unknown or missing
     return {"exists": False, "name": src or "", "size": None, "type": None, "raw": {"error": f"unsupported source_type {stype}"}}
+
+
+# --------------------------- Fetch Logic ---------------------------
+def _resolve_target_path(item: Dict[str, Any], backpack_root: Path) -> Path:
+    target_rel = item.get("target_path") or item.get("target_location") or item.get("name")
+    return (backpack_root / target_rel).resolve()
+
+
+def _fetch_single_item(item: Dict[str, Any], backpack_root: Path, verbose: bool = False, force: bool = False) -> None:
+    name = item.get("name", "<unnamed>")
+    stype = item.get("source_type")
+    target_path = _resolve_target_path(item, backpack_root)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if target_path.exists() and not force:
+        if verbose:
+            print(f"[data:fetch] Skipping '{name}' target exists: {target_path} (use --force-fetch to overwrite)")
+        return
+    elif target_path.exists() and force:
+        if verbose:
+            print(f"[data:fetch] Removing existing target for '{name}': {target_path}")
+        if target_path.is_dir():
+            import shutil
+            shutil.rmtree(target_path)
+        else:
+            target_path.unlink()
+
+    if stype == "multi":
+        for src_entry in item.get("sources", []):
+            s_norm = _normalize_item(src_entry)
+            if verbose:
+                print(f"[data:fetch] Trying multi source for '{name}': type={s_norm.get('source_type')} source={s_norm.get('source')}")
+            if _attempt_fetch_source(s_norm, target_path, backpack_root, verbose=verbose, force=force):
+                if verbose:
+                    print(f"[data:fetch] '{name}' fetched via multi source type={s_norm.get('source_type')} -> {target_path}")
+                return
+        if verbose:
+            print(f"[data:fetch] FAILED multi sources for '{name}'")
+        return
+
+    if verbose:
+        print(f"[data:fetch] Fetching '{name}' source_type={stype} source={item.get('source')} -> {target_path}")
+    if _attempt_fetch_source(item, target_path, backpack_root, verbose=verbose, force=force):
+        if verbose:
+            print(f"[data:fetch] '{name}' fetched -> {target_path}")
+    else:
+        if verbose:
+            print(f"[data:fetch] FAILED '{name}'")
+
+
+def _attempt_fetch_source(item: Dict[str, Any], target_path: Path, backpack_root: Path, verbose: bool = False, force: bool = False) -> bool:
+    stype = item.get("source_type")
+    src = item.get("source")
+    try:
+        if stype == "http":
+            # Download into target directory with final name
+            http_file_download(src, dest_dir=str(target_path.parent), filename=target_path.name, overwrite=force)
+            return True
+        if stype == "pelican":
+            pelican_file_download(src, dest_dir=str(target_path.parent), filename=target_path.name, overwrite=force)
+            return True
+        if stype == "fs":
+            p = Path(src)
+            if not p.is_absolute():
+                p = (backpack_root / p).resolve()
+            if not p.exists():
+                if verbose:
+                    print(f"[data:fetch] Source missing (fs): {p}")
+                return False
+            # copy file or directory
+            if p.is_file():
+                fs_file_copy(str(p), dest_dir=str(target_path.parent), filename=target_path.name, overwrite=force)
+            else:
+                # directory copy simple recursive
+                import shutil
+                if force and target_path.exists():
+                    shutil.rmtree(target_path)
+                shutil.copytree(p, target_path, dirs_exist_ok=True)
+            return True
+    except Exception as e:
+        if verbose:
+            print(f"[data:fetch] Error fetching {stype} source '{src}': {e}")
+        return False
+    return False
 
 
 def _print_check_summary(results: List[Dict[str, Any]]) -> None:
