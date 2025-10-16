@@ -17,6 +17,7 @@ def start_vine_factory(
     batch_options: str = None,
     config_yml: str = None,
     debug_workers: bool = False,
+    distributed_audit: bool = False,
 ):
     cmd = [
         "vine_factory",
@@ -94,6 +95,64 @@ def start_vine_factory(
     if debug_workers:
         # from vine_factory help: --debug-workers
         cmd.append("--debug-workers")
+
+    if distributed_audit:
+        print(f"[provision] DEBUG: distributed_audit is enabled")
+        # Create strace logs directory
+        strace_log_dir = os.path.join(scratch_dir, "strace_logs")
+        print(f"[provision] DEBUG: Creating strace_log_dir: {strace_log_dir}")
+        os.makedirs(strace_log_dir, exist_ok=True)
+
+        # Create a wrapper script that uses PID for unique log files
+        # We use a script because we need shell variable substitution ($$)
+        wrapper_script_path = os.path.join(scratch_dir, "strace_wrapper.sh")
+        strace_log_base = os.path.abspath(os.path.join(strace_log_dir, "worker"))
+
+        print(f"[provision] DEBUG: wrapper_script_path: {wrapper_script_path}")
+        print(f"[provision] DEBUG: strace_log_base: {strace_log_base}")
+
+        # Use regular string concatenation to avoid f-string issues with $$
+        wrapper_script_content = (
+            "#!/bin/bash\n"
+            "# Strace wrapper for distributed auditing\n"
+            "# $$ will be replaced with the actual PID when executed\n"
+            "exec strace -f -o " + strace_log_base + ".$$.log -e trace=open,openat,read,write,close,stat,lstat,fstat,execve \"$@\"\n"
+        )
+
+        print(f"[provision] DEBUG: wrapper_script_content length: {len(wrapper_script_content)}")
+        print(f"[provision] DEBUG: wrapper_script_content:\n{wrapper_script_content}")
+
+        try:
+            print(f"[provision] DEBUG: Opening file for writing: {wrapper_script_path}")
+            with open(wrapper_script_path, 'w') as f:
+                bytes_written = f.write(wrapper_script_content)
+                f.flush()
+                os.fsync(f.fileno())
+                print(f"[provision] DEBUG: Wrote {bytes_written} bytes and flushed")
+            os.chmod(wrapper_script_path, 0o755)
+            print(f"[provision] Wrapper script created: {wrapper_script_path} ({bytes_written} bytes)")
+
+            # Verify it was written
+            import time
+            time.sleep(0.1)  # Small delay to ensure filesystem sync
+            with open(wrapper_script_path, 'r') as f:
+                verify_content = f.read()
+                print(f"[provision] DEBUG: Verification read {len(verify_content)} bytes")
+                if len(verify_content) != bytes_written:
+                    print(f"[provision] WARNING: File size mismatch! Expected {bytes_written}, got {len(verify_content)}")
+        except Exception as e:
+            print(f"[provision] ERROR creating wrapper script: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+
+        # Use the wrapper script
+        # NOTE: We don't use --wrapper-input because the script is already in scratch_dir
+        # and vine_factory would try to copy it to itself, which creates an empty file
+        wrapper_script_abs = os.path.abspath(wrapper_script_path)
+        cmd.append(f"--wrapper={wrapper_script_abs}")
+
+        print(f"[provision] Distributed audit enabled: strace logs in {os.path.abspath(strace_log_dir)}")
 
     print(f"[provision] Launching vine_factory: {' '.join(cmd)}")
 

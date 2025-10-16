@@ -187,6 +187,12 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
     )
 
     parser.add_argument(
+        "--distributed-audit",
+        action="store_true",
+        help="Enable distributed auditing by tracing worker system calls with strace.",
+    )
+
+    parser.add_argument(
         "--env-vars",
         required=False,
         help="Comma-separated list of KEY=VALUE pairs to set inside the conda environment.",
@@ -509,6 +515,7 @@ def run_floability(
             batch_options=args.batch_options,
             config_yml=args.compute_spec,
             debug_workers=args.debug_workers,
+            distributed_audit=args.distributed_audit,
         )
         cleanup_manager.register_subprocess(factory_proc)
     else:
