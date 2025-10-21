@@ -244,6 +244,20 @@ def _select_profile(raw: Dict[str, Any]) -> Tuple[str, Dict[str, Any], Dict[str,
 
 
 def _normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a shallow-normalized copy of a data item.
+
+    Normalization performed here is intentionally small and conservative:
+      - ensure a `name` exists (defaults to "<unnamed>")
+      - infer a `source_type` when the field is missing or falsy using simple
+        heuristics (multi, http, pelican/osdf, fs, unknown)
+
+    This function is the single place the rest of the pipeline calls to get a
+    predictable item shape. Callers still normalize nested `sources` when
+    iterating multi-source items, so this function keeps the contract minimal.
+
+    TODO: add support for additional default population
+    """
+
     # Copy to avoid mutating caller
     out = dict(item)
     out.setdefault("name", "<unnamed>")
@@ -254,7 +268,16 @@ def _normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
             out["source_type"] = "multi"
         else:
             src = out.get("source", "")
-            if src.startswith("http://") or src.startswith("https://"):
+            # coerce to string to avoid errors when Path objects are used
+            src = str(src) if src is not None else ""
+            # Allow an explicit lightweight scheme for backpack sources:
+            # e.g. 'backpack://data/foo.csv' -> source_type 'backpack' and
+            # source 'data/foo.csv' (the code that resolves backpack paths
+            # will join this relative path to the provided backpack_root).
+            if src.startswith("backpack://"):
+                out["source_type"] = "backpack"
+                out["source"] = src[len("backpack://") :]
+            elif src.startswith("http://") or src.startswith("https://"):
                 out["source_type"] = "http"
             elif src.startswith("osdf://") or src.startswith("pelican://"):
                 out["source_type"] = "pelican"
@@ -334,6 +357,12 @@ def _metadata_for_source(item: Dict[str, Any], backpack_root: Path) -> Dict[str,
         return http_file_metadata(src)
     if stype == "pelican":
         return pelican_file_metadata(src)
+    if stype == "backpack":
+        # Interpret relative backpack paths as relative to backpack_root
+        p = Path(src)
+        if not p.is_absolute():
+            p = (Path(backpack_root) / p).resolve()
+        return fs_file_metadata(str(p))
     if stype == "fs":
         # Interpret relative paths as relative to backpack_root unless absolute
         p = Path(src)

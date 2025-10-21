@@ -15,13 +15,14 @@ from .resource_provisioner import start_vine_factory
 from .cleanup import CleanupManager, install_signal_handlers
 from .jupyter_runner import start_jupyterlab, execute_notebook
 from .utils import create_unique_directory, safe_extract_tar, update_env_vars_in_conda
-from .data_handler import ensure_data_is_fetched
+#todo: check this file for full compatibility with new data handler before removing
+# from .data_handler import ensure_data_is_fetched
 from .performance_tracker import PerformanceTracker
 from .audit.audit import audit
 from .audit.cell_level.audit import audit as cell_level_audit
 from .catalog import send_catalog_update
 
-from .data.data_handler_new import check_data_spec, fetch_data_from_spec, verify_data_from_spec
+from .data.data_handler import check_data_spec, fetch_data_from_spec, verify_data_from_spec
 
 from . import __version__
 
@@ -388,8 +389,14 @@ def run_floability(
     if args.data_spec:
         print(f"[floability] Fetching data from {args.data_spec}")
         perf.start_timer("data_fetch")
-        ensure_data_is_fetched(args.data_spec, args.backpack_root)
+
+        #todo: change this call to a method that usees data mode
+        #todo: accept data profile similar to data command
+        fetch_data_from_spec(args.data_spec, args.backpack_root, verbose=True)
         perf.end_timer("data_fetch", "Time to fetch data from spec")
+
+        print("[floability] Data fetch completed. Exiting to test data fetch step.")
+        exit(0)  # Exit after data fetch in 'run' command if data_spec is provided
 
     # Generate a unique manager name if none is provided
     if args.manager_name is None:
@@ -725,7 +732,6 @@ def run_data_command(args: argparse.Namespace) -> None:
     elif args.mode == "fetch":
         print(f"[floability] Fetching data from {args.data_spec}")
         fetch_data_from_spec(args.data_spec, Path(args.backpack) if args.backpack else None, verbose=getattr(args, "verbose", False), force=getattr(args, "force_fetch", False))
-        # ensure_data_is_fetched(args.data_spec, args.backpack)
         return
     elif args.mode == "verify":
         print("[floability] 'data verify' selected — download + integrity checks (checksum/size/content-type).")
