@@ -242,13 +242,7 @@ def _add_data_args(data_parser: argparse.ArgumentParser) -> None:
     )
     data_parser.add_argument(
         "--backpack",
-        default=".",
         help="Path to the root of the backpack for 'backpack' source_type files (default '.')",
-    )
-    data_parser.add_argument(
-        "--backpack-root",
-        default=".",
-        help="Path to the root of the backpack (default='.').",
     )
     data_parser.add_argument(
         "--check-details",
@@ -680,24 +674,36 @@ def resolve_data_spec(args: argparse.Namespace) -> None:
     """
     Resolve data spec path for the 'data' sub-command. If not provided, resolve from backpack if available.
     """
-    if args.data_spec:
+    #todo: rename to resolve_data_args. we need to resolve both data_spec and backpack_root. if backpack is provided
+    # use that to resolve both. if data_spec is provided, but backpack is empty then use data_spec to resolve backpack_root.
+
+    if args.data_spec and args.backpack:
         return
 
-    if not args.backpack:
-        print(
-            "[floability] No data spec provided and no backpack specified. Cannot resolve data spec."
-        )
-        return
+    if args.data_spec and not args.backpack:
+        # Resolve backpack_root from data_spec if backpack is not provided
+        data_spec_path = Path(args.data_spec).resolve()
+        if data_spec_path.parent.name == "data":
+            args.backpack = str(data_spec_path.parent.parent)
+            print(f"[floability] Resolved backpack_root from data spec: {args.backpack}")
+        else:
+            args.backpack = str(data_spec_path.parent)
+            print(f"[floability] Data spec is not in expected 'data' directory structure. "
+                  f"Using parent as backpack_root: {args.backpack}")
+            return
 
-    backpack_dir = Path(args.backpack).resolve()
-    data_spec = backpack_dir / "data" / "data.yml"
-    if data_spec.is_file():
-        args.data_spec = str(data_spec)
-        print(f"[floability] Using data spec from backpack: {args.data_spec}")
-    else:
-        print(
-            f"[floability] No data spec found in backpack at expected location: {data_spec}"
-        )
+    if args.backpack and not args.data_spec:
+        # Resolve data_spec from backpack if backpack is provided but data_spec is not
+        backpack_dir = Path(args.backpack).resolve()
+        data_spec = backpack_dir / "data" / "data.yml"
+        if data_spec.is_file():
+            args.data_spec = str(data_spec)
+            print(f"[floability] Using data spec from backpack: {args.data_spec}")
+        else:
+            print(
+                f"[floability] No data spec found in backpack at expected location: {data_spec}"
+            )
+        return
 
 
 def run_data_command(args: argparse.Namespace) -> None:

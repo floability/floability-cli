@@ -71,14 +71,6 @@ def fetch_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: bo
         print(f"[data:fetch] Spec file not found: {spec_path}")
         return
 
-    if backpack_root is None:
-        # infer as grand parent of spec file: /path/to/<backpack>/data/data.yml -> <backpack>
-        if spec_path.parent.name == "data":
-            backpack_root = spec_path.parent.parent
-        else:
-            backpack_root = spec_path.parent  # fallback
-    backpack_root = Path(backpack_root).resolve()
-
     try:
         raw = _load_yaml(spec_path)
     except Exception as e:
@@ -131,6 +123,8 @@ def verify_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: b
             backpack_root = spec_path.parent
     backpack_root = Path(backpack_root).resolve()
 
+    print(f"\n[data:verify] Using backpack_root: {backpack_root}\n")
+
     try:
         raw = _load_yaml(spec_path)
     except Exception as e:
@@ -161,7 +155,8 @@ def verify_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: b
         # Ensure fetched (may skip if exists and not force)
         chosen_source = _fetch_single_item(item, backpack_root, verbose=verbose, force=force)
         # Evaluate integrity on local target
-        target_path = _resolve_target_path(item, backpack_root)
+        default_prefix = (Path(backpack_root) / "workflow").resolve() if backpack_root else (Path.cwd() / "workflow").resolve()
+        target_path = _resolve_target_path(item, backpack_root, target_prefix=default_prefix)
         local_exists = target_path.exists()
         is_dir = target_path.is_dir() if local_exists else False
 
@@ -350,15 +345,46 @@ def _metadata_for_source(item: Dict[str, Any], backpack_root: Path) -> Dict[str,
 
 
 # --------------------------- Fetch Logic ---------------------------
-def _resolve_target_path(item: Dict[str, Any], backpack_root: Path) -> Path:
+def _resolve_target_path(item: Dict[str, Any], backpack_root: Path, target_prefix: Optional[Path] = None) -> Path:
+    """Resolve final target path for an item.
+
+    Parameters:
+      - item: data item dict (may contain target_path/target_location/name)
+      - backpack_root: base backpack path (may be None-ish)
+      - target_prefix: explicit prefix Path to use for relative targets. If None,
+        defaults to <backpack_root>/workflow (or ./workflow when backpack_root is missing).
+
+    Behavior:
+      - Absolute target paths are returned as-is (resolved).
+      - Relative targets are placed under `target_prefix/target`.
+      - If `target_prefix` is relative, it is interpreted relative to `backpack_root`.
+    """
     target_rel = item.get("target_path") or item.get("target_location") or item.get("name")
-    return (backpack_root / target_rel).resolve()
+    target_p = Path(target_rel)
+
+    # Absolute -> return resolved absolute path
+    if target_p.is_absolute():
+        return target_p.resolve()
+
+    # Compute prefix path
+    if target_prefix:
+        prefix_p = Path(target_prefix)
+        if not prefix_p.is_absolute():
+            base = Path(backpack_root) if backpack_root else Path.cwd()
+            prefix_p = (base / prefix_p).resolve()
+    else:
+        base = Path(backpack_root) if backpack_root else Path.cwd()
+        prefix_p = (base / "workflow").resolve()
+
+    prefix_p.mkdir(parents=True, exist_ok=True)
+    return (prefix_p / target_p).resolve()
 
 
 def _fetch_single_item(item: Dict[str, Any], backpack_root: Path, verbose: bool = False, force: bool = False) -> Optional[Dict[str, Any]]:
     name = item.get("name", "<unnamed>")
     stype = item.get("source_type")
-    target_path = _resolve_target_path(item, backpack_root)
+    default_prefix = (Path(backpack_root) / "workflow").resolve() if backpack_root else Path.cwd() / "workflow"
+    target_path = _resolve_target_path(item, backpack_root, target_prefix=default_prefix)
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
     if target_path.exists() and not force:
