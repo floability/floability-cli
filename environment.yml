@@ -15,4 +15,4 @@ dependencies:
   - aiohttp       # optional async HTTP client
   - fsspec
   - pip:
-      - pelicans
+      - pelicanfs
