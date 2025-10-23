@@ -22,7 +22,7 @@ from .audit.audit import audit
 from .audit.cell_level.audit import audit as cell_level_audit
 from .catalog import send_catalog_update
 
-from .data.data_handler import check_data_spec, fetch_data_from_spec, verify_data_from_spec
+from .data.data_handler import check_data_from_spec, fetch_data_from_spec, verify_data_from_spec
 
 from . import __version__
 
@@ -146,6 +146,10 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
         help="Path to data.yml file specifying data to be fetched.",
     )
     parser.add_argument(
+        "--data-profile",
+        help="Override the profile name in the data spec (useful to select a profile other than default).",
+    )
+    parser.add_argument(
         "--backpack-root",
         default=".",
         help="Path to the root of the backpack (default='.').",
@@ -259,6 +263,10 @@ def _add_data_args(data_parser: argparse.ArgumentParser) -> None:
         "--force-fetch",
         action="store_true",
         help="Re-fetch (overwrite) targets even if they already exist.",
+    )
+    data_parser.add_argument(
+        "--data-profile",
+        help="Override the profile name in the data spec (useful to select a profile other than default).",
     )
     return None
 
@@ -389,10 +397,14 @@ def run_floability(
     if args.data_spec:
         print(f"[floability] Fetching data from {args.data_spec}")
         perf.start_timer("data_fetch")
-
-        #todo: change this call to a method that usees data mode
-        #todo: accept data profile similar to data command
-        fetch_data_from_spec(args.data_spec, args.backpack_root, verbose=True)
+        #todo: change this call to a method that uses data mode
+        # Accept --data-profile from CLI to override profile in YAML
+        fetch_data_from_spec(
+            args.data_spec,
+            args.backpack_root,
+            verbose=True,
+            data_profile=getattr(args, "data_profile", None),
+        )
         perf.end_timer("data_fetch", "Time to fetch data from spec")
 
         print("[floability] Data fetch completed. Exiting to test data fetch step.")
@@ -727,15 +739,33 @@ def run_data_command(args: argparse.Namespace) -> None:
     
     if  args.mode == "check":
         print("[floability] 'data check' selected — metadata-only checks (existence, size, file type).")
-        check_data_spec(args.data_spec, Path(args.backpack), show_details=getattr(args, "check_details", False), verbose=getattr(args, "verbose", False))
+        check_data_from_spec(
+            args.data_spec,
+            Path(args.backpack),
+            show_details=getattr(args, "check_details", False),
+            verbose=getattr(args, "verbose", False),
+            data_profile=getattr(args, "data_profile", None),
+        )
         return
     elif args.mode == "fetch":
         print(f"[floability] Fetching data from {args.data_spec}")
-        fetch_data_from_spec(args.data_spec, Path(args.backpack) if args.backpack else None, verbose=getattr(args, "verbose", False), force=getattr(args, "force_fetch", False))
+        fetch_data_from_spec(
+            args.data_spec,
+            Path(args.backpack) if args.backpack else None,
+            verbose=getattr(args, "verbose", False),
+            force=getattr(args, "force_fetch", False),
+            data_profile=getattr(args, "data_profile", None),
+        )
         return
     elif args.mode == "verify":
         print("[floability] 'data verify' selected — download + integrity checks (checksum/size/content-type).")
-        verify_data_from_spec(args.data_spec, Path(args.backpack) if args.backpack else None, verbose=getattr(args, "verbose", False), force=getattr(args, "force_fetch", False))
+        verify_data_from_spec(
+            args.data_spec,
+            Path(args.backpack) if args.backpack else None,
+            verbose=getattr(args, "verbose", False),
+            force=getattr(args, "force_fetch", False),
+            data_profile=getattr(args, "data_profile", None),
+        )
         return 
 
 

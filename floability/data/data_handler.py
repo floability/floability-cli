@@ -11,13 +11,13 @@ from .fs_file_utils import fs_file_metadata, fs_file_copy
 
 
 # --------------------------- Public API (stubs for now) ---------------------------
-def check_data_spec(data_spec: str, backpack_root: Path, show_details: bool = False, verbose: bool = False):
+def check_data_from_spec(data_spec: str, backpack_root: Path, show_details: bool = False, verbose: bool = False, data_profile: Optional[str] = None):
     """High-level entry: perform metadata-only checks for each data item.
 
     Steps:
       1. Load + normalize spec (apply defaults, pick profile).
       2. Iterate data items, gather metadata without downloading bodies.
-      3. Validate expected_size (within tolerance) and content_type (best-effort).
+            3. Validate expected_size (within tolerance).
       4. Print a summary report.
     """
     spec_path = Path(data_spec)
@@ -26,13 +26,13 @@ def check_data_spec(data_spec: str, backpack_root: Path, show_details: bool = Fa
         return
 
     try:
-        raw = _load_yaml(spec_path)
-    except Exception as e:
-        print(f"[data:check] Failed loading YAML: {e}")
-        return
-
-    try:
-        profile_name, profile, global_defaults = _select_profile(raw)
+        profile_name, profile = verify_data_spec(
+            data_spec=data_spec,
+            backpack_root=backpack_root,
+            requested_profile=data_profile,
+            verbose=verbose,
+            op_label="check",
+        )
     except ValueError as e:
         print(f"[data:check] {e}")
         return
@@ -40,11 +40,10 @@ def check_data_spec(data_spec: str, backpack_root: Path, show_details: bool = Fa
     items = profile.get("data", []) or []
     policy = profile.get("policy", {})
     tolerance = int(policy.get("size_tolerance_bytes", 0) or 0)
-
     if verbose:
-        print(f"[data:check] Profile: {profile_name} (items={len(items)}, size_tolerance={tolerance})")
+        print(f"[data:check] data_profile: {profile_name} (items={len(items)}, size_tolerance={tolerance})")
 
-    normalized_items = [_normalize_item(i) for i in items]
+    normalized_items = items
 
     results: List[Dict[str, Any]] = []
     for item in normalized_items:
@@ -56,7 +55,7 @@ def check_data_spec(data_spec: str, backpack_root: Path, show_details: bool = Fa
         _print_detailed_results(results)
 
 
-def fetch_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: bool = False, force: bool = False):
+def fetch_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: bool = False, force: bool = False, data_profile: Optional[str] = None):
     """Fetch (download/copy) all data items defined in the selected profile.
 
     Rules:
@@ -71,23 +70,31 @@ def fetch_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: bo
         print(f"[data:fetch] Spec file not found: {spec_path}")
         return
 
-    try:
-        raw = _load_yaml(spec_path)
-    except Exception as e:
-        print(f"[data:fetch] Failed loading YAML: {e}")
-        return
+    # Infer backpack_root if not provided
+    if backpack_root is None:
+        if spec_path.parent.name == "data":
+            backpack_root = spec_path.parent.parent
+        else:
+            backpack_root = spec_path.parent
+    backpack_root = Path(backpack_root).resolve()
 
     try:
-        profile_name, profile, _ = _select_profile(raw)
+        profile_name, profile = verify_data_spec(
+            data_spec=data_spec,
+            backpack_root=backpack_root,
+            requested_profile=data_profile,
+            verbose=verbose,
+            op_label="fetch",
+        )
     except ValueError as e:
         print(f"[data:fetch] {e}")
         return
 
     items = profile.get("data", []) or []
     if verbose:
-        print(f"[data:fetch] Profile '{profile_name}' items={len(items)} backpack_root={backpack_root}")
+        print(f"[data:fetch] data_profile '{profile_name}' items={len(items)} backpack_root={backpack_root}")
 
-    normalized_items = [_normalize_item(i) for i in items]
+    normalized_items = items
 
     total = len(normalized_items)
     for idx, item in enumerate(normalized_items, start=1):
@@ -101,13 +108,12 @@ def fetch_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: bo
         print("[data:fetch] Completed.")
 
 
-def verify_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: bool = False, force: bool = False):
+def verify_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: bool = False, force: bool = False, data_profile: Optional[str] = None):
     """Verify data items: ensure present (download/copy if needed) then validate integrity.
 
     Integrity signals supported:
       * checksum: (algorithm:hex) or plain hex (algorithm inferred by length)
       * expected_size (+ policy.size_tolerance_bytes)
-      * content_type (best-effort using remote metadata as in check mode)
 
     Produces a summary table and (if verbose) per-item details.
     """
@@ -126,13 +132,13 @@ def verify_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: b
     print(f"\n[data:verify] Using backpack_root: {backpack_root}\n")
 
     try:
-        raw = _load_yaml(spec_path)
-    except Exception as e:
-        print(f"[data:verify] Failed loading YAML: {e}")
-        return
-
-    try:
-        profile_name, profile, _ = _select_profile(raw)
+        profile_name, profile = verify_data_spec(
+            data_spec=data_spec,
+            backpack_root=backpack_root,
+            requested_profile=data_profile,
+            verbose=verbose,
+            op_label="verify",
+        )
     except ValueError as e:
         print(f"[data:verify] {e}")
         return
@@ -142,9 +148,9 @@ def verify_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: b
     tolerance = int(policy.get("size_tolerance_bytes", 0) or 0)
 
     if verbose:
-        print(f"[data:verify] Profile '{profile_name}' items={len(items)} tolerance={tolerance} backpack_root={backpack_root}")
+        print(f"[data:verify] data_profile '{profile_name}' items={len(items)} tolerance={tolerance} backpack_root={backpack_root}")
 
-    normalized_items = [_normalize_item(i) for i in items]
+    normalized_items = items
 
     results: List[Dict[str, Any]] = []
     total = len(normalized_items)
@@ -173,15 +179,6 @@ def verify_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: b
                 size_ok = diff <= tolerance
                 size_note = f"diff={diff}" if diff else "exact"
 
-        # Remote metadata (for content_type) – reuse logic (best-effort)
-        remote_meta = _metadata_for_source(item if item.get('source_type') != 'multi' else (chosen_source or item), backpack_root)
-        expected_ct = item.get("content_type")
-        content_type_ok = None
-        content_type_actual = remote_meta.get("type")
-        if expected_ct and content_type_actual:
-            ct_actual = str(content_type_actual)
-            content_type_ok = ct_actual.startswith(expected_ct) or ct_actual == expected_ct
-
         # Checksum verification
         checksum_spec = _extract_checksum_field(item)
         checksum_alg = None
@@ -199,6 +196,15 @@ def verify_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: b
                     if verbose:
                         print(f"[data:verify] Error computing checksum for '{name}': {e}")
 
+        # Enforce verification policy
+        verification_type = str(policy.get("verification_type", "size_only") or "size_only").strip().lower()
+        if verification_type == "strict":
+            # Require checksum to be present and to match
+            if not checksum_spec:
+                checksum_ok = False
+            elif checksum_ok is not True:
+                checksum_ok = False
+
         results.append({
             "name": name,
             "exists": local_exists,
@@ -212,81 +218,218 @@ def verify_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: b
             "checksum_expected": checksum_expected,
             "checksum_actual": checksum_actual,
             "checksum_ok": checksum_ok,
-            "content_type_expected": expected_ct,
-            "content_type_actual": content_type_actual,
-            "content_type_ok": content_type_ok,
         })
         if verbose:
-            print(f"[data:verify] Finished {idx}/{total}: {name} exists={local_exists} size_ok={size_ok} checksum_ok={checksum_ok} ct_ok={content_type_ok}")
+            print(f"[data:verify] Finished {idx}/{total}: {name} exists={local_exists} size_ok={size_ok} checksum_ok={checksum_ok}")
 
     _print_verify_summary(results)
     if verbose:
         _print_verify_details(results)
 
 
-# --------------------------- Parsing / Normalization ---------------------------
+# --------------------------- Spec Preparation ---------------------------
+def verify_data_spec(
+    data_spec: str,
+    backpack_root: Optional[Path],
+    requested_profile: Optional[str] = None,
+    verbose: bool = False,
+    op_label: str = "check",
+) -> Tuple[str, Dict[str, Any]]:
+    """Load, select, validate, and normalize a data spec for downstream actions.
+
+    Returns (profile_name, normalized_profile). Raises ValueError on failures.
+    """
+    spec_path = Path(data_spec)
+    try:
+        raw = _load_yaml(spec_path)
+    except Exception as e:
+        raise ValueError(f"Failed loading YAML: {e}")
+
+    try:
+        profile_name, profile, _ = _select_profile(raw, requested_profile=requested_profile)
+    except ValueError as e:
+        raise ValueError(str(e))
+
+    try:
+        _validate_required_fields(profile)
+    except ValueError as e:
+        raise ValueError(f"Spec validation failed: {e}")
+
+    # Normalize spec
+    normalized = _normalize_data_profile(profile, backpack_root=backpack_root)
+    if verbose:
+        print(f"[data:{op_label}] normalized data_profile:")
+        try:
+            print(yaml.safe_dump(normalized, sort_keys=False))
+        except Exception:
+            print(normalized)
+
+    return profile_name, normalized
+
+
+# --------------------------- Parsing / Selection / Validation ---------------------------
 def _load_yaml(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
-def _select_profile(raw: Dict[str, Any]) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
-    profiles = raw.get("profiles")
+def _select_profile(raw: Dict[str, Any], requested_profile: Optional[str] = None) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
+    # Support both new 'data_profiles' and legacy 'profiles'
+    profiles = raw.get("data_profiles")
+    legacy = False
+    if not profiles:
+        profiles = raw.get("profiles")
+        legacy = True if profiles else False
     if not profiles or not isinstance(profiles, dict):
-        raise ValueError("Spec missing 'profiles' mapping")
+        raise ValueError("Spec missing 'data_profiles' (or legacy 'profiles') mapping")
+    # Requested profile via CLI takes precedence if provided.
+    if requested_profile:
+        if requested_profile not in profiles:
+            raise ValueError(f"Requested profile '{requested_profile}' not found in spec")
+        return requested_profile, profiles[requested_profile], {}
 
     default_profile = raw.get("default_profile") or next(iter(profiles.keys()))
     profile = profiles.get(default_profile)
     if profile is None:
-        raise ValueError(f"Profile '{default_profile}' not found in spec")
+        raise ValueError(f"Data profile '{default_profile}' not found in spec")
 
     return default_profile, profile, {}
 
 
-def _normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a shallow-normalized copy of a data item.
+def _validate_required_fields(profile: Dict[str, Any]) -> None:
+    """Validate that required fields exist in a selected profile.
 
-    Normalization performed here is intentionally small and conservative:
-      - ensure a `name` exists (defaults to "<unnamed>")
-      - infer a `source_type` when the field is missing or falsy using simple
-        heuristics (multi, http, pelican/osdf, fs, unknown)
-
-    This function is the single place the rest of the pipeline calls to get a
-    predictable item shape. Callers still normalize nested `sources` when
-    iterating multi-source items, so this function keeps the contract minimal.
-
-    TODO: add support for additional default population
+    Requirements:
+      - profile.data must be a non-empty list
+      - each item must define either 'source' or a non-empty 'sources' list
+      - each item must define 'target_location' (or legacy 'target_path')
+      - if 'sources' is present, each entry must define 'source'
     """
+    data_list = profile.get("data")
+    if not isinstance(data_list, list) or len(data_list) == 0:
+        raise ValueError("Profile missing non-empty 'data' list")
 
-    # Copy to avoid mutating caller
-    out = dict(item)
-    out.setdefault("name", "<unnamed>")
+    for idx, item in enumerate(data_list, start=1):
+        has_source = bool(item.get("source"))
+        sources = item.get("sources")
+        if sources:
+            if not isinstance(sources, list) or len(sources) == 0:
+                raise ValueError(f"Spec item #{idx} has invalid 'sources' (must be non-empty list)")
+            for j, s in enumerate(sources, start=1):
+                if not s.get("source"):
+                    raise ValueError(f"Spec item #{idx} sources[{j}] missing required 'source'")
+        elif not has_source:
+            raise ValueError(f"Spec item #{idx} missing required 'source' (or 'sources')")
 
-    # Infer source_type for multi or by scheme
-    if "source_type" not in out or not out["source_type"]:
-        if "sources" in out:
-            out["source_type"] = "multi"
-        else:
-            src = out.get("source", "")
-            # coerce to string to avoid errors when Path objects are used
-            src = str(src) if src is not None else ""
-            # Allow an explicit lightweight scheme for backpack sources:
-            # e.g. 'backpack://data/foo.csv' -> source_type 'backpack' and
-            # source 'data/foo.csv' (the code that resolves backpack paths
-            # will join this relative path to the provided backpack_root).
-            if src.startswith("backpack://"):
-                out["source_type"] = "backpack"
-                out["source"] = src[len("backpack://") :]
-            elif src.startswith("http://") or src.startswith("https://"):
-                out["source_type"] = "http"
-            elif src.startswith("osdf://") or src.startswith("pelican://"):
-                out["source_type"] = "pelican"
-            elif src:
-                out["source_type"] = "fs"  # fallback local path
-            else:
-                out["source_type"] = "unknown"
+        if not (item.get("target_location") or item.get("target_path")):
+            raise ValueError(f"Spec item #{idx} missing required 'target_location'")
 
+
+def _normalize_data_profile(profile: Dict[str, Any], backpack_root: Optional[Path] = None) -> Dict[str, Any]:
+    """Return a normalized copy of a selected profile with defaults applied.
+
+    Normalizations:
+      - ensure 'policy' object exists with default keys:
+          retry_attempts=0, timeout=None, size_tolerance_bytes=0,
+          run_operation='fetch', verification_type='size_only'
+      - per-item:
+          * ensure 'name' present (fallback to basename of target_location or '<unnamed>')
+          * infer 'source_type' (and for nested 'sources' entries as well)
+          * if only 'target_path' is present, copy to 'target_location'
+          * add 'target_prefix' if missing and backpack_root provided (to <backpack_root>/workflow)
+    """
+    from copy import deepcopy
+
+    out = deepcopy(profile)
+    policy = dict(out.get("policy") or {})
+    policy.setdefault("retry_attempts", 0)
+    policy.setdefault("timeout", None)
+    policy.setdefault("size_tolerance_bytes", 0)
+    policy.setdefault("run_operation", "fetch")
+    policy.setdefault("verification_type", "size_only")
+    out["policy"] = policy
+
+    data_list = out.get("data") or []
+    norm_list: List[Dict[str, Any]] = []
+    default_prefix: Optional[str] = None
+    if backpack_root:
+        default_prefix = str((Path(backpack_root) / "workflow").resolve())
+
+    for item in data_list:
+        it = _normalize_data_item(item)
+        # default target_prefix if backpack_root provided and item missing it
+        if default_prefix and not it.get("target_prefix"):
+            it["target_prefix"] = default_prefix
+        norm_list.append(it)
+
+    out["data"] = norm_list
     return out
+
+
+def _normalize_data_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize a single data item (non data-dependent fields only).
+
+    - Promote legacy target_path to target_location
+    - Ensure name (fallback to basename of target_location)
+    - Infer source_type for item and nested sources
+    - Do NOT infer target path; target_location is required
+    """
+    it = dict(item)
+
+    # unify legacy target_path
+    if not it.get("target_location") and it.get("target_path"):
+        it["target_location"] = it["target_path"]
+
+    # derive name if missing (prefer basename of target_location)
+    if not it.get("name"):
+        tloc = str(it.get("target_location") or "")
+        it["name"] = Path(tloc).name if tloc else "<unnamed>"
+
+    # infer source_type for multi or by scheme
+    if "source_type" not in it or not it["source_type"]:
+        if "sources" in it and it["sources"]:
+            it["source_type"] = "multi"
+        else:
+            src = str(it.get("source", "") or "")
+            if src.startswith("backpack://"):
+                it["source_type"] = "backpack"
+                it["source"] = src[len("backpack://") :]
+            elif src.startswith("http://") or src.startswith("https://"):
+                it["source_type"] = "http"
+            elif src.startswith("osdf://") or src.startswith("pelican://"):
+                it["source_type"] = "pelican"
+            elif src:
+                it["source_type"] = "fs"
+            else:
+                it["source_type"] = "unknown"
+
+    # normalize nested sources
+    if isinstance(it.get("sources"), list):
+        norm_sources = []
+        for s in it["sources"]:
+            s_it = dict(s)
+            # infer source_type for nested
+            if "source_type" not in s_it or not s_it["source_type"]:
+                src = str(s_it.get("source", "") or "")
+                if src.startswith("backpack://"):
+                    s_it["source_type"] = "backpack"
+                    s_it["source"] = src[len("backpack://") :]
+                elif src.startswith("http://") or src.startswith("https://"):
+                    s_it["source_type"] = "http"
+                elif src.startswith("osdf://") or src.startswith("pelican://"):
+                    s_it["source_type"] = "pelican"
+                elif src:
+                    s_it["source_type"] = "fs"
+                else:
+                    s_it["source_type"] = "unknown"
+            norm_sources.append(s_it)
+        it["sources"] = norm_sources
+
+    return it
+
+
+# (legacy helper _normalize_item removed; normalization now handled by
+#  _normalize_data_profile/_normalize_data_item before use)
 
 
 # --------------------------- Item Checking Logic ---------------------------
@@ -294,17 +437,16 @@ def _check_single_item(item: Dict[str, Any], tolerance: int, backpack_root: Path
     name = item.get("name", "<unnamed>")
     stype = item.get("source_type")
     expected_size = item.get("expected_size")
-    content_type = item.get("content_type")
 
-    # For output path (target_path) relative to backpack root
-    target_rel = item.get("target_path") or item.get("target_location")
+    # For output path (target) relative to backpack root (for display only)
+    target_rel = item.get("target_location") or item.get("target_path")
 
     # Multi-source: pick first successful metadata
     meta_chain: List[Dict[str, Any]] = []
     if stype == "multi":
         sources = item.get("sources", [])
         for s in sources:
-            s_norm = _normalize_item(s)
+            s_norm = s
             m = _metadata_for_source(s_norm, backpack_root)
             meta_chain.append(m)
             if m.get("exists"):
@@ -327,12 +469,6 @@ def _check_single_item(item: Dict[str, Any], tolerance: int, backpack_root: Path
             size_ok = diff <= tolerance
             size_note = f"diff={diff}" if diff else "exact"
 
-    content_type_ok = None
-    if content_type and meta.get("type"):
-        # Simple 'startswith' heuristic for MIME supertype
-        ct_actual = str(meta.get("type"))
-        content_type_ok = ct_actual.startswith(content_type) or ct_actual == content_type
-
     return {
         "name": name,
         "source_type": stype,
@@ -341,9 +477,6 @@ def _check_single_item(item: Dict[str, Any], tolerance: int, backpack_root: Path
         "actual_size": actual_size,
         "size_ok": size_ok,
         "size_note": size_note,
-        "content_type_expected": content_type,
-        "content_type_actual": meta.get("type"),
-        "content_type_ok": content_type_ok,
         "exists": meta.get("exists"),
         "meta": meta,
         "multi_chain": meta_chain if stype == "multi" else None,
@@ -388,15 +521,24 @@ def _resolve_target_path(item: Dict[str, Any], backpack_root: Path, target_prefi
       - Relative targets are placed under `target_prefix/target`.
       - If `target_prefix` is relative, it is interpreted relative to `backpack_root`.
     """
-    target_rel = item.get("target_path") or item.get("target_location") or item.get("name")
+    target_rel = item.get("target_location") or item.get("target_path")
+    if not target_rel:
+        raise ValueError("Missing required 'target_location' in data item")
     target_p = Path(target_rel)
 
     # Absolute -> return resolved absolute path
     if target_p.is_absolute():
         return target_p.resolve()
 
+    # Choose prefix path: per-item target_prefix overrides function argument
+    item_prefix = item.get("target_prefix")
     # Compute prefix path
-    if target_prefix:
+    if item_prefix:
+        prefix_p = Path(item_prefix)
+        if not prefix_p.is_absolute():
+            base = Path(backpack_root) if backpack_root else Path.cwd()
+            prefix_p = (base / prefix_p).resolve()
+    elif target_prefix:
         prefix_p = Path(target_prefix)
         if not prefix_p.is_absolute():
             base = Path(backpack_root) if backpack_root else Path.cwd()
@@ -407,6 +549,30 @@ def _resolve_target_path(item: Dict[str, Any], backpack_root: Path, target_prefi
 
     prefix_p.mkdir(parents=True, exist_ok=True)
     return (prefix_p / target_p).resolve()
+
+
+def _copy_local_source_to_target(src_path: Path, target_path: Path, *, force: bool = False, verbose: bool = False) -> bool:
+    """Copy a local file or directory (src_path) into target_path.
+
+    Uses fs_file_copy for files (preserves resume/atomic behavior) and
+    shutil.copytree for directories. Returns True on success, False on missing source.
+    """
+    if not src_path.exists():
+        if verbose:
+            print(f"[data:fetch] Source missing (local): {src_path}")
+        return False
+
+    if src_path.is_file():
+        fs_file_copy(str(src_path), dest_dir=str(target_path.parent), filename=target_path.name, overwrite=force)
+    else:
+        import shutil
+        if force and target_path.exists():
+            if target_path.is_dir():
+                shutil.rmtree(target_path)
+            else:
+                target_path.unlink(missing_ok=True)
+        shutil.copytree(src_path, target_path, dirs_exist_ok=True)
+    return True
 
 
 def _fetch_single_item(item: Dict[str, Any], backpack_root: Path, verbose: bool = False, force: bool = False) -> Optional[Dict[str, Any]]:
@@ -431,7 +597,7 @@ def _fetch_single_item(item: Dict[str, Any], backpack_root: Path, verbose: bool 
 
     if stype == "multi":
         for src_entry in item.get("sources", []):
-            s_norm = _normalize_item(src_entry)
+            s_norm = src_entry
             if verbose:
                 print(f"[data:fetch] Trying multi source for '{name}': type={s_norm.get('source_type')} source={s_norm.get('source')}")
             if _attempt_fetch_source(s_norm, target_path, backpack_root, verbose=verbose, force=force):
@@ -465,24 +631,11 @@ def _attempt_fetch_source(item: Dict[str, Any], target_path: Path, backpack_root
         if stype == "pelican":
             pelican_file_download(src, dest_dir=str(target_path.parent), filename=target_path.name, overwrite=force)
             return True
-        if stype == "fs":
+        if stype in ("backpack", "fs"):
             p = Path(src)
             if not p.is_absolute():
-                p = (backpack_root / p).resolve()
-            if not p.exists():
-                if verbose:
-                    print(f"[data:fetch] Source missing (fs): {p}")
-                return False
-            # copy file or directory
-            if p.is_file():
-                fs_file_copy(str(p), dest_dir=str(target_path.parent), filename=target_path.name, overwrite=force)
-            else:
-                # directory copy simple recursive
-                import shutil
-                if force and target_path.exists():
-                    shutil.rmtree(target_path)
-                shutil.copytree(p, target_path, dirs_exist_ok=True)
-            return True
+                p = (Path(backpack_root) / p).resolve()
+            return _copy_local_source_to_target(p, target_path, force=force, verbose=verbose)
     except Exception as e:
         if verbose:
             print(f"[data:fetch] Error fetching {stype} source '{src}': {e}")
@@ -530,7 +683,7 @@ def _compute_checksum(path: Path, alg: str, chunk_size: int = 1024 * 1024) -> st
 # --------------------------- Verify Reporting ---------------------------
 def _print_verify_summary(results: List[Dict[str, Any]]) -> None:
     print("[data:verify] Summary:")
-    headers = ["name", "exists", "size_ok", "checksum_ok", "content_type_ok", "expected_size", "actual_size", "checksum_alg"]
+    headers = ["name", "exists", "size_ok", "checksum_ok", "expected_size", "actual_size", "checksum_alg"]
     colw = {h: max(len(h), *(len(str(r.get(h, ''))) for r in results)) for h in headers} if results else {h: len(h) for h in headers}
     def fmt_row(r: Dict[str, Any]):
         return " ".join(str(r.get(h, "")).ljust(colw[h]) for h in headers)
@@ -541,8 +694,7 @@ def _print_verify_summary(results: List[Dict[str, Any]]) -> None:
     missing = sum(1 for r in results if not r.get("exists"))
     size_fail = sum(1 for r in results if r.get("size_ok") is False)
     checksum_fail = sum(1 for r in results if r.get("checksum_ok") is False)
-    ctype_fail = sum(1 for r in results if r.get("content_type_ok") is False)
-    print(f"[data:verify] Items: {total}, missing: {missing}, size_fail: {size_fail}, checksum_fail: {checksum_fail}, content_type_fail: {ctype_fail}")
+    print(f"[data:verify] Items: {total}, missing: {missing}, size_fail: {size_fail}, checksum_fail: {checksum_fail}")
 
 
 def _print_verify_details(results: List[Dict[str, Any]]) -> None:
@@ -553,13 +705,12 @@ def _print_verify_details(results: List[Dict[str, Any]]) -> None:
         print(f"  exists: {r.get('exists')} is_dir={r.get('is_dir')}")
         print(f"  expected_size: {r.get('expected_size')} actual_size: {r.get('actual_size')} size_ok={r.get('size_ok')} note={r.get('size_note')}")
         print(f"  checksum_alg: {r.get('checksum_alg')} checksum_expected: {r.get('checksum_expected')} checksum_actual: {r.get('checksum_actual')} checksum_ok={r.get('checksum_ok')}")
-        print(f"  content_type_expected: {r.get('content_type_expected')} content_type_actual: {r.get('content_type_actual')} content_type_ok={r.get('content_type_ok')}")
     print("[data:verify] End of detailed report")
 
 
 def _print_check_summary(results: List[Dict[str, Any]]) -> None:
     print("[data:check] Summary:")
-    headers = ["name", "source_type", "exists", "size_ok", "content_type_ok", "expected_size", "actual_size", "size_note"]
+    headers = ["name", "source_type", "exists", "size_ok", "expected_size", "actual_size", "size_note"]
     # Simple column widths
     colw = {h: max(len(h), *(len(str(r.get(h, ''))) for r in results)) for h in headers}
     def fmt_row(r: Dict[str, Any]):
@@ -571,8 +722,7 @@ def _print_check_summary(results: List[Dict[str, Any]]) -> None:
     total = len(results)
     missing = sum(1 for r in results if not r.get("exists"))
     size_fail = sum(1 for r in results if r.get("size_ok") is False)
-    ctype_fail = sum(1 for r in results if r.get("content_type_ok") is False)
-    print(f"[data:check] Items: {total}, missing: {missing}, size_fail: {size_fail}, content_type_fail: {ctype_fail}")
+    print(f"[data:check] Items: {total}, missing: {missing}, size_fail: {size_fail}")
 
 
 def _print_detailed_results(results: List[Dict[str, Any]]) -> None:
@@ -583,8 +733,6 @@ def _print_detailed_results(results: List[Dict[str, Any]]) -> None:
         print(f"  target_path: {r.get('target_path')}")
         print(f"  expected_size: {r.get('expected_size')}")
         print(f"  actual_size: {r.get('actual_size')} size_ok={r.get('size_ok')} note={r.get('size_note')}")
-        print(f"  content_type_expected: {r.get('content_type_expected')}")
-        print(f"  content_type_actual: {r.get('content_type_actual')} content_type_ok={r.get('content_type_ok')}")
         meta = r.get('meta', {})
         # Limit headers/raw to avoid huge dumps
         raw = meta.get('raw') if isinstance(meta, dict) else None
