@@ -3,7 +3,7 @@ Welcome to the documentation for Floability CLI — a toolkit for packaging and 
 
 Each backpack bundles your workflow code, software environment, data, and resource requirements, enabling portable execution across local machines and HPC clusters.
 
-## Getting Started
+## Quick Start
 The easiest way to begin is to follow the [Getting Started Guide](getting-started/index.md).
 It walks you through installation, setup, and running your first backpack.
 
@@ -13,9 +13,15 @@ You can also explore the [Examples Repository](https://github.com/floability/flo
 
 The documentation is organized into the following sections:
 
-- **Getting Started** — Installation, configuration, and first steps
-- **Guides** — In-depth how-tos (Backpacks, Data handling)
-- **Reference** — CLI and API command reference
+| Section | Description |
+|----------|-------------|
+| **Getting Started** | Installation steps and how to run your first backpack. |
+| **Concepts** | Core ideas — how backpacks work, auditing, and reproducibility principles. |
+| **Deployment** | Instructions for running Floability on local systems and HPC clusters, with site-specific guides. |
+| **Reference** | Detailed command-line and YAML specification reference. |
+| **Examples** | Real workflows and practical demonstrations. |
+| **Guides** | Troubleshooting tips and additional usage notes. |
+
 
 ---
 
