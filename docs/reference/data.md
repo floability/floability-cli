@@ -1,8 +1,6 @@
-## Floability data: spec-driven data handling
+## Floability Data Reference
 
 This document describes the Floability data capability: the YAML data spec format, the `floability data` command, available CLI options, and how to use data profiles with `run` and `execute`.
-
-
 
 ## Quick contract
 
@@ -11,30 +9,6 @@ This document describes the Floability data capability: the YAML data spec forma
 - Error modes: missing sources, checksum/size mismatch, network errors, permission errors when writing to target.
 - Success criteria: requested files exist at target, and (for `verify`) integrity checks (checksum/size) pass.
 
-### Check vs. Verify (at a glance)
-
-- Check
-  - What it does: validates that each source is reachable/accessible using remote or local metadata only — no files are downloaded.
-  - What it verifies: if `expected_size` is provided, compares the reported size; otherwise verifies existence/readability.
-  - When to use: when your application will download data itself later, but you want Floability to ensure the sources are valid before starting the workflow.
-
-- Verify (default = size_only)
-  - What it does: downloads/copies targets as needed and then verifies integrity according to `verification_type`.
-  - size_only (default): if `expected_size` is provided, checks size; otherwise falls back to existence.
-
-- Verify (strict)
-  - What it does: downloads/copies targets as needed and requires a checksum to be provided and to match.
-  - Recommended for production or critical datasets where content integrity must be guaranteed.
-
-## Table of contents
-
-- How to create a basic `data.yml`
-- CLI: `floability data` — modes and examples
-- `data` command options (all flags)
-- YAML spec fields and schema (full)
-- Data item fields and examples
-- How data profiles are used with `run` and `execute`
-- Notes, edge cases, and recommendations
 
 ## How to create a basic data.yml
 
@@ -49,7 +23,7 @@ data_profiles:
 
 ```
 
-What this spec means (plain language):
+What this spec means:
 
 - This file declares a single data profile named `local_data`.
 - It contains one data item whose source is inside the backpack (`backpack://...`).
