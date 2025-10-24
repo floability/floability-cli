@@ -1,3 +1,379 @@
+# Floability Data Reference
+
+This page documents the Floability data spec (data.yml), the `floability data` command, and how profiles interact with `run` and `execute`.
+
+## Quick contract
+
+
+- **Inputs**: a YAML data spec file (`data.yml`) with one or more profiles (`data_profiles`), each having a `data` list and optional `policy`.
+
+- **Outputs**: files staged into the workflow area (by default under `<backpack_root>/workflow/...`) and verification summaries on stdout.
+
+- **Error modes**: missing sources, checksum/size mismatch, network failures, permission errors when writing targets.
+
+- **Success criteria**: requested files exist at target and integrity checks pass (per `verification_type`).
+
+
+## How to create a basic data.yml
+
+Minimal example (only required fields):
+
+```yaml
+data_profiles:
+  local_data:
+    data:
+      - source: backpack://data/sample-data.csv
+        target_location: data/sample-data.csv
+```
+
+What this means:
+
+
+- Declares a profile `local_data` with one item.
+
+- The item uses a backpack-relative source (`backpack://...`).
+
+- `target_location` is relative to `<backpack_root>/workflow/` by default.
+
+Add integrity (`expected_size`, `checksum`) later to use `verify`.
+
+## A more complete example (checksums, multiple profiles, policy)
+
+Same data item across two profiles; only the source differs. Switch via `--data-profile`.
+
+```yaml
+schema_version: 1.0
+default_profile: backpack-data
+
+data_profiles:
+  backpack-data:
+    policy:
+      retry_attempts: 0
+      timeout: 30
+      size_tolerance_bytes: 10
+      run_operation: fetch
+      verification_type: strict
+    data:
+      - name: sample_csv
+        source_type: backpack
+        source: data/samples/sample.csv
+        expected_size: 43210
+        checksum: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        target_location: data/samples/sample.csv
+
+  pelican-data:
+    policy:
+      retry_attempts: 2
+      timeout: 60
+      size_tolerance_bytes: 64
+      run_operation: verify
+      verification_type: strict
+    data:
+      - name: sample_csv
+        sources:
+          - source_type: pelican
+            source: pelican://server.example.org:443/datasets/samples/sample.csv
+          - source_type: backpack
+            source: data/samples/sample.csv
+        expected_size: 43210
+        checksum: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        target_location: data/samples/sample.csv
+        # target_prefix: /abs/path/to/staging
+```
+
+Notes:
+
+
+- Profiles represent strategies/environments; the staged target and integrity values are identical.
+
+- `verification_type: strict` requires a checksum to be present and match. Without checksum, prefer `size_only` and set `expected_size`.
+
+- `run_operation` hints what `floability run` should do when `--data-spec` is provided (`fetch` for dev, `verify` for prod).
+
+
+## CLI: `floability data` — overview
+
+The `data` command uses `--mode` to choose behavior:
+
+
+- `check`: metadata-only (existence, size if provided). No writes.
+
+- `fetch`: download/copy sources to targets.
+
+- `verify`: fetch as needed, then integrity-check (checksum/size) per policy.
+
+Examples:
+
+```sh
+floability data --data-spec example/cms-physics-dv5/data/data.yml --mode check
+floability data --data-spec example/cms-physics-dv5/data/data.yml --mode fetch --data-profile backpack-data --verbose
+floability data --data-spec example/cms-physics-dv5/data/data.yml --mode verify --backpack . --force-fetch
+```
+
+### All available options
+
+
+- `--mode` one of `check`, `fetch`, `verify` (default: `check`)
+
+- `--data-spec` path to YAML spec
+
+- `--backpack` backpack root for resolving `backpack` sources (default: `.`)
+
+- `--check-details` print per-item metadata details (check mode)
+
+- `--verbose` increase logging verbosity
+
+- `--force-fetch` overwrite targets if they exist
+
+- `--data-profile` override YAML `default_profile`
+
+### How `--data-spec` and `--backpack` are resolved
+
+
+- Both provided: used as given.
+
+- Only `--backpack`: spec inferred at `<backpack>/data/data.yml`.
+
+- Only `--data-spec`: if spec parent is `data`, backpack is its parent’s parent; otherwise backpack is the spec’s parent.
+
+## YAML spec: top-level structure (human-readable)
+
+Top-level keys (schema 1.0):
+
+
+- `schema_version` optional (default `1.0`). Informational.
+
+- `default_profile` optional (defaults to first in `data_profiles`).
+
+- `data_profiles` required. Map of profile name → data profile.
+
+Profile schema:
+
+
+- `policy` optional
+
+  - `retry_attempts` int ≥ 0 (default 0)
+
+  - `timeout` seconds (int ≥ 0)
+
+  - `size_tolerance_bytes` int ≥ 0 (default 0)
+
+  - `run_operation` `check|fetch|verify` (hint)
+
+  - `verification_type` `strict|size_only` (default `size_only`)
+
+
+- `data` required — list of items
+
+Item schema:
+
+
+- `name` optional (string)
+
+- `source_type` optional; inferred from `source` if omitted (`backpack`, `fs`, `pelican`, `http`, `osdf`)
+
+- `source` required if `sources` not provided
+
+- `sources` optional list (fallbacks). Each may have `source_type` and must have `source`.
+
+- `target_location` required (string). Relative resolves under `<backpack_root>/workflow`.
+
+- `target_prefix` optional (string). Overrides default staging prefix.
+
+- `expected_size` optional (int). Compared with `size_tolerance_bytes`.
+
+- `checksum` optional (string). Recommend `sha256:<hex>`.
+
+- `content_type` optional (string). Reserved.
+
+Example item (remote/pelican):
+
+```yaml
+- name: diboson_zz_6
+  source_type: pelican
+  source: pelican://disc-head-002.crc.nd.edu:443/nd/.../nano_mc2017_6.root
+  expected_size: 190634
+  checksum: sha256:4c976188f...
+  target_location: data/samples/diboson/zz/nano_mc2017_6.root
+```
+
+Notes on `source` forms:
+
+
+- `backpack`/`fs` use local paths. Backpack relative paths resolve against `--backpack`.
+
+- `backpack://path/to/file` is normalized to `source_type: backpack` with prefix stripped.
+
+- Remote schemes (`pelican://`, `http(s)://`) are handled by the respective helpers.
+
+### Source type examples
+
+```yaml
+# backpack
+- name: local_csv
+  source_type: backpack
+  source: data/local.csv
+  target_location: data/local.csv
+
+# fs
+- name: shared_parquet
+  source_type: fs
+  source: /data/shared/sample.parquet
+  target_location: data/shared/sample.parquet
+
+# http
+- name: http_json
+  source_type: http
+  source: https://example.org/data/sample.json
+  expected_size: 2048
+  target_location: data/http/sample.json
+
+# pelican
+- name: pelican_root
+  source_type: pelican
+  source: pelican://server.example.org:443/nd/datasets/sample-1.root
+  expected_size: 100000
+  checksum: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  target_location: data/pelican/sample-1.root
+
+# osdf
+- name: osdf_txt
+  source_type: osdf
+  source: osdf://osdf.example.org:443/nd/datasets/readme.txt
+  expected_size: 128
+  target_location: data/osdf/readme.txt
+```
+
+## Multi-source / fallback behavior
+
+An item may include multiple sources using `sources` (attempted in order):
+
+```yaml
+- name: bigfile
+  sources:
+    - pelican://server/large
+    - backpack://data/cache/large
+  expected_size: 1000000
+  checksum: sha256:...
+  target_location: data/bigfile
+```
+
+## How data profile is used in `run` / `execute`
+
+`floability run` and `execute` accept `--data-spec`, `--backpack` (or `--backpack-root`) and `--data-profile`. If `--data-spec` is provided, a fetch commonly occurs early (guided by the profile policy).
+
+```sh
+floability run --backpack . --data-spec example/cms-physics-dv5/data/data.yml --data-profile backpack-data
+```
+
+If `--data-profile` is omitted, the spec’s `default_profile` (or first profile) is used.
+
+## Formal schema (JSON Schema)
+
+Use this to validate `data.yml` with standard tooling.
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Floability data spec",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": ["string", "number"], "default": "1.0" },
+    "default_profile": { "type": "string" },
+    "data_profiles": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "policy": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "retry_attempts": { "type": "integer", "minimum": 0, "default": 0 },
+              "timeout": { "type": "integer", "minimum": 0 },
+              "size_tolerance_bytes": { "type": "integer", "minimum": 0, "default": 0 },
+              "run_operation": { "type": "string", "enum": ["check", "fetch", "verify"] },
+              "verification_type": { "type": "string", "enum": ["strict", "size_only"], "default": "size_only" }
+            }
+          },
+          "data": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/definitions/dataItem" }
+          }
+        },
+        "required": ["data"]
+      }
+    }
+  },
+  "required": ["data_profiles"],
+  "definitions": {
+    "dataItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "source_type": { "type": "string", "enum": ["backpack", "fs", "pelican", "http", "osdf", "multi"] },
+        "source": { "type": "string" },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "source_type": { "type": "string", "enum": ["backpack", "fs", "pelican", "http", "osdf"] },
+              "source": { "type": "string" }
+            },
+            "required": ["source"]
+          }
+        },
+        "target_location": { "type": "string" },
+        "target_path": { "type": "string" },
+        "target_prefix": { "type": "string" },
+        "expected_size": { "type": "integer", "minimum": 0 },
+        "checksum": { "type": "string", "pattern": "^(sha256|md5|sha1):[A-Fa-f0-9]{8,}$" },
+        "content_type": { "type": "string" }
+      },
+      "oneOf": [ { "required": ["source"] }, { "required": ["sources"] } ],
+      "required": ["target_location"]
+    }
+  }
+}
+```
+
+## Implementation notes
+
+
+- Local copies for `fs`/`backpack` use `fs_file_utils` helpers (resume/atomic publish). `--backpack` supplies the root; backpack-relative paths resolve against it.
+
+- `verify` may fetch then validate checksum/size and report per-item results and a summary.
+
+- `check` calls metadata helpers only and does not write targets.
+
+## Troubleshooting
+
+
+- Missing/incorrect `--backpack`: backpack-relative sources won’t resolve.
+
+- Permissions: ensure the run user can write to `<backpack_root>/workflow`.
+
+- Partial downloads: use `--force-fetch` to overwrite.
+
+- Checksum/size mismatches: verify which check failed and inspect the staged file.
+
+## Recommended testing checklist
+
+
+- Create a small `data.yml` with one `backpack` item and one remote item.
+
+- Run `floability data --mode check` to confirm metadata resolution.
+
+- Run `floability data --mode fetch --verbose --backpack .` to stage local items.
+
+- Run `floability data --mode verify` to validate checksum/size flows.
 ## Floability Data Reference
 
 This document describes the Floability data capability: the YAML data spec format, the `floability data` command, available CLI options, and how to use data profiles with `run` and `execute`.

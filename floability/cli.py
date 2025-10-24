@@ -57,6 +57,20 @@ def get_parsed_arguments() -> argparse.Namespace:
     )
     _add_data_args(data_parser)
 
+    # setup sub-command
+    setup_parser = subparsers.add_parser(
+        "setup",
+        help="Set up a backpack (prepare environment, fetch data, etc.)",
+    )
+    _add_setup_args(setup_parser)
+
+    # provision sub-command
+    provision_parser = subparsers.add_parser(
+        "provision",
+        help="Provision worker(s) for a backpack (start in background)",
+    )
+    _add_provision_args(provision_parser)
+
     # floability-env sub-command
     audit_parser = subparsers.add_parser(
         "audit", help="Generate environment and data dependencies for a notebook"
@@ -267,6 +281,45 @@ def _add_data_args(data_parser: argparse.ArgumentParser) -> None:
     data_parser.add_argument(
         "--data-profile",
         help="Override the profile name in the data spec (useful to select a profile other than default).",
+    )
+    return None
+
+
+def _add_setup_args(parser: argparse.ArgumentParser) -> None:
+    """
+    Add arguments for the 'setup' sub-command.
+    Intention: set up everything for a backpack (env, data, etc.).
+    For now, only CLI args are added.
+    """
+    parser.add_argument(
+        "--backpack",
+        required=True,
+        help="Path to the Floability backpack directory (required).",
+    )
+    parser.add_argument(
+        "--data-profile",
+        required=False,
+        help="Optional data profile to use when setting up data.",
+    )
+    return None
+
+
+def _add_provision_args(parser: argparse.ArgumentParser) -> None:
+    """
+    Add arguments for the 'provision' sub-command.
+    Intention: start worker(s) for a backpack in the background.
+    For now, only CLI args are added.
+    """
+    parser.add_argument(
+        "--backpack",
+        required=True,
+        help="Path to the Floability backpack directory (required).",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=5,
+        help="Number of workers to provision (default=5).",
     )
     return None
 
@@ -787,6 +840,12 @@ def main():
     elif args.command == "data":
         run_data_command(args)
 
+    elif args.command == "setup":
+        run_setup_command(args)
+
+    elif args.command == "provision":
+        run_provision_command(args)
+
     # Note: top-level 'fetch' command removed. Use 'data download' instead.
     # elif args.command == "pack":
     #     print("[floability] 'pack' command not yet implemented.")
@@ -809,3 +868,17 @@ def main():
 
     else:
         print("[floability] No command provided. Exiting.")
+
+
+def run_setup_command(args: argparse.Namespace) -> None:
+    """Stub handler for 'setup' (CLI only for now)."""
+    print(
+        f"[floability] 'setup' is not implemented yet. Backpack: {getattr(args, 'backpack', None)}; Data profile: {getattr(args, 'data_profile', None)}"
+    )
+
+
+def run_provision_command(args: argparse.Namespace) -> None:
+    """Stub handler for 'provision' (CLI only for now)."""
+    print(
+        f"[floability] 'provision' is not implemented yet. Backpack: {getattr(args, 'backpack', None)}; Workers: {getattr(args, 'workers', None)}"
+    )
