@@ -18,7 +18,7 @@ def create_conda_pack_from_yml(
     base_dir: str = "/tmp",
     run_dir: str = "/tmp",
     manager_name: str = None,
-    manager_ports: str = "9123",
+    manager_ports: str = "9123,9150",
     is_worker_env: bool = False,
 ) -> str:
     common_env_dir = os.path.join(base_dir, "flo_common_env")

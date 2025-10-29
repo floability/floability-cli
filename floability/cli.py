@@ -134,8 +134,8 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
     parser.add_argument(
         "--manager-ports",
         required=False,
-        default=9123,
-        help="Comma-separated list of ports for the TaskVine manager (default=9123).",
+        default="9123,9150",
+        help="Comma-separated range for ports for the TaskVine manager (default=9123,9150).",
     )
 
     parser.add_argument(
