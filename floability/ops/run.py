@@ -15,6 +15,7 @@ from ..resource_provisioner import start_vine_factory
 from ..jupyter_runner import start_jupyterlab, execute_notebook
 from ..utils import create_unique_directory, safe_extract_tar, update_env_vars_in_conda
 from ..catalog import send_catalog_update
+from ..data.data_handler import perform_default_data_operation
 
 
 def resolve_backpack_args(args):
@@ -121,16 +122,17 @@ def run_workflow(
     # 1) Fetch data if data_spec is provided --> fetch data
     if args.data_spec:
         print(f"[floability] Fetching data from {args.data_spec}")
-        perf.start_timer("data_fetch")
+        perf.start_timer("data_operation")
         from ..data.data_handler import fetch_data_from_spec
 
-        fetch_data_from_spec(
-            args.data_spec,
-            args.backpack_root,
+        perform_default_data_operation(
+            data_spec=args.data_spec,
+            backpack_root=args.backpack_root,
             verbose=True,
+            force=False,
             data_profile=getattr(args, "data_profile", None),
         )
-        perf.end_timer("data_fetch", "Time to fetch data from spec")
+        perf.end_timer("data_operation", "Time to perform data operation")
 
     # Generate a unique manager name if none is provided
     if args.manager_name is None:

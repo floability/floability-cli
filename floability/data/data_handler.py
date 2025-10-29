@@ -11,6 +11,69 @@ from .fs_file_utils import fs_file_metadata, fs_file_copy
 
 
 # --------------------------- Public API (stubs for now) ---------------------------
+def perform_default_data_operation(
+    data_spec: str,
+    backpack_root: Path | None,
+    verbose: bool = False,
+    force: bool = False,
+    data_profile: Optional[str] = None,
+):
+    """Perform the default data operation as defined in the spec policy.
+
+    Default operation is typically 'fetch' but may be overridden in the spec policy.
+
+    This is a convenience wrapper around the specific operations (check, fetch, verify).
+    """
+    spec_path = Path(data_spec)
+    if not spec_path.is_file():
+        print(f"[data] Spec file not found: {spec_path}")
+        return
+
+    try:
+        profile_name, profile = verify_data_spec(
+            data_spec=data_spec,
+            backpack_root=backpack_root,
+            requested_profile=data_profile,
+            verbose=verbose,
+            op_label="default",
+        )
+    except ValueError as e:
+        print(f"[data] {e}")
+        return
+
+    policy = profile.get("policy", {})
+    default_op = str(policy.get("run_operation", "fetch") or "fetch").strip().lower()
+
+    if verbose:
+        print(f"[data] Performing default operation '{default_op}'")
+
+    if default_op == "check":
+        check_data_from_spec(
+            data_spec=data_spec,
+            backpack_root=backpack_root or Path.cwd(),
+            show_details=verbose,
+            verbose=verbose,
+            data_profile=data_profile,
+        )
+    elif default_op == "fetch":
+        fetch_data_from_spec(
+            data_spec=data_spec,
+            backpack_root=backpack_root,
+            verbose=verbose,
+            force=force,
+            data_profile=data_profile,
+        )
+    elif default_op == "verify":
+        verify_data_from_spec(
+            data_spec=data_spec,
+            backpack_root=backpack_root,
+            verbose=verbose,
+            force=force,
+            data_profile=data_profile,
+        )
+    else:
+        print(f"[data] Unknown default operation '{default_op}' specified in policy.")
+
 def check_data_from_spec(
     data_spec: str,
     backpack_root: Path,
