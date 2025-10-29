@@ -1,4 +1,3 @@
-
 def get_code_to_add():
 
     return """

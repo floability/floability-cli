@@ -4,13 +4,35 @@ Floability CLI: main entry point for running distributed Jupyter-based workflows
 """
 
 import argparse
+import time
+import os
+import subprocess
+import uuid
+from pathlib import Path
 
+from .environment import create_conda_pack_from_yml
+from .resource_provisioner import start_vine_factory
 from .cleanup import CleanupManager, install_signal_handlers
+from .jupyter_runner import start_jupyterlab, execute_notebook
+from .utils import create_unique_directory, safe_extract_tar, update_env_vars_in_conda
+
+# todo: check this file for full compatibility with new data handler before removing
+# from .data_handler import ensure_data_is_fetched
+from .performance_tracker import PerformanceTracker
+from .audit.audit import audit
+from .audit.cell_level.audit import audit as cell_level_audit
+from .catalog import send_catalog_update
+
+from .data.data_handler import (
+    check_data_from_spec,
+    fetch_data_from_spec,
+    verify_data_from_spec,
+)
 
 from .ops.run import run_workflow, execute_python_script
 from .ops.data import run_data_command
 from .ops.setup import run_setup_command, run_provision_command
-from .ops.audit import run_audit_command, cell_level_audit
+from .ops.audit import run_audit_command
 
 from . import __version__
 
@@ -312,6 +334,166 @@ def _add_provision_args(parser: argparse.ArgumentParser) -> None:
     return None
 
 
+def execute_python_script(
+    script_path: str, run_dir: str, conda_env_dir: str = None
+) -> None:
+    """
+    Execute a Python script.
+
+    Args:
+        script_path: Path to the Python script to execute.
+        run_dir: Directory for run-related files.
+        conda_env_dir: Path to the conda environment directory, if any.
+    """
+    script_abs_path = os.path.abspath(script_path)
+    script_dir = os.path.dirname(script_abs_path)
+    script_name = os.path.basename(script_abs_path)
+
+    print(f"[floability] Changing directory to: {script_dir}")
+
+    print(f"[floability] Executing Python script: {script_name}")
+
+    log_file = os.path.join(run_dir, "python_execution.log")
+
+    print(f"[floability] Logging to: {log_file}")
+
+    with open(log_file, "w") as log:
+        original_dir = os.getcwd()
+
+        try:
+            # Change to the script's directory
+            os.chdir(script_dir)
+            log.write(f"[floability] Changed working directory to: {script_dir}\n")
+
+            cmd = []
+            if conda_env_dir:
+                # If using a conda environment
+                cmd = [
+                    "conda",
+                    "run",
+                    "--prefix",
+                    conda_env_dir,
+                    "--no-capture-output",
+                    "python",
+                    script_name,  # Use just the filename since we're in the right directory
+                ]
+            else:
+                # Using system Python
+                cmd = ["python", script_name]  # Use just the filename
+
+            cmd_str = " ".join(cmd)
+            print(f"[floability] Running command: {cmd_str}")
+            log.write(f"[floability] Running command: {cmd_str}\n")
+            log.flush()
+
+            result = subprocess.run(
+                cmd,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                check=True,
+                text=True,
+            )
+            print(
+                f"[floability] Python script execution completed with exit code {result.returncode}"
+            )
+            print(f"[floability] Logs saved to {log_file}")
+
+        except subprocess.CalledProcessError as e:
+            print(f"[floability] Error executing Python script: {e}")
+            print(f"[floability] Check logs at {log_file}")
+        finally:
+            # Restore the original working directory
+            os.chdir(original_dir)
+
+
+def resolve_data_spec(args: argparse.Namespace) -> None:
+    """
+    Resolve data spec path for the 'data' sub-command. If not provided, resolve from backpack if available.
+    """
+    # todo: rename to resolve_data_args. we need to resolve both data_spec and backpack_root. if backpack is provided
+    # use that to resolve both. if data_spec is provided, but backpack is empty then use data_spec to resolve backpack_root.
+
+    if args.data_spec and args.backpack:
+        return
+
+    if args.data_spec and not args.backpack:
+        # Resolve backpack_root from data_spec if backpack is not provided
+        data_spec_path = Path(args.data_spec).resolve()
+        if data_spec_path.parent.name == "data":
+            args.backpack = str(data_spec_path.parent.parent)
+            print(
+                f"[floability] Resolved backpack_root from data spec: {args.backpack}"
+            )
+        else:
+            args.backpack = str(data_spec_path.parent)
+            print(
+                f"[floability] Data spec is not in expected 'data' directory structure. "
+                f"Using parent as backpack_root: {args.backpack}"
+            )
+            return
+
+    if args.backpack and not args.data_spec:
+        # Resolve data_spec from backpack if backpack is provided but data_spec is not
+        backpack_dir = Path(args.backpack).resolve()
+        data_spec = backpack_dir / "data" / "data.yml"
+        if data_spec.is_file():
+            args.data_spec = str(data_spec)
+            print(f"[floability] Using data spec from backpack: {args.data_spec}")
+        else:
+            print(
+                f"[floability] No data spec found in backpack at expected location: {data_spec}"
+            )
+        return
+
+
+def run_data_command(args: argparse.Namespace) -> None:
+    """
+    Execute data command logic based solely on the --mode flag.
+    """
+    print(f"[floability] Running data command in mode: {args.mode}")
+
+    resolve_data_spec(args)
+
+    if not args.data_spec:
+        print("[floability] No data spec provided. Cannot proceed with data command.")
+        return
+
+    if args.mode == "check":
+        print(
+            "[floability] 'data check' selected — metadata-only checks (existence, size, file type)."
+        )
+        check_data_from_spec(
+            args.data_spec,
+            Path(args.backpack),
+            show_details=getattr(args, "check_details", False),
+            verbose=getattr(args, "verbose", False),
+            data_profile=getattr(args, "data_profile", None),
+        )
+        return
+    elif args.mode == "fetch":
+        print(f"[floability] Fetching data from {args.data_spec}")
+        fetch_data_from_spec(
+            args.data_spec,
+            Path(args.backpack) if args.backpack else None,
+            verbose=getattr(args, "verbose", False),
+            force=getattr(args, "force_fetch", False),
+            data_profile=getattr(args, "data_profile", None),
+        )
+        return
+    elif args.mode == "verify":
+        print(
+            "[floability] 'data verify' selected — download + integrity checks (checksum/size/content-type)."
+        )
+        verify_data_from_spec(
+            args.data_spec,
+            Path(args.backpack) if args.backpack else None,
+            verbose=getattr(args, "verbose", False),
+            force=getattr(args, "force_fetch", False),
+            data_profile=getattr(args, "data_profile", None),
+        )
+        return
+
+
 def main():
     """
     Primary entry point for Floability CLI.
@@ -337,7 +519,19 @@ def main():
         run_provision_command(args)
 
     elif args.command == "audit":
-        run_audit_command(args)
+        if not args.notebook:
+            print("[floability] 'audit' command requires --notebook argument.")
+            return
+        print(
+            f"[floability] Generating environment for notebook: {args.notebook} with kernel: {args.kernel}"
+        )
+
+        if args.cell_level:
+            cell_level_audit(
+                args.notebook, args.kernel, args.manager_name, args.manager_port
+            )
+        else:
+            audit(args.notebook, args.kernel, args.manager_name, args.manager_port)
 
     else:
         print("[floability] No command provided. Exiting.")

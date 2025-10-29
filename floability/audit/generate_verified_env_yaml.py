@@ -14,7 +14,7 @@ def get_filtered_dependencies(dependencies):
     """
     Filter out dependencies that are not relevant for the environment irrelevant of the version of dependencies.
     """
-    exceptions = {'floability'}
+    exceptions = {"floability"}
     output = []
 
     for dep in dependencies:
@@ -26,6 +26,7 @@ def get_filtered_dependencies(dependencies):
         output.append(dep)
         # Further filtering logic can be added here
     return output
+
 
 def get_environment_type():
     """

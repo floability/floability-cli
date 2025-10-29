@@ -11,7 +11,13 @@ from .fs_file_utils import fs_file_metadata, fs_file_copy
 
 
 # --------------------------- Public API (stubs for now) ---------------------------
-def check_data_from_spec(data_spec: str, backpack_root: Path, show_details: bool = False, verbose: bool = False, data_profile: Optional[str] = None):
+def check_data_from_spec(
+    data_spec: str,
+    backpack_root: Path,
+    show_details: bool = False,
+    verbose: bool = False,
+    data_profile: Optional[str] = None,
+):
     """High-level entry: perform metadata-only checks for each data item.
 
     Steps:
@@ -41,7 +47,9 @@ def check_data_from_spec(data_spec: str, backpack_root: Path, show_details: bool
     policy = profile.get("policy", {})
     tolerance = int(policy.get("size_tolerance_bytes", 0) or 0)
     if verbose:
-        print(f"[data:check] data_profile: {profile_name} (items={len(items)}, size_tolerance={tolerance})")
+        print(
+            f"[data:check] data_profile: {profile_name} (items={len(items)}, size_tolerance={tolerance})"
+        )
 
     normalized_items = items
 
@@ -55,7 +63,13 @@ def check_data_from_spec(data_spec: str, backpack_root: Path, show_details: bool
         _print_detailed_results(results)
 
 
-def fetch_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: bool = False, force: bool = False, data_profile: Optional[str] = None):
+def fetch_data_from_spec(
+    data_spec: str,
+    backpack_root: Path | None,
+    verbose: bool = False,
+    force: bool = False,
+    data_profile: Optional[str] = None,
+):
     """Fetch (download/copy) all data items defined in the selected profile.
 
     Rules:
@@ -92,23 +106,35 @@ def fetch_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: bo
 
     items = profile.get("data", []) or []
     if verbose:
-        print(f"[data:fetch] data_profile '{profile_name}' items={len(items)} backpack_root={backpack_root}")
+        print(
+            f"[data:fetch] data_profile '{profile_name}' items={len(items)} backpack_root={backpack_root}"
+        )
 
     normalized_items = items
 
     total = len(normalized_items)
     for idx, item in enumerate(normalized_items, start=1):
         if verbose:
-            print(f"[data:fetch] Fetching {idx}/{total}: {item.get('name','<unnamed>')} (force={force})")
+            print(
+                f"[data:fetch] Fetching {idx}/{total}: {item.get('name','<unnamed>')} (force={force})"
+            )
         _fetch_single_item(item, backpack_root, verbose=verbose, force=force)
         if verbose:
-            print(f"[data:fetch] Finished {idx}/{total}: {item.get('name','<unnamed>')}")
+            print(
+                f"[data:fetch] Finished {idx}/{total}: {item.get('name','<unnamed>')}"
+            )
 
     if verbose:
         print("[data:fetch] Completed.")
 
 
-def verify_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: bool = False, force: bool = False, data_profile: Optional[str] = None):
+def verify_data_from_spec(
+    data_spec: str,
+    backpack_root: Path | None,
+    verbose: bool = False,
+    force: bool = False,
+    data_profile: Optional[str] = None,
+):
     """Verify data items: ensure present (download/copy if needed) then validate integrity.
 
     Integrity signals supported:
@@ -148,7 +174,9 @@ def verify_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: b
     tolerance = int(policy.get("size_tolerance_bytes", 0) or 0)
 
     if verbose:
-        print(f"[data:verify] data_profile '{profile_name}' items={len(items)} tolerance={tolerance} backpack_root={backpack_root}")
+        print(
+            f"[data:verify] data_profile '{profile_name}' items={len(items)} tolerance={tolerance} backpack_root={backpack_root}"
+        )
 
     normalized_items = items
 
@@ -159,15 +187,27 @@ def verify_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: b
         if verbose:
             print(f"[data:verify] Processing {idx}/{total}: {name} (force={force})")
         # Ensure fetched (may skip if exists and not force)
-        chosen_source = _fetch_single_item(item, backpack_root, verbose=verbose, force=force)
+        chosen_source = _fetch_single_item(
+            item, backpack_root, verbose=verbose, force=force
+        )
         # Evaluate integrity on local target
-        default_prefix = (Path(backpack_root) / "workflow").resolve() if backpack_root else (Path.cwd() / "workflow").resolve()
-        target_path = _resolve_target_path(item, backpack_root, target_prefix=default_prefix)
+        default_prefix = (
+            (Path(backpack_root) / "workflow").resolve()
+            if backpack_root
+            else (Path.cwd() / "workflow").resolve()
+        )
+        target_path = _resolve_target_path(
+            item, backpack_root, target_prefix=default_prefix
+        )
         local_exists = target_path.exists()
         is_dir = target_path.is_dir() if local_exists else False
 
         expected_size = item.get("expected_size")
-        actual_size = target_path.stat().st_size if (local_exists and target_path.is_file()) else None
+        actual_size = (
+            target_path.stat().st_size
+            if (local_exists and target_path.is_file())
+            else None
+        )
         size_ok = None
         size_note = None
         if expected_size is not None and isinstance(expected_size, int):
@@ -190,14 +230,20 @@ def verify_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: b
             if checksum_alg and checksum_expected:
                 try:
                     checksum_actual = _compute_checksum(target_path, checksum_alg)
-                    checksum_ok = (checksum_actual == checksum_expected)
+                    checksum_ok = checksum_actual == checksum_expected
                 except Exception as e:
                     checksum_ok = False
                     if verbose:
-                        print(f"[data:verify] Error computing checksum for '{name}': {e}")
+                        print(
+                            f"[data:verify] Error computing checksum for '{name}': {e}"
+                        )
 
         # Enforce verification policy
-        verification_type = str(policy.get("verification_type", "size_only") or "size_only").strip().lower()
+        verification_type = (
+            str(policy.get("verification_type", "size_only") or "size_only")
+            .strip()
+            .lower()
+        )
         if verification_type == "strict":
             # Require checksum to be present and to match
             if not checksum_spec:
@@ -205,22 +251,26 @@ def verify_data_from_spec(data_spec: str, backpack_root: Path | None, verbose: b
             elif checksum_ok is not True:
                 checksum_ok = False
 
-        results.append({
-            "name": name,
-            "exists": local_exists,
-            "is_dir": is_dir,
-            "target_path": str(target_path),
-            "expected_size": expected_size,
-            "actual_size": actual_size,
-            "size_ok": size_ok,
-            "size_note": size_note,
-            "checksum_alg": checksum_alg,
-            "checksum_expected": checksum_expected,
-            "checksum_actual": checksum_actual,
-            "checksum_ok": checksum_ok,
-        })
+        results.append(
+            {
+                "name": name,
+                "exists": local_exists,
+                "is_dir": is_dir,
+                "target_path": str(target_path),
+                "expected_size": expected_size,
+                "actual_size": actual_size,
+                "size_ok": size_ok,
+                "size_note": size_note,
+                "checksum_alg": checksum_alg,
+                "checksum_expected": checksum_expected,
+                "checksum_actual": checksum_actual,
+                "checksum_ok": checksum_ok,
+            }
+        )
         if verbose:
-            print(f"[data:verify] Finished {idx}/{total}: {name} exists={local_exists} size_ok={size_ok} checksum_ok={checksum_ok}")
+            print(
+                f"[data:verify] Finished {idx}/{total}: {name} exists={local_exists} size_ok={size_ok} checksum_ok={checksum_ok}"
+            )
 
     _print_verify_summary(results)
     if verbose:
@@ -246,7 +296,9 @@ def verify_data_spec(
         raise ValueError(f"Failed loading YAML: {e}")
 
     try:
-        profile_name, profile, _ = _select_profile(raw, requested_profile=requested_profile)
+        profile_name, profile, _ = _select_profile(
+            raw, requested_profile=requested_profile
+        )
     except ValueError as e:
         raise ValueError(str(e))
 
@@ -273,7 +325,9 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
-def _select_profile(raw: Dict[str, Any], requested_profile: Optional[str] = None) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
+def _select_profile(
+    raw: Dict[str, Any], requested_profile: Optional[str] = None
+) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
     # Support both new 'data_profiles' and legacy 'profiles'
     profiles = raw.get("data_profiles")
     legacy = False
@@ -285,7 +339,9 @@ def _select_profile(raw: Dict[str, Any], requested_profile: Optional[str] = None
     # Requested profile via CLI takes precedence if provided.
     if requested_profile:
         if requested_profile not in profiles:
-            raise ValueError(f"Requested profile '{requested_profile}' not found in spec")
+            raise ValueError(
+                f"Requested profile '{requested_profile}' not found in spec"
+            )
         return requested_profile, profiles[requested_profile], {}
 
     default_profile = raw.get("default_profile") or next(iter(profiles.keys()))
@@ -314,18 +370,26 @@ def _validate_required_fields(profile: Dict[str, Any]) -> None:
         sources = item.get("sources")
         if sources:
             if not isinstance(sources, list) or len(sources) == 0:
-                raise ValueError(f"Spec item #{idx} has invalid 'sources' (must be non-empty list)")
+                raise ValueError(
+                    f"Spec item #{idx} has invalid 'sources' (must be non-empty list)"
+                )
             for j, s in enumerate(sources, start=1):
                 if not s.get("source"):
-                    raise ValueError(f"Spec item #{idx} sources[{j}] missing required 'source'")
+                    raise ValueError(
+                        f"Spec item #{idx} sources[{j}] missing required 'source'"
+                    )
         elif not has_source:
-            raise ValueError(f"Spec item #{idx} missing required 'source' (or 'sources')")
+            raise ValueError(
+                f"Spec item #{idx} missing required 'source' (or 'sources')"
+            )
 
         if not (item.get("target_location") or item.get("target_path")):
             raise ValueError(f"Spec item #{idx} missing required 'target_location'")
 
 
-def _normalize_data_profile(profile: Dict[str, Any], backpack_root: Optional[Path] = None) -> Dict[str, Any]:
+def _normalize_data_profile(
+    profile: Dict[str, Any], backpack_root: Optional[Path] = None
+) -> Dict[str, Any]:
     """Return a normalized copy of a selected profile with defaults applied.
 
     Normalizations:
@@ -433,7 +497,9 @@ def _normalize_data_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # --------------------------- Item Checking Logic ---------------------------
-def _check_single_item(item: Dict[str, Any], tolerance: int, backpack_root: Path) -> Dict[str, Any]:
+def _check_single_item(
+    item: Dict[str, Any], tolerance: int, backpack_root: Path
+) -> Dict[str, Any]:
     name = item.get("name", "<unnamed>")
     stype = item.get("source_type")
     expected_size = item.get("expected_size")
@@ -503,11 +569,19 @@ def _metadata_for_source(item: Dict[str, Any], backpack_root: Path) -> Dict[str,
             p = (Path(backpack_root) / p).resolve()
         return fs_file_metadata(str(p))
     # Unknown or missing
-    return {"exists": False, "name": src or "", "size": None, "type": None, "raw": {"error": f"unsupported source_type {stype}"}}
+    return {
+        "exists": False,
+        "name": src or "",
+        "size": None,
+        "type": None,
+        "raw": {"error": f"unsupported source_type {stype}"},
+    }
 
 
 # --------------------------- Fetch Logic ---------------------------
-def _resolve_target_path(item: Dict[str, Any], backpack_root: Path, target_prefix: Optional[Path] = None) -> Path:
+def _resolve_target_path(
+    item: Dict[str, Any], backpack_root: Path, target_prefix: Optional[Path] = None
+) -> Path:
     """Resolve final target path for an item.
 
     Parameters:
@@ -551,7 +625,9 @@ def _resolve_target_path(item: Dict[str, Any], backpack_root: Path, target_prefi
     return (prefix_p / target_p).resolve()
 
 
-def _copy_local_source_to_target(src_path: Path, target_path: Path, *, force: bool = False, verbose: bool = False) -> bool:
+def _copy_local_source_to_target(
+    src_path: Path, target_path: Path, *, force: bool = False, verbose: bool = False
+) -> bool:
     """Copy a local file or directory (src_path) into target_path.
 
     Uses fs_file_copy for files (preserves resume/atomic behavior) and
@@ -563,9 +639,15 @@ def _copy_local_source_to_target(src_path: Path, target_path: Path, *, force: bo
         return False
 
     if src_path.is_file():
-        fs_file_copy(str(src_path), dest_dir=str(target_path.parent), filename=target_path.name, overwrite=force)
+        fs_file_copy(
+            str(src_path),
+            dest_dir=str(target_path.parent),
+            filename=target_path.name,
+            overwrite=force,
+        )
     else:
         import shutil
+
         if force and target_path.exists():
             if target_path.is_dir():
                 shutil.rmtree(target_path)
@@ -575,22 +657,36 @@ def _copy_local_source_to_target(src_path: Path, target_path: Path, *, force: bo
     return True
 
 
-def _fetch_single_item(item: Dict[str, Any], backpack_root: Path, verbose: bool = False, force: bool = False) -> Optional[Dict[str, Any]]:
+def _fetch_single_item(
+    item: Dict[str, Any],
+    backpack_root: Path,
+    verbose: bool = False,
+    force: bool = False,
+) -> Optional[Dict[str, Any]]:
     name = item.get("name", "<unnamed>")
     stype = item.get("source_type")
-    default_prefix = (Path(backpack_root) / "workflow").resolve() if backpack_root else Path.cwd() / "workflow"
-    target_path = _resolve_target_path(item, backpack_root, target_prefix=default_prefix)
+    default_prefix = (
+        (Path(backpack_root) / "workflow").resolve()
+        if backpack_root
+        else Path.cwd() / "workflow"
+    )
+    target_path = _resolve_target_path(
+        item, backpack_root, target_prefix=default_prefix
+    )
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
     if target_path.exists() and not force:
         if verbose:
-            print(f"[data:fetch] Skipping '{name}' target exists: {target_path} (use --force-fetch to overwrite)")
+            print(
+                f"[data:fetch] Skipping '{name}' target exists: {target_path} (use --force-fetch to overwrite)"
+            )
         return None
     elif target_path.exists() and force:
         if verbose:
             print(f"[data:fetch] Removing existing target for '{name}': {target_path}")
         if target_path.is_dir():
             import shutil
+
             shutil.rmtree(target_path)
         else:
             target_path.unlink()
@@ -599,18 +695,28 @@ def _fetch_single_item(item: Dict[str, Any], backpack_root: Path, verbose: bool 
         for src_entry in item.get("sources", []):
             s_norm = src_entry
             if verbose:
-                print(f"[data:fetch] Trying multi source for '{name}': type={s_norm.get('source_type')} source={s_norm.get('source')}")
-            if _attempt_fetch_source(s_norm, target_path, backpack_root, verbose=verbose, force=force):
+                print(
+                    f"[data:fetch] Trying multi source for '{name}': type={s_norm.get('source_type')} source={s_norm.get('source')}"
+                )
+            if _attempt_fetch_source(
+                s_norm, target_path, backpack_root, verbose=verbose, force=force
+            ):
                 if verbose:
-                    print(f"[data:fetch] '{name}' fetched via multi source type={s_norm.get('source_type')} -> {target_path}")
+                    print(
+                        f"[data:fetch] '{name}' fetched via multi source type={s_norm.get('source_type')} -> {target_path}"
+                    )
                 return s_norm
         if verbose:
             print(f"[data:fetch] FAILED multi sources for '{name}'")
         return None
 
     if verbose:
-        print(f"[data:fetch] Fetching '{name}' source_type={stype} source={item.get('source')} -> {target_path}")
-    if _attempt_fetch_source(item, target_path, backpack_root, verbose=verbose, force=force):
+        print(
+            f"[data:fetch] Fetching '{name}' source_type={stype} source={item.get('source')} -> {target_path}"
+        )
+    if _attempt_fetch_source(
+        item, target_path, backpack_root, verbose=verbose, force=force
+    ):
         if verbose:
             print(f"[data:fetch] '{name}' fetched -> {target_path}")
         return item
@@ -620,22 +726,40 @@ def _fetch_single_item(item: Dict[str, Any], backpack_root: Path, verbose: bool 
     return None
 
 
-def _attempt_fetch_source(item: Dict[str, Any], target_path: Path, backpack_root: Path, verbose: bool = False, force: bool = False) -> bool:
+def _attempt_fetch_source(
+    item: Dict[str, Any],
+    target_path: Path,
+    backpack_root: Path,
+    verbose: bool = False,
+    force: bool = False,
+) -> bool:
     stype = item.get("source_type")
     src = item.get("source")
     try:
         if stype == "http":
             # Download into target directory with final name
-            http_file_download(src, dest_dir=str(target_path.parent), filename=target_path.name, overwrite=force)
+            http_file_download(
+                src,
+                dest_dir=str(target_path.parent),
+                filename=target_path.name,
+                overwrite=force,
+            )
             return True
         if stype == "pelican":
-            pelican_file_download(src, dest_dir=str(target_path.parent), filename=target_path.name, overwrite=force)
+            pelican_file_download(
+                src,
+                dest_dir=str(target_path.parent),
+                filename=target_path.name,
+                overwrite=force,
+            )
             return True
         if stype in ("backpack", "fs"):
             p = Path(src)
             if not p.is_absolute():
                 p = (Path(backpack_root) / p).resolve()
-            return _copy_local_source_to_target(p, target_path, force=force, verbose=verbose)
+            return _copy_local_source_to_target(
+                p, target_path, force=force, verbose=verbose
+            )
     except Exception as e:
         if verbose:
             print(f"[data:fetch] Error fetching {stype} source '{src}': {e}")
@@ -683,10 +807,24 @@ def _compute_checksum(path: Path, alg: str, chunk_size: int = 1024 * 1024) -> st
 # --------------------------- Verify Reporting ---------------------------
 def _print_verify_summary(results: List[Dict[str, Any]]) -> None:
     print("[data:verify] Summary:")
-    headers = ["name", "exists", "size_ok", "checksum_ok", "expected_size", "actual_size", "checksum_alg"]
-    colw = {h: max(len(h), *(len(str(r.get(h, ''))) for r in results)) for h in headers} if results else {h: len(h) for h in headers}
+    headers = [
+        "name",
+        "exists",
+        "size_ok",
+        "checksum_ok",
+        "expected_size",
+        "actual_size",
+        "checksum_alg",
+    ]
+    colw = (
+        {h: max(len(h), *(len(str(r.get(h, ""))) for r in results)) for h in headers}
+        if results
+        else {h: len(h) for h in headers}
+    )
+
     def fmt_row(r: Dict[str, Any]):
         return " ".join(str(r.get(h, "")).ljust(colw[h]) for h in headers)
+
     print(fmt_row({h: h for h in headers}))
     for r in results:
         print(fmt_row(r))
@@ -694,7 +832,9 @@ def _print_verify_summary(results: List[Dict[str, Any]]) -> None:
     missing = sum(1 for r in results if not r.get("exists"))
     size_fail = sum(1 for r in results if r.get("size_ok") is False)
     checksum_fail = sum(1 for r in results if r.get("checksum_ok") is False)
-    print(f"[data:verify] Items: {total}, missing: {missing}, size_fail: {size_fail}, checksum_fail: {checksum_fail}")
+    print(
+        f"[data:verify] Items: {total}, missing: {missing}, size_fail: {size_fail}, checksum_fail: {checksum_fail}"
+    )
 
 
 def _print_verify_details(results: List[Dict[str, Any]]) -> None:
@@ -703,18 +843,32 @@ def _print_verify_details(results: List[Dict[str, Any]]) -> None:
         print(f"--- {r.get('name')} ---")
         print(f"  target_path: {r.get('target_path')}")
         print(f"  exists: {r.get('exists')} is_dir={r.get('is_dir')}")
-        print(f"  expected_size: {r.get('expected_size')} actual_size: {r.get('actual_size')} size_ok={r.get('size_ok')} note={r.get('size_note')}")
-        print(f"  checksum_alg: {r.get('checksum_alg')} checksum_expected: {r.get('checksum_expected')} checksum_actual: {r.get('checksum_actual')} checksum_ok={r.get('checksum_ok')}")
+        print(
+            f"  expected_size: {r.get('expected_size')} actual_size: {r.get('actual_size')} size_ok={r.get('size_ok')} note={r.get('size_note')}"
+        )
+        print(
+            f"  checksum_alg: {r.get('checksum_alg')} checksum_expected: {r.get('checksum_expected')} checksum_actual: {r.get('checksum_actual')} checksum_ok={r.get('checksum_ok')}"
+        )
     print("[data:verify] End of detailed report")
 
 
 def _print_check_summary(results: List[Dict[str, Any]]) -> None:
     print("[data:check] Summary:")
-    headers = ["name", "source_type", "exists", "size_ok", "expected_size", "actual_size", "size_note"]
+    headers = [
+        "name",
+        "source_type",
+        "exists",
+        "size_ok",
+        "expected_size",
+        "actual_size",
+        "size_note",
+    ]
     # Simple column widths
-    colw = {h: max(len(h), *(len(str(r.get(h, ''))) for r in results)) for h in headers}
+    colw = {h: max(len(h), *(len(str(r.get(h, ""))) for r in results)) for h in headers}
+
     def fmt_row(r: Dict[str, Any]):
         return " ".join(str(r.get(h, "")).ljust(colw[h]) for h in headers)
+
     print(fmt_row({h: h for h in headers}))
     for r in results:
         print(fmt_row(r))
@@ -732,21 +886,36 @@ def _print_detailed_results(results: List[Dict[str, Any]]) -> None:
         print(f"  exists: {r.get('exists')}")
         print(f"  target_path: {r.get('target_path')}")
         print(f"  expected_size: {r.get('expected_size')}")
-        print(f"  actual_size: {r.get('actual_size')} size_ok={r.get('size_ok')} note={r.get('size_note')}")
-        meta = r.get('meta', {})
+        print(
+            f"  actual_size: {r.get('actual_size')} size_ok={r.get('size_ok')} note={r.get('size_note')}"
+        )
+        meta = r.get("meta", {})
         # Limit headers/raw to avoid huge dumps
-        raw = meta.get('raw') if isinstance(meta, dict) else None
+        raw = meta.get("raw") if isinstance(meta, dict) else None
         if isinstance(raw, dict):
             # show a few important raw keys if present
-            interesting = {k: raw[k] for k in ('status','final_url','error','headers') if k in raw}
-            if 'headers' in interesting and isinstance(interesting['headers'], dict):
+            interesting = {
+                k: raw[k]
+                for k in ("status", "final_url", "error", "headers")
+                if k in raw
+            }
+            if "headers" in interesting and isinstance(interesting["headers"], dict):
                 # trim headers list
-                interesting['headers'] = {k: interesting['headers'][k] for k in list(interesting['headers'].keys())[:8]}
+                interesting["headers"] = {
+                    k: interesting["headers"][k]
+                    for k in list(interesting["headers"].keys())[:8]
+                }
             if interesting:
                 print(f"  raw: {interesting}")
-        if r.get('multi_chain'):
+        if r.get("multi_chain"):
             print("  multi attempts:")
-            for attempt in r['multi_chain']:
-                a_name = attempt.get('name') or attempt.get('raw', {}).get('final_url') or '<source>'
-                print(f"    - exists={attempt.get('exists')} size={attempt.get('size')} type={attempt.get('type')} name={attempt.get('name')}")
+            for attempt in r["multi_chain"]:
+                a_name = (
+                    attempt.get("name")
+                    or attempt.get("raw", {}).get("final_url")
+                    or "<source>"
+                )
+                print(
+                    f"    - exists={attempt.get('exists')} size={attempt.get('size')} type={attempt.get('type')} name={attempt.get('name')}"
+                )
     print("[data:check] End of detailed report")

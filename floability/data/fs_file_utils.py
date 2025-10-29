@@ -75,14 +75,16 @@ def fs_file_metadata(path: str) -> Dict[str, Any]:
         }
 
 
-def fs_file_copy(src: str,
-                     dest_dir: str = ".",
-                     filename: Optional[str] = None,
-                     *,
-                     overwrite: bool = False,
-                     resume: bool = True,
-                     chunk_size: int = 16 * 1024 * 1024,
-                     show_progress: bool = True) -> Path:
+def fs_file_copy(
+    src: str,
+    dest_dir: str = ".",
+    filename: Optional[str] = None,
+    *,
+    overwrite: bool = False,
+    resume: bool = True,
+    chunk_size: int = 16 * 1024 * 1024,
+    show_progress: bool = True,
+) -> Path:
     """Copy a local file to dest_dir with optional resume + atomic finalize.
 
     Behavior parallels http_file_download / pelican_file_download for consistency.
