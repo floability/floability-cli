@@ -40,42 +40,55 @@ def resolve_data_spec(args):
 
 
 def run_data_command(args):
+    """Run data command and return success status.
+    
+    Returns:
+        bool: True if the data operation succeeded, False otherwise.
+    """
     print(f"[floability] Running data command in mode: {args.mode}")
     resolve_data_spec(args)
     if not args.data_spec:
         print("[floability] No data spec provided. Cannot proceed with data command.")
-        return
+        return False
+    
+    success = False
+    
     if args.mode == "check":
         print(
             "[floability] 'data check' selected — metadata-only checks (existence, size, file type)."
         )
-        check_data_from_spec(
+        success = check_data_from_spec(
             args.data_spec,
             Path(args.backpack),
             show_details=getattr(args, "check_details", False),
             verbose=getattr(args, "verbose", False),
             data_profile=getattr(args, "data_profile", None),
         )
-        return
     elif args.mode == "fetch":
         print(f"[floability] Fetching data from {args.data_spec}")
-        fetch_data_from_spec(
+        success = fetch_data_from_spec(
             args.data_spec,
             Path(args.backpack) if args.backpack else None,
             verbose=getattr(args, "verbose", False),
             force=getattr(args, "force_fetch", False),
             data_profile=getattr(args, "data_profile", None),
         )
-        return
     elif args.mode == "verify":
         print(
             "[floability] 'data verify' selected — download + integrity checks (checksum/size/content-type)."
         )
-        verify_data_from_spec(
+        success = verify_data_from_spec(
             args.data_spec,
             Path(args.backpack) if args.backpack else None,
             verbose=getattr(args, "verbose", False),
             force=getattr(args, "force_fetch", False),
             data_profile=getattr(args, "data_profile", None),
         )
-        return
+    
+    # Print final status
+    if success:
+        print(f"\n[floability] Data {args.mode} operation completed successfully")
+    else:
+        print(f"\n[floability] Data {args.mode} operation FAILED")
+    
+    return success

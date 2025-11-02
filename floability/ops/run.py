@@ -15,7 +15,6 @@ from ..resource_provisioner import start_vine_factory
 from ..jupyter_runner import start_jupyterlab, execute_notebook
 from ..utils import create_unique_directory, safe_extract_tar, update_env_vars_in_conda
 from ..catalog import send_catalog_update
-from ..data.data_handler import perform_default_data_operation
 
 
 def resolve_backpack_args(args):
@@ -131,17 +130,13 @@ def run_workflow(
     )
 
     # If data_spec is provided, fetch data before proceeding
-    # todo: implement cache check
-    # todo: implement binary return for data fetch
-    # todo: consider reusing data ops module
-
     # 1) Fetch data if data_spec is provided --> fetch data
     if args.data_spec:
-        print(f"[floability] Fetching data from {args.data_spec}")
+        print(f"[floability] Performing data operation from {args.data_spec}")
         perf.start_timer("data_operation")
-        from ..data.data_handler import fetch_data_from_spec
+        from ..data.data_handler import execute_default_data_operation
 
-        perform_default_data_operation(
+        data_success = execute_default_data_operation(
             data_spec=args.data_spec,
             backpack_root=args.backpack_root,
             verbose=True,
@@ -149,6 +144,21 @@ def run_workflow(
             data_profile=getattr(args, "data_profile", None),
         )
         perf.end_timer("data_operation", "Time to perform data operation")
+        
+        # Check if data operation succeeded
+        if not data_success:
+            print("\n[floability] ERROR: Data operation failed!")
+            
+            # Check if we should continue despite failure
+            continue_on_failure = getattr(args, "continue_on_data_failure", False)
+            if continue_on_failure:
+                print("[floability] WARNING: Continuing workflow despite data failure (--continue-on-data-failure enabled)")
+            else:
+                print("[floability] Aborting workflow. Use --continue-on-data-failure to proceed anyway.")
+                cleanup_manager.cleanup()
+                return
+        else:
+            print("[floability] Data operation completed successfully")
 
     # Generate a unique manager name if none is provided
     if args.manager_name is None:

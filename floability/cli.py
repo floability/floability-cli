@@ -156,6 +156,12 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
         default=".",
         help="Path to the root of the backpack (default='.').",
     )
+    
+    parser.add_argument(
+        "--continue-on-data-failure",
+        action="store_true",
+        help="Continue workflow execution even if data operations fail (default: abort on data failure).",
+    )
 
     parser.add_argument(
         "--no-worker",

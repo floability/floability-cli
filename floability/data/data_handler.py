@@ -10,27 +10,30 @@ from .pelican_file_utils import pelican_file_metadata, pelican_file_download
 from .fs_file_utils import fs_file_metadata, fs_file_copy
 
 
-# --------------------------- Public API (stubs for now) ---------------------------
-def perform_default_data_operation(
+# --------------------------- Public API ---------------------------
+def execute_default_data_operation(
     data_spec: str,
     backpack_root: Path | None,
     verbose: bool = False,
     force: bool = False,
     data_profile: Optional[str] = None,
-):
-    """Perform the default data operation as defined in the spec policy.
+) -> bool:
+    """Execute the default data operation as defined in the spec policy.
 
     Default operation is typically 'fetch' but may be overridden in the spec policy.
 
     This is a convenience wrapper around the specific operations (check, fetch, verify).
+
+    Returns:
+        bool: True if the operation succeeded, False otherwise.
     """
     spec_path = Path(data_spec)
     if not spec_path.is_file():
         print(f"[data] Spec file not found: {spec_path}")
-        return
+        return False
 
     try:
-        profile_name, profile = verify_data_spec(
+        profile_name, profile = load_and_validate_spec(
             data_spec=data_spec,
             backpack_root=backpack_root,
             requested_profile=data_profile,
@@ -39,7 +42,7 @@ def perform_default_data_operation(
         )
     except ValueError as e:
         print(f"[data] {e}")
-        return
+        return False
 
     policy = profile.get("policy", {})
     default_op = str(policy.get("run_operation", "fetch") or "fetch").strip().lower()
@@ -48,7 +51,7 @@ def perform_default_data_operation(
         print(f"[data] Performing default operation '{default_op}'")
 
     if default_op == "check":
-        check_data_from_spec(
+        return check_data_from_spec(
             data_spec=data_spec,
             backpack_root=backpack_root or Path.cwd(),
             show_details=verbose,
@@ -56,7 +59,7 @@ def perform_default_data_operation(
             data_profile=data_profile,
         )
     elif default_op == "fetch":
-        fetch_data_from_spec(
+        return fetch_data_from_spec(
             data_spec=data_spec,
             backpack_root=backpack_root,
             verbose=verbose,
@@ -64,7 +67,7 @@ def perform_default_data_operation(
             data_profile=data_profile,
         )
     elif default_op == "verify":
-        verify_data_from_spec(
+        return verify_data_from_spec(
             data_spec=data_spec,
             backpack_root=backpack_root,
             verbose=verbose,
@@ -73,6 +76,7 @@ def perform_default_data_operation(
         )
     else:
         print(f"[data] Unknown default operation '{default_op}' specified in policy.")
+        return False
 
 def check_data_from_spec(
     data_spec: str,
@@ -80,22 +84,25 @@ def check_data_from_spec(
     show_details: bool = False,
     verbose: bool = False,
     data_profile: Optional[str] = None,
-):
+) -> bool:
     """High-level entry: perform metadata-only checks for each data item.
 
     Steps:
       1. Load + normalize spec (apply defaults, pick profile).
       2. Iterate data items, gather metadata without downloading bodies.
-            3. Validate expected_size (within tolerance).
+      3. Validate expected_size (within tolerance).
       4. Print a summary report.
+
+    Returns:
+        bool: True if all items exist and match their expected size, False otherwise.
     """
     spec_path = Path(data_spec)
     if not spec_path.is_file():
         print(f"[data:check] Spec file not found: {spec_path}")
-        return
+        return False
 
     try:
-        profile_name, profile = verify_data_spec(
+        profile_name, profile = load_and_validate_spec(
             data_spec=data_spec,
             backpack_root=backpack_root,
             requested_profile=data_profile,
@@ -104,7 +111,7 @@ def check_data_from_spec(
         )
     except ValueError as e:
         print(f"[data:check] {e}")
-        return
+        return False
 
     items = profile.get("data", []) or []
     policy = profile.get("policy", {})
@@ -121,9 +128,11 @@ def check_data_from_spec(
         result = _check_single_item(item, tolerance, backpack_root)
         results.append(result)
 
-    _print_check_summary(results)
+    success = _print_check_summary(results)
     if show_details or verbose:
         _print_detailed_results(results)
+    
+    return success
 
 
 def fetch_data_from_spec(
@@ -132,7 +141,7 @@ def fetch_data_from_spec(
     verbose: bool = False,
     force: bool = False,
     data_profile: Optional[str] = None,
-):
+) -> bool:
     """Fetch (download/copy) all data items defined in the selected profile.
 
     Rules:
@@ -141,11 +150,14 @@ def fetch_data_from_spec(
       * All relative sources (for fs) and target_path resolutions are relative to backpack_root.
       * multi source_type: iterate sources until first successful fetch.
       * For now, post_process is ignored (placeholder).
+
+    Returns:
+        bool: True if all items were successfully fetched and copied to target locations, False otherwise.
     """
     spec_path = Path(data_spec)
     if not spec_path.is_file():
         print(f"[data:fetch] Spec file not found: {spec_path}")
-        return
+        return False
 
     # Infer backpack_root if not provided
     if backpack_root is None:
@@ -156,7 +168,7 @@ def fetch_data_from_spec(
     backpack_root = Path(backpack_root).resolve()
 
     try:
-        profile_name, profile = verify_data_spec(
+        profile_name, profile = load_and_validate_spec(
             data_spec=data_spec,
             backpack_root=backpack_root,
             requested_profile=data_profile,
@@ -165,7 +177,7 @@ def fetch_data_from_spec(
         )
     except ValueError as e:
         print(f"[data:fetch] {e}")
-        return
+        return False
 
     items = profile.get("data", []) or []
     if verbose:
@@ -176,19 +188,42 @@ def fetch_data_from_spec(
     normalized_items = items
 
     total = len(normalized_items)
+    failed_items = []
+    
     for idx, item in enumerate(normalized_items, start=1):
+        item_name = item.get('name', '<unnamed>')
         if verbose:
             print(
-                f"[data:fetch] Fetching {idx}/{total}: {item.get('name','<unnamed>')} (force={force})"
+                f"[data:fetch] Fetching {idx}/{total}: {item_name} (force={force})"
             )
-        _fetch_single_item(item, backpack_root, verbose=verbose, force=force)
-        if verbose:
+        result = _fetch_single_item(item, backpack_root, verbose=verbose, force=force)
+        
+        # Check if fetch was successful (returns source on success, None on failure or skip)
+        default_prefix = (
+            (Path(backpack_root) / "workflow").resolve()
+            if backpack_root
+            else Path.cwd() / "workflow"
+        )
+        target_path = _resolve_target_path(item, backpack_root, target_prefix=default_prefix)
+        
+        # Verify the file actually exists after fetch attempt
+        if not target_path.exists():
+            failed_items.append(item_name)
+            print(f"[data:fetch] FAILED to fetch '{item_name}' - target does not exist: {target_path}")
+        elif verbose:
             print(
-                f"[data:fetch] Finished {idx}/{total}: {item.get('name','<unnamed>')}"
+                f"[data:fetch] Finished {idx}/{total}: {item_name}"
             )
 
+    if failed_items:
+        print(f"\n[data:fetch] ERROR: {len(failed_items)} of {total} items failed to fetch:")
+        for name in failed_items:
+            print(f"  - {name}")
+        return False
+    
     if verbose:
-        print("[data:fetch] Completed.")
+        print(f"[data:fetch] Completed successfully. All {total} items fetched.")
+    return True
 
 
 def verify_data_from_spec(
@@ -197,7 +232,7 @@ def verify_data_from_spec(
     verbose: bool = False,
     force: bool = False,
     data_profile: Optional[str] = None,
-):
+) -> bool:
     """Verify data items: ensure present (download/copy if needed) then validate integrity.
 
     Integrity signals supported:
@@ -205,11 +240,14 @@ def verify_data_from_spec(
       * expected_size (+ policy.size_tolerance_bytes)
 
     Produces a summary table and (if verbose) per-item details.
+
+    Returns:
+        bool: True if all items pass verification (exist, size matches, checksum matches if required), False otherwise.
     """
     spec_path = Path(data_spec)
     if not spec_path.is_file():
         print(f"[data:verify] Spec file not found: {spec_path}")
-        return
+        return False
 
     if backpack_root is None:
         if spec_path.parent.name == "data":
@@ -221,7 +259,7 @@ def verify_data_from_spec(
     print(f"\n[data:verify] Using backpack_root: {backpack_root}\n")
 
     try:
-        profile_name, profile = verify_data_spec(
+        profile_name, profile = load_and_validate_spec(
             data_spec=data_spec,
             backpack_root=backpack_root,
             requested_profile=data_profile,
@@ -230,7 +268,7 @@ def verify_data_from_spec(
         )
     except ValueError as e:
         print(f"[data:verify] {e}")
-        return
+        return False
 
     items = profile.get("data", []) or []
     policy = profile.get("policy", {})
@@ -335,13 +373,15 @@ def verify_data_from_spec(
                 f"[data:verify] Finished {idx}/{total}: {name} exists={local_exists} size_ok={size_ok} checksum_ok={checksum_ok}"
             )
 
-    _print_verify_summary(results)
+    success = _print_verify_summary(results)
     if verbose:
         _print_verify_details(results)
+    
+    return success
 
 
 # --------------------------- Spec Preparation ---------------------------
-def verify_data_spec(
+def load_and_validate_spec(
     data_spec: str,
     backpack_root: Optional[Path],
     requested_profile: Optional[str] = None,
@@ -868,7 +908,12 @@ def _compute_checksum(path: Path, alg: str, chunk_size: int = 1024 * 1024) -> st
 
 
 # --------------------------- Verify Reporting ---------------------------
-def _print_verify_summary(results: List[Dict[str, Any]]) -> None:
+def _print_verify_summary(results: List[Dict[str, Any]]) -> bool:
+    """Print verification summary and return success status.
+    
+    Returns:
+        bool: True if all items passed verification, False otherwise.
+    """
     print("[data:verify] Summary:")
     headers = [
         "name",
@@ -898,6 +943,22 @@ def _print_verify_summary(results: List[Dict[str, Any]]) -> None:
     print(
         f"[data:verify] Items: {total}, missing: {missing}, size_fail: {size_fail}, checksum_fail: {checksum_fail}"
     )
+    
+    # Determine success: no missing items, no size failures, no checksum failures
+    success = missing == 0 and size_fail == 0 and checksum_fail == 0
+    
+    if not success:
+        print(f"\n[data:verify] ERROR: Verification failed for {missing + size_fail + checksum_fail} items")
+        if missing > 0:
+            print(f"  - {missing} items are missing")
+        if size_fail > 0:
+            print(f"  - {size_fail} items have size mismatches")
+        if checksum_fail > 0:
+            print(f"  - {checksum_fail} items have checksum mismatches")
+    else:
+        print(f"[data:verify] SUCCESS: All {total} items passed verification")
+    
+    return success
 
 
 def _print_verify_details(results: List[Dict[str, Any]]) -> None:
@@ -915,7 +976,14 @@ def _print_verify_details(results: List[Dict[str, Any]]) -> None:
     print("[data:verify] End of detailed report")
 
 
-def _print_check_summary(results: List[Dict[str, Any]]) -> None:
+#todo: split print and check logic. 
+# print returns None, check returns bool
+def _print_check_summary(results: List[Dict[str, Any]]) -> bool:
+    """Print check summary and return success status.
+    
+    Returns:
+        bool: True if all items exist and match their expected size, False otherwise.
+    """
     print("[data:check] Summary:")
     headers = [
         "name",
@@ -940,6 +1008,20 @@ def _print_check_summary(results: List[Dict[str, Any]]) -> None:
     missing = sum(1 for r in results if not r.get("exists"))
     size_fail = sum(1 for r in results if r.get("size_ok") is False)
     print(f"[data:check] Items: {total}, missing: {missing}, size_fail: {size_fail}")
+    
+    # Determine success: no missing items and no size failures
+    success = missing == 0 and size_fail == 0
+    
+    if not success:
+        print(f"\n[data:check] ERROR: Check failed for {missing + size_fail} items")
+        if missing > 0:
+            print(f"  - {missing} items do not exist or cannot be accessed")
+        if size_fail > 0:
+            print(f"  - {size_fail} items have size mismatches")
+    else:
+        print(f"[data:check] SUCCESS: All {total} items passed check")
+    
+    return success
 
 
 def _print_detailed_results(results: List[Dict[str, Any]]) -> None:
