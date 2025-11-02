@@ -19,38 +19,52 @@ from ..data.data_handler import perform_default_data_operation
 
 
 def resolve_backpack_args(args):
+    """
+    Given the path to a backpack, fill in any missing arguments
+    (data spec, compute spec, environment, notebook/script) from
+    the backpack structure.
+    """
+    
     if not args.backpack:
         return
     backpack_dir = Path(args.backpack).resolve()
     backpack_name = str(backpack_dir.stem)
+
     print(f"Started processing backpack: {backpack_name}")
+    
     if not backpack_dir.is_dir():
         print(f"Backpack directory not found: {backpack_dir}")
         return
+    
     if not args.data_spec:
         data_spec = backpack_dir / "data" / "data.yml"
         if data_spec.is_file():
             args.data_spec = str(data_spec)
             print(f"Using data spec from backpack: {args.data_spec}")
+    
     if not args.compute_spec:
         compute_spec = backpack_dir / "compute" / "compute.yml"
         if compute_spec.is_file():
             args.compute_spec = str(compute_spec)
             print(f"Using compute spec from backpack: {args.compute_spec}")
+    
     if not args.environment:
         env_path = backpack_dir / "software" / "environment.yml"
         if env_path.is_file():
             args.environment = str(env_path)
             print(f"Using environment from backpack: {args.environment}")
+    
     if not args.worker_environment:
         worker_env_path = backpack_dir / "software" / "worker-environment.yml"
         if worker_env_path.is_file():
             args.worker_environment = str(worker_env_path)
             print(f"Using worker environment from backpack: {args.worker_environment}")
+    
     if not args.notebook and not args.python_script:
         workflow_dir = backpack_dir / "workflow"
         notebooks = list(workflow_dir.glob("*.ipynb"))
         python_scripts = list(workflow_dir.glob("*.py"))
+        
         if python_scripts:
             if len(python_scripts) == 1:
                 args.python_script = str(python_scripts[0])
@@ -66,6 +80,7 @@ def resolve_backpack_args(args):
                 if not args.python_script:
                     args.python_script = str(python_scripts[0])
                     print(f"Using Python script from backpack: {args.python_script}")
+        
         elif notebooks:
             if len(notebooks) == 1:
                 args.notebook = str(notebooks[0])
@@ -80,6 +95,7 @@ def resolve_backpack_args(args):
                 print(
                     f"No notebook found in backpack: {workflow_dir}. Starting JupyterLab without a notebook."
                 )
+    
     args.backpack_root = str(backpack_dir)
 
 
