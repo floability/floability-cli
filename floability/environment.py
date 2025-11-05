@@ -157,7 +157,7 @@ def create_conda_pack_from_yml(
                 print(f"[environment] Post-installation script executed successfully.")
 
         print(f"[environment] Packing environment into '{output_file}'...")
-        cmd_pack = ["conda-pack", "-p", env_path, "-o", output_file, "--force"]
+        cmd_pack = ["conda-pack", "-p", env_path, "-o", output_file, "--force", "--exclude", "share/gdb/*"] 
         subprocess.run(cmd_pack, check=True)
 
         print(f"[environment] Environment successfully packed: {output_file}")
