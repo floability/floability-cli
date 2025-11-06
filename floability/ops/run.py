@@ -326,7 +326,10 @@ def run_workflow(
         # Materialize data into workflow_dir (sandbox) or backpack_root (in-place)
         # Note: data_cache_mode and base_dir are passed regardless of run-in-place mode
         # This ensures caching works in both sandbox and in-place execution
-        data_materialization_root = str(workflow_dir) if not run_in_place else args.backpack_root
+        # 
+        # In sandbox mode: pass instance root as backpack_root so data_handler adds "/workflow"
+        # In run-in-place mode: pass actual backpack_root
+        data_materialization_root = str(instance_paths["root"]) if not run_in_place else args.backpack_root
         
         data_success = execute_default_data_operation(
             data_spec=args.data_spec,
@@ -403,8 +406,11 @@ def run_workflow(
             )
             perf.measure_file_size(environment_pack, "environment_pack")
 
-        env_dir = os.path.join(run_dir, "current_conda_env")
+        # Extract conda environment to instance root (not inside workflow)
+        # Use absolute path to avoid issues with working directory changes
+        env_dir = os.path.abspath(os.path.join(str(instance_paths["root"]), "current_conda_env"))
         os.makedirs(env_dir, exist_ok=True)
+        print(f"[floability] Conda environment directory: {env_dir}")
 
         # 2a) Extract the environment
         try:
@@ -496,12 +502,24 @@ def run_workflow(
         print("[floability] vine_factory is disabled by --no-worker.")
 
     # 4) Start JupyterLab or execute notebook/script --> start Jupyter or execute
+    # When using working_dir, convert paths to be relative to that directory
+    notebook_path_for_exec = args.notebook
+    script_path_for_exec = args.python_script
+    
+    if not run_in_place and args.notebook:
+        # In sandbox mode, use just the filename since we're in the workflow directory
+        notebook_path_for_exec = Path(args.notebook).name
+    
+    if not run_in_place and args.python_script:
+        # In sandbox mode, use just the filename since we're in the workflow directory
+        script_path_for_exec = Path(args.python_script).name
+    
     if mode == "run":
         # Always start Jupyter, even if --notebook not provided
         # We'll pass None for the notebook_path if not given.
         print("[floability] Starting JupyterLab...")
         jupyter_proc = start_jupyterlab(
-            notebook_path=args.notebook,
+            notebook_path=notebook_path_for_exec,
             port=args.jupyter_port,
             run_dir=str(instance_paths["logs"]),
             conda_env_dir=env_dir,
@@ -514,7 +532,7 @@ def run_workflow(
         
         if args.prefer_python and args.python_script:
             execute_python_script(
-                script_path=args.python_script,
+                script_path=script_path_for_exec,
                 run_dir=str(instance_paths["logs"]),
                 conda_env_dir=env_dir,
                 working_dir=str(workflow_dir),
@@ -523,7 +541,7 @@ def run_workflow(
         elif args.notebook:
             perf.start_timer("notebook_execute_time")
             execution_success = execute_notebook(
-                notebook_path=args.notebook,
+                notebook_path=notebook_path_for_exec,
                 run_dir=str(instance_paths["logs"]),
                 conda_env_dir=env_dir,
                 working_dir=str(workflow_dir),
