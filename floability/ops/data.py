@@ -63,6 +63,8 @@ def run_data_command(args):
             show_details=getattr(args, "check_details", False),
             verbose=getattr(args, "verbose", False),
             data_profile=getattr(args, "data_profile", None),
+            data_cache_mode=getattr(args, "data_cache_mode", "off"),
+            base_dir=Path(getattr(args, "base_dir", ".")) if hasattr(args, "base_dir") else Path.cwd(),
         )
     elif args.mode == "fetch":
         print(f"[floability] Fetching data from {args.data_spec}")
@@ -72,6 +74,9 @@ def run_data_command(args):
             verbose=getattr(args, "verbose", False),
             force=getattr(args, "force_fetch", False),
             data_profile=getattr(args, "data_profile", None),
+            data_cache_mode=getattr(args, "data_cache_mode", "off"),
+            force_data_cache=getattr(args, "force_data_cache", False),
+            base_dir=Path(getattr(args, "base_dir", ".")) if hasattr(args, "base_dir") else Path.cwd(),
         )
     elif args.mode == "verify":
         print(
@@ -83,6 +88,9 @@ def run_data_command(args):
             verbose=getattr(args, "verbose", False),
             force=getattr(args, "force_fetch", False),
             data_profile=getattr(args, "data_profile", None),
+            data_cache_mode=getattr(args, "data_cache_mode", "off"),
+            force_data_cache=getattr(args, "force_data_cache", False),
+            base_dir=Path(getattr(args, "base_dir", ".")) if hasattr(args, "base_dir") else Path.cwd(),
         )
     
     # Print final status

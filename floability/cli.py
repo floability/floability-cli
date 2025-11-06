@@ -162,6 +162,19 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
         action="store_true",
         help="Continue workflow execution even if data operations fail (default: abort on data failure).",
     )
+    
+    parser.add_argument(
+        "--data-cache-mode",
+        default="off",
+        choices=["off", "symlink", "hardlink", "copy"],
+        help="Data caching mode: off (no cache), symlink (default, read-only), hardlink (shared inode), copy (independent copy).",
+    )
+    
+    parser.add_argument(
+        "--force-data-cache",
+        action="store_true",
+        help="Force rebuild of cache entries even if they already exist.",
+    )
 
     parser.add_argument(
         "--no-worker",
@@ -275,6 +288,22 @@ def _add_data_args(data_parser: argparse.ArgumentParser) -> None:
     data_parser.add_argument(
         "--data-profile",
         help="Override the profile name in the data spec (useful to select a profile other than default).",
+    )
+    data_parser.add_argument(
+        "--data-cache-mode",
+        default="off",
+        choices=["off", "symlink", "hardlink", "copy"],
+        help="Data caching mode: off (no cache), symlink (default, read-only), hardlink (shared inode), copy (independent copy).",
+    )
+    data_parser.add_argument(
+        "--force-data-cache",
+        action="store_true",
+        help="Force rebuild of cache entries even if they already exist.",
+    )
+    data_parser.add_argument(
+        "--base-dir",
+        default=".",
+        help="Base directory for floability cache storage (default='.').",
     )
     return None
 

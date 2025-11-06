@@ -3,6 +3,10 @@ from pathlib import Path
 from typing import Dict, Any, Iterable, List, Tuple, Optional, Callable
 import yaml
 import hashlib
+import json
+import time
+import os
+import shutil
 
 # Reuse existing low-level helpers
 from .http_file_utils import http_file_metadata, http_file_download
@@ -17,12 +21,25 @@ def execute_default_data_operation(
     verbose: bool = False,
     force: bool = False,
     data_profile: Optional[str] = None,
+    data_cache_mode: str = "off",
+    force_data_cache: bool = False,
+    base_dir: Path | None = None,
 ) -> bool:
     """Execute the default data operation as defined in the spec policy.
 
     Default operation is typically 'fetch' but may be overridden in the spec policy.
 
     This is a convenience wrapper around the specific operations (check, fetch, verify).
+
+    Args:
+        data_spec: Path to data spec YAML file
+        backpack_root: Base directory for resolving relative paths
+        verbose: Print detailed progress messages
+        force: Force re-download/re-verification even if target exists
+        data_profile: Data profile name to use (default: spec's default_profile)
+        data_cache_mode: Cache mode: 'off', 'symlink', 'hardlink', 'copy'
+        force_data_cache: Force rebuild of cache entries even if they exist
+        base_dir: Floability base directory for cache storage (default: current directory)
 
     Returns:
         bool: True if the operation succeeded, False otherwise.
@@ -57,6 +74,8 @@ def execute_default_data_operation(
             show_details=verbose,
             verbose=verbose,
             data_profile=data_profile,
+            data_cache_mode=data_cache_mode,
+            base_dir=base_dir,
         )
     elif default_op == "fetch":
         return fetch_data_from_spec(
@@ -65,6 +84,9 @@ def execute_default_data_operation(
             verbose=verbose,
             force=force,
             data_profile=data_profile,
+            data_cache_mode=data_cache_mode,
+            force_data_cache=force_data_cache,
+            base_dir=base_dir,
         )
     elif default_op == "verify":
         return verify_data_from_spec(
@@ -73,6 +95,9 @@ def execute_default_data_operation(
             verbose=verbose,
             force=force,
             data_profile=data_profile,
+            data_cache_mode=data_cache_mode,
+            force_data_cache=force_data_cache,
+            base_dir=base_dir,
         )
     else:
         print(f"[data] Unknown default operation '{default_op}' specified in policy.")
@@ -84,6 +109,8 @@ def check_data_from_spec(
     show_details: bool = False,
     verbose: bool = False,
     data_profile: Optional[str] = None,
+    data_cache_mode: str = "off",
+    base_dir: Path | None = None,
 ) -> bool:
     """High-level entry: perform metadata-only checks for each data item.
 
@@ -91,7 +118,17 @@ def check_data_from_spec(
       1. Load + normalize spec (apply defaults, pick profile).
       2. Iterate data items, gather metadata without downloading bodies.
       3. Validate expected_size (within tolerance).
-      4. Print a summary report.
+      4. Check cache status if cache mode is enabled.
+      5. Print a summary report.
+
+    Args:
+        data_spec: Path to data spec YAML file
+        backpack_root: Base directory for resolving relative paths
+        show_details: Print detailed item metadata after summary
+        verbose: Print detailed progress messages
+        data_profile: Data profile name to use (default: spec's default_profile)
+        data_cache_mode: Cache mode to check cache status ('off' = no cache check)
+        base_dir: Floability base directory for cache storage (default: current directory)
 
     Returns:
         bool: True if all items exist and match their expected size, False otherwise.
@@ -120,17 +157,22 @@ def check_data_from_spec(
         print(
             f"[data:check] data_profile: {profile_name} (items={len(items)}, size_tolerance={tolerance})"
         )
+        if data_cache_mode != "off":
+            print(f"[data:check] Checking cache status (mode={data_cache_mode})")
 
     normalized_items = items
 
+    # Use base_dir for cache, default to current directory
+    cache_base_dir = Path(base_dir) if base_dir else Path.cwd()
+
     results: List[Dict[str, Any]] = []
     for item in normalized_items:
-        result = _check_single_item(item, tolerance, backpack_root)
+        result = _check_single_item(item, tolerance, backpack_root, data_cache_mode=data_cache_mode, verbose=verbose, cache_base_dir=cache_base_dir)
         results.append(result)
 
-    success = _print_check_summary(results)
+    success = _print_check_summary(results, show_cache=data_cache_mode != "off")
     if show_details or verbose:
-        _print_detailed_results(results)
+        _print_detailed_results(results, show_cache=data_cache_mode != "off")
     
     return success
 
@@ -141,6 +183,9 @@ def fetch_data_from_spec(
     verbose: bool = False,
     force: bool = False,
     data_profile: Optional[str] = None,
+    data_cache_mode: str = "off",
+    force_data_cache: bool = False,
+    base_dir: Path | None = None,
 ) -> bool:
     """Fetch (download/copy) all data items defined in the selected profile.
 
@@ -150,6 +195,16 @@ def fetch_data_from_spec(
       * All relative sources (for fs) and target_path resolutions are relative to backpack_root.
       * multi source_type: iterate sources until first successful fetch.
       * For now, post_process is ignored (placeholder).
+
+    Args:
+        data_spec: Path to data spec YAML file
+        backpack_root: Base directory for resolving relative paths
+        verbose: Print detailed progress messages
+        force: Force re-download even if target exists
+        data_profile: Data profile name to use (default: spec's default_profile)
+        data_cache_mode: Cache mode: 'off', 'symlink', 'hardlink', 'copy'
+        force_data_cache: Force rebuild of cache entries even if they exist
+        base_dir: Floability base directory for cache storage (default: current directory)
 
     Returns:
         bool: True if all items were successfully fetched and copied to target locations, False otherwise.
@@ -184,8 +239,13 @@ def fetch_data_from_spec(
         print(
             f"[data:fetch] data_profile '{profile_name}' items={len(items)} backpack_root={backpack_root}"
         )
+        if data_cache_mode != "off":
+            print(f"[data:fetch] data_cache_mode={data_cache_mode} force_data_cache={force_data_cache}")
 
     normalized_items = items
+
+    # Use base_dir for cache, default to current directory
+    cache_base_dir = Path(base_dir) if base_dir else Path.cwd()
 
     total = len(normalized_items)
     failed_items = []
@@ -196,7 +256,12 @@ def fetch_data_from_spec(
             print(
                 f"[data:fetch] Fetching {idx}/{total}: {item_name} (force={force})"
             )
-        result = _fetch_single_item(item, backpack_root, verbose=verbose, force=force)
+        result = _fetch_single_item(
+            item, backpack_root, verbose=verbose, force=force,
+            data_cache_mode=data_cache_mode,
+            force_data_cache=force_data_cache,
+            cache_base_dir=cache_base_dir,
+        )
         
         # Check if fetch was successful (returns source on success, None on failure or skip)
         default_prefix = (
@@ -232,6 +297,9 @@ def verify_data_from_spec(
     verbose: bool = False,
     force: bool = False,
     data_profile: Optional[str] = None,
+    data_cache_mode: str = "off",
+    force_data_cache: bool = False,
+    base_dir: Path | None = None,
 ) -> bool:
     """Verify data items: ensure present (download/copy if needed) then validate integrity.
 
@@ -240,6 +308,16 @@ def verify_data_from_spec(
       * expected_size (+ policy.size_tolerance_bytes)
 
     Produces a summary table and (if verbose) per-item details.
+
+    Args:
+        data_spec: Path to data spec YAML file
+        backpack_root: Base directory for resolving relative paths
+        verbose: Print detailed progress messages
+        force: Force re-download even if target exists
+        data_profile: Data profile name to use (default: spec's default_profile)
+        data_cache_mode: Cache mode: 'off', 'symlink', 'hardlink', 'copy'
+        force_data_cache: Force rebuild of cache entries even if they exist
+        base_dir: Floability base directory for cache storage (default: current directory)
 
     Returns:
         bool: True if all items pass verification (exist, size matches, checksum matches if required), False otherwise.
@@ -278,8 +356,13 @@ def verify_data_from_spec(
         print(
             f"[data:verify] data_profile '{profile_name}' items={len(items)} tolerance={tolerance} backpack_root={backpack_root}"
         )
+        if data_cache_mode != "off":
+            print(f"[data:verify] data_cache_mode={data_cache_mode} force_data_cache={force_data_cache}")
 
     normalized_items = items
+
+    # Use base_dir for cache, default to current directory
+    cache_base_dir = Path(base_dir) if base_dir else Path.cwd()
 
     results: List[Dict[str, Any]] = []
     total = len(normalized_items)
@@ -289,7 +372,10 @@ def verify_data_from_spec(
             print(f"[data:verify] Processing {idx}/{total}: {name} (force={force})")
         # Ensure fetched (may skip if exists and not force)
         chosen_source = _fetch_single_item(
-            item, backpack_root, verbose=verbose, force=force
+            item, backpack_root, verbose=verbose, force=force,
+            data_cache_mode=data_cache_mode,
+            force_data_cache=force_data_cache,
+            cache_base_dir=cache_base_dir,
         )
         # Evaluate integrity on local target
         default_prefix = (
@@ -601,7 +687,8 @@ def _normalize_data_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
 # --------------------------- Item Checking Logic ---------------------------
 def _check_single_item(
-    item: Dict[str, Any], tolerance: int, backpack_root: Path
+    item: Dict[str, Any], tolerance: int, backpack_root: Path,
+    data_cache_mode: str = "off", verbose: bool = False, cache_base_dir: Path | None = None
 ) -> Dict[str, Any]:
     name = item.get("name", "<unnamed>")
     stype = item.get("source_type")
@@ -638,6 +725,33 @@ def _check_single_item(
             size_ok = diff <= tolerance
             size_note = f"diff={diff}" if diff else "exact"
 
+    # Check cache status if cache mode is enabled
+    cache_exists = None
+    cache_valid = None
+    cache_key = None
+    if data_cache_mode != "off" and cache_base_dir:
+        try:
+            artifact_spec = _create_artifact_spec(item, backpack_root)
+            cache_key = _compute_cache_key(artifact_spec)
+            cache_dir = _get_cache_dir(cache_base_dir, cache_key)
+            
+            cache_exists = cache_dir.exists() and (cache_dir / ".meta.json").exists()
+            if cache_exists:
+                # Check if cache is valid (no lock, metadata matches)
+                lock_file = cache_dir / ".verify.lock"
+                if lock_file.exists():
+                    cache_valid = False  # Building in progress
+                else:
+                    cache_meta = _lookup_cache_entry(cache_dir, artifact_spec, verbose=False)
+                    cache_valid = cache_meta is not None
+            else:
+                cache_valid = False
+        except Exception as e:
+            if verbose:
+                print(f"[data:check] Error checking cache for '{name}': {e}")
+            cache_exists = False
+            cache_valid = False
+
     return {
         "name": name,
         "source_type": stype,
@@ -649,6 +763,9 @@ def _check_single_item(
         "exists": meta.get("exists"),
         "meta": meta,
         "multi_chain": meta_chain if stype == "multi" else None,
+        "cache_exists": cache_exists,
+        "cache_valid": cache_valid,
+        "cache_key": cache_key[:16] + "..." if cache_key else None,
     }
 
 
@@ -765,7 +882,24 @@ def _fetch_single_item(
     backpack_root: Path,
     verbose: bool = False,
     force: bool = False,
+    data_cache_mode: str = "off",
+    force_data_cache: bool = False,
+    cache_base_dir: Path | None = None,
 ) -> Optional[Dict[str, Any]]:
+    """Fetch a single data item, optionally using cache.
+    
+    Args:
+        item: Normalized data item from spec
+        backpack_root: Base directory for resolving paths
+        verbose: Print detailed progress messages
+        force: Force re-download even if target exists
+        data_cache_mode: Cache mode: 'off', 'symlink', 'hardlink', 'copy'
+        force_data_cache: Force rebuild of cache entries
+        cache_base_dir: Floability base directory for cache storage
+        
+    Returns:
+        Data item dict on success, None on failure
+    """
     name = item.get("name", "<unnamed>")
     stype = item.get("source_type")
     default_prefix = (
@@ -778,22 +912,76 @@ def _fetch_single_item(
     )
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Check if target already exists
     if target_path.exists() and not force:
         if verbose:
             print(
-                f"[data:fetch] Skipping '{name}' target exists: {target_path} (use --force-fetch to overwrite)"
+                f"[data:fetch] Skipping '{name}' target exists: {target_path} (use --force to overwrite)"
             )
         return None
     elif target_path.exists() and force:
         if verbose:
             print(f"[data:fetch] Removing existing target for '{name}': {target_path}")
-        if target_path.is_dir():
-            import shutil
-
+        if target_path.is_dir() and not target_path.is_symlink():
             shutil.rmtree(target_path)
         else:
             target_path.unlink()
 
+    # Use cache if enabled
+    if data_cache_mode != "off" and cache_base_dir:
+        if verbose:
+            print(f"[data:fetch] Using cache mode: {data_cache_mode}")
+        
+        # Create artifact spec and compute cache key
+        artifact_spec = _create_artifact_spec(item, backpack_root)
+        cache_key = _compute_cache_key(artifact_spec)
+        cache_dir = _get_cache_dir(cache_base_dir, cache_key)
+        
+        if verbose:
+            print(f"[data:fetch] Cache key: {cache_key[:16]}...")
+            print(f"[data:fetch] Cache dir: {cache_dir}")
+        
+        # Try to lookup existing cache entry
+        cache_meta = None
+        if not force_data_cache:
+            cache_meta = _lookup_cache_entry(cache_dir, artifact_spec, verbose=verbose)
+        
+        # Build cache if not found or forced
+        if cache_meta is None:
+            if verbose:
+                print(f"[data:fetch] Building cache entry...")
+            
+            # Acquire lock
+            if not _acquire_cache_lock(cache_dir, timeout=300):
+                print(f"[data:fetch] ERROR: Timeout waiting for cache lock: {cache_dir}")
+                # Fall back to direct fetch
+                if verbose:
+                    print(f"[data:fetch] Falling back to direct fetch without cache")
+            else:
+                try:
+                    # Build cache entry
+                    if _build_cache_entry(item, cache_dir, backpack_root, verbose=verbose):
+                        cache_meta = _read_cache_metadata(cache_dir)
+                    else:
+                        print(f"[data:fetch] ERROR: Failed to build cache entry")
+                        # Fall back to direct fetch
+                        if verbose:
+                            print(f"[data:fetch] Falling back to direct fetch without cache")
+                finally:
+                    # Always release lock
+                    _release_cache_lock(cache_dir)
+        
+        # Materialize from cache if we have a valid entry
+        if cache_meta is not None:
+            if _materialize_from_cache(cache_dir, target_path, mode=data_cache_mode, verbose=verbose):
+                if verbose:
+                    print(f"[data:fetch] '{name}' materialized from cache -> {target_path}")
+                return item
+            else:
+                print(f"[data:fetch] ERROR: Failed to materialize from cache")
+                # Fall through to direct fetch
+
+    # Direct fetch (no cache or cache failed)
     if stype == "multi":
         for src_entry in item.get("sources", []):
             s_norm = src_entry
@@ -868,6 +1056,586 @@ def _attempt_fetch_source(
             print(f"[data:fetch] Error fetching {stype} source '{src}': {e}")
         return False
     return False
+
+
+# --------------------------- Cache Infrastructure ---------------------------
+def _create_artifact_spec(item: Dict[str, Any], backpack_root: Path) -> Dict[str, Any]:
+    """Create a normalized artifact spec containing only fields that affect bytes.
+    
+    This spec is used to compute the cache key. Only include fields that affect
+    the content of the cached data (source, checksum, size, transformations).
+    
+    Args:
+        item: Normalized data item from spec
+        backpack_root: Base path for resolving relative sources
+        
+    Returns:
+        Dict with canonical fields: source_type, source(s), checksum, expected_size,
+        content_type, post_process
+    """
+    artifact = {}
+    
+    # Source information
+    stype = item.get("source_type")
+    artifact["source_type"] = stype
+    
+    if stype == "multi":
+        # For multi-source, include all sources in order
+        sources = item.get("sources", [])
+        resolved_sources = []
+        for s in sources:
+            s_type = s.get("source_type")
+            s_source = s.get("source", "")
+            # Resolve relative fs/backpack paths to absolute
+            if s_type in ("fs", "backpack"):
+                p = Path(s_source)
+                if not p.is_absolute():
+                    s_source = str((Path(backpack_root) / p).resolve())
+            resolved_sources.append({
+                "source_type": s_type,
+                "source": s_source
+            })
+        artifact["sources"] = resolved_sources
+    else:
+        # Single source
+        source = item.get("source", "")
+        # Resolve relative fs/backpack paths to absolute
+        if stype in ("fs", "backpack"):
+            p = Path(source)
+            if not p.is_absolute():
+                source = str((Path(backpack_root) / p).resolve())
+        artifact["source"] = source
+    
+    # Checksum (if specified)
+    checksum = _extract_checksum_field(item)
+    if checksum:
+        artifact["checksum"] = checksum
+    
+    # Expected size (if specified)
+    expected_size = item.get("expected_size")
+    if expected_size is not None:
+        artifact["expected_size"] = expected_size
+    
+    # Content type (if specified)
+    content_type = item.get("content_type")
+    if content_type:
+        artifact["content_type"] = content_type
+    
+    # Post-processing (if specified)
+    post_process = item.get("post_process")
+    if post_process:
+        artifact["post_process"] = post_process
+    
+    return artifact
+
+
+def _compute_cache_key(artifact_spec: Dict[str, Any]) -> str:
+    """Compute deterministic cache key from artifact spec.
+    
+    Args:
+        artifact_spec: Normalized artifact spec from _create_artifact_spec
+        
+    Returns:
+        SHA-256 hex digest of canonical JSON representation
+    """
+    # Serialize to canonical JSON (sorted keys, compact)
+    canonical_json = json.dumps(artifact_spec, sort_keys=True, separators=(',', ':'))
+    
+    # Compute SHA-256 hash
+    cache_key = hashlib.sha256(canonical_json.encode('utf-8')).hexdigest()
+    
+    return cache_key
+
+
+def _get_cache_dir(base_dir: Path, cache_key: str) -> Path:
+    """Get cache directory path for a given cache key.
+    
+    Args:
+        base_dir: Floability base directory (e.g., from --base-dir flag)
+        cache_key: Cache key (SHA-256 hex)
+        
+    Returns:
+        Path to cache directory: base_dir/flo_data_cache/{cache_key}/
+    """
+    cache_root = base_dir / "flo_data_cache"
+    return cache_root / cache_key
+
+
+def _acquire_cache_lock(cache_dir: Path, timeout: int = 300) -> bool:
+    """Atomically acquire a lock for cache directory.
+    
+    Creates cache_dir/.verify.lock to signal cache build in progress.
+    
+    Args:
+        cache_dir: Cache directory path
+        timeout: Max seconds to wait for existing lock (default: 5 min)
+        
+    Returns:
+        True if lock acquired, False if timeout waiting for existing lock
+    """
+    lock_file = cache_dir / ".verify.lock"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    start_time = time.time()
+    while True:
+        try:
+            # Try to create lock file atomically (fails if exists)
+            lock_file.touch(exist_ok=False)
+            # Write PID for debugging
+            lock_file.write_text(str(os.getpid()))
+            return True
+        except FileExistsError:
+            # Lock exists, check if we should wait
+            elapsed = time.time() - start_time
+            if elapsed > timeout:
+                return False
+            # Wait a bit and retry
+            time.sleep(1)
+
+
+def _release_cache_lock(cache_dir: Path) -> None:
+    """Release cache lock by removing .verify.lock file.
+    
+    Args:
+        cache_dir: Cache directory path
+    """
+    lock_file = cache_dir / ".verify.lock"
+    lock_file.unlink(missing_ok=True)
+
+
+def _write_cache_metadata(
+    cache_dir: Path,
+    artifact_spec: Dict[str, Any],
+    content_sha256: str,
+    actual_size: int,
+) -> None:
+    """Write cache metadata to .meta.json.
+    
+    Args:
+        cache_dir: Cache directory path
+        artifact_spec: Original artifact spec used to compute cache key
+        content_sha256: SHA-256 hash of cached content
+        actual_size: Actual size of cached content in bytes
+    """
+    meta = {
+        "artifact_spec": artifact_spec,
+        "content_sha256": content_sha256,
+        "actual_size": actual_size,
+        "created_at": time.time(),
+        "created_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    }
+    
+    meta_file = cache_dir / ".meta.json"
+    with meta_file.open("w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2, sort_keys=True)
+
+
+def _read_cache_metadata(cache_dir: Path) -> Optional[Dict[str, Any]]:
+    """Read cache metadata from .meta.json.
+    
+    Args:
+        cache_dir: Cache directory path
+        
+    Returns:
+        Metadata dict or None if not found/invalid
+    """
+    meta_file = cache_dir / ".meta.json"
+    if not meta_file.exists():
+        return None
+    
+    try:
+        with meta_file.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _compute_content_hash(path: Path) -> Tuple[str, int]:
+    """Compute SHA-256 hash and size of file or directory tree.
+    
+    For files: hash the file content.
+    For directories: hash sorted list of (relative_path, file_sha256) pairs.
+    
+    Args:
+        path: File or directory path
+        
+    Returns:
+        Tuple of (sha256_hex, total_size_bytes)
+    """
+    if path.is_file():
+        h = hashlib.sha256()
+        size = 0
+        with path.open("rb") as f:
+            while True:
+                chunk = f.read(1024 * 1024)  # 1MB chunks
+                if not chunk:
+                    break
+                h.update(chunk)
+                size += len(chunk)
+        return h.hexdigest(), size
+    
+    elif path.is_dir():
+        # Hash directory tree structure and content
+        h = hashlib.sha256()
+        total_size = 0
+        
+        # Collect all files with their hashes
+        file_hashes = []
+        for root, dirs, files in os.walk(path):
+            # Sort for deterministic order
+            dirs.sort()
+            files.sort()
+            
+            for filename in files:
+                file_path = Path(root) / filename
+                rel_path = file_path.relative_to(path)
+                file_hash, file_size = _compute_content_hash(file_path)
+                file_hashes.append((str(rel_path), file_hash, file_size))
+                total_size += file_size
+        
+        # Hash the sorted list of (path, hash, size)
+        for rel_path, file_hash, file_size in sorted(file_hashes):
+            h.update(f"{rel_path}:{file_hash}:{file_size}\n".encode('utf-8'))
+        
+        return h.hexdigest(), total_size
+    
+    else:
+        raise ValueError(f"Path is neither file nor directory: {path}")
+
+
+def _build_cache_entry(
+    item: Dict[str, Any],
+    cache_dir: Path,
+    backpack_root: Path,
+    verbose: bool = False,
+) -> bool:
+    """Build a new cache entry by downloading and processing data.
+    
+    Steps:
+    1. Create cache_dir/data/ directory
+    2. Download/copy data to cache_dir/data/
+    3. Apply post_process if specified
+    4. Compute content hash and size
+    5. Write metadata to .meta.json
+    
+    Args:
+        item: Normalized data item from spec
+        cache_dir: Cache directory path
+        backpack_root: Base path for resolving sources
+        verbose: Print progress messages
+        
+    Returns:
+        True if cache entry built successfully, False otherwise
+    """
+    data_dir = cache_dir / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Determine target filename from item
+    target_location = item.get("target_location") or item.get("target_path")
+    if not target_location:
+        if verbose:
+            print("[cache] ERROR: Missing target_location in item")
+        return False
+    
+    filename = Path(target_location).name
+    cache_file = data_dir / filename
+    
+    if verbose:
+        print(f"[cache] Building cache entry: {cache_dir}")
+        print(f"[cache] Downloading to: {cache_file}")
+    
+    # Download/copy data to cache
+    stype = item.get("source_type")
+    
+    try:
+        if stype == "multi":
+            # Try each source until one succeeds
+            success = False
+            for src_entry in item.get("sources", []):
+                if verbose:
+                    print(f"[cache] Trying source: {src_entry.get('source_type')}://{src_entry.get('source')}")
+                if _download_to_cache(src_entry, cache_file, backpack_root, verbose):
+                    success = True
+                    break
+            if not success:
+                if verbose:
+                    print("[cache] ERROR: All sources failed")
+                return False
+        else:
+            # Single source
+            if not _download_to_cache(item, cache_file, backpack_root, verbose):
+                if verbose:
+                    print("[cache] ERROR: Download failed")
+                return False
+        
+        # Apply post_process if specified
+        post_process = item.get("post_process")
+        if post_process:
+            if verbose:
+                print(f"[cache] Applying post_process: {post_process}")
+            # TODO: Implement post-processing (unzip, untar, etc.)
+            # For now, log a warning
+            print(f"[cache] WARNING: post_process not yet implemented: {post_process}")
+        
+        # Compute content hash and size
+        if verbose:
+            print("[cache] Computing content hash...")
+        content_sha256, actual_size = _compute_content_hash(cache_file)
+        
+        # Create artifact spec for metadata
+        artifact_spec = _create_artifact_spec(item, backpack_root)
+        
+        # Write metadata
+        _write_cache_metadata(cache_dir, artifact_spec, content_sha256, actual_size)
+        
+        if verbose:
+            print(f"[cache] Cache entry built successfully")
+            print(f"[cache]   content_sha256: {content_sha256}")
+            print(f"[cache]   actual_size: {actual_size}")
+        
+        return True
+        
+    except Exception as e:
+        if verbose:
+            print(f"[cache] ERROR building cache entry: {e}")
+        return False
+
+
+def _download_to_cache(
+    item: Dict[str, Any],
+    cache_file: Path,
+    backpack_root: Path,
+    verbose: bool = False,
+) -> bool:
+    """Download or copy data to cache file.
+    
+    Args:
+        item: Data item (or source entry for multi-source)
+        cache_file: Target file path in cache
+        backpack_root: Base path for resolving relative sources
+        verbose: Print progress messages
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    stype = item.get("source_type")
+    source = item.get("source")
+    
+    try:
+        if stype == "http":
+            http_file_download(
+                source,
+                dest_dir=str(cache_file.parent),
+                filename=cache_file.name,
+                overwrite=True,
+            )
+            return cache_file.exists()
+        
+        elif stype == "pelican":
+            pelican_file_download(
+                source,
+                dest_dir=str(cache_file.parent),
+                filename=cache_file.name,
+                overwrite=True,
+            )
+            return cache_file.exists()
+        
+        elif stype in ("fs", "backpack"):
+            # Copy from local filesystem
+            p = Path(source)
+            if not p.is_absolute():
+                p = (Path(backpack_root) / p).resolve()
+            
+            if not p.exists():
+                if verbose:
+                    print(f"[cache] Source not found: {p}")
+                return False
+            
+            if p.is_file():
+                shutil.copy2(p, cache_file)
+            else:
+                # For directories, copy entire tree
+                if cache_file.exists():
+                    if cache_file.is_dir():
+                        shutil.rmtree(cache_file)
+                    else:
+                        cache_file.unlink()
+                shutil.copytree(p, cache_file)
+            
+            return cache_file.exists()
+        
+        else:
+            if verbose:
+                print(f"[cache] Unsupported source_type: {stype}")
+            return False
+    
+    except Exception as e:
+        if verbose:
+            print(f"[cache] Download error: {e}")
+        return False
+
+
+def _lookup_cache_entry(
+    cache_dir: Path,
+    artifact_spec: Dict[str, Any],
+    verbose: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Look up and validate an existing cache entry.
+    
+    Checks:
+    1. Cache directory exists
+    2. .meta.json exists and is valid
+    3. data/ directory exists
+    4. Artifact spec matches (deterministic check)
+    5. Size matches (if specified in artifact_spec)
+    
+    Args:
+        cache_dir: Cache directory path
+        artifact_spec: Expected artifact spec
+        verbose: Print validation messages
+        
+    Returns:
+        Metadata dict if valid, None if invalid/missing
+    """
+    if not cache_dir.exists():
+        if verbose:
+            print(f"[cache] Cache miss: directory does not exist")
+        return None
+    
+    # Check for lock file (another process building)
+    lock_file = cache_dir / ".verify.lock"
+    if lock_file.exists():
+        if verbose:
+            print(f"[cache] Cache building in progress (lock exists)")
+        return None
+    
+    # Read metadata
+    meta = _read_cache_metadata(cache_dir)
+    if not meta:
+        if verbose:
+            print(f"[cache] Cache invalid: missing or corrupt .meta.json")
+        return None
+    
+    # Verify artifact spec matches
+    cached_spec = meta.get("artifact_spec", {})
+    if cached_spec != artifact_spec:
+        if verbose:
+            print(f"[cache] Cache invalid: artifact spec mismatch")
+            print(f"[cache]   Expected: {artifact_spec}")
+            print(f"[cache]   Cached:   {cached_spec}")
+        return None
+    
+    # Check data directory exists
+    data_dir = cache_dir / "data"
+    if not data_dir.exists():
+        if verbose:
+            print(f"[cache] Cache invalid: data/ directory missing")
+        return None
+    
+    # Quick size validation if expected_size specified
+    expected_size = artifact_spec.get("expected_size")
+    actual_size = meta.get("actual_size")
+    if expected_size is not None and actual_size is not None:
+        if expected_size != actual_size:
+            if verbose:
+                print(f"[cache] Cache invalid: size mismatch (expected {expected_size}, got {actual_size})")
+            return None
+    
+    if verbose:
+        print(f"[cache] Cache hit: {cache_dir}")
+        print(f"[cache]   content_sha256: {meta.get('content_sha256')}")
+        print(f"[cache]   actual_size: {meta.get('actual_size')}")
+        print(f"[cache]   created_at: {meta.get('created_at_iso')}")
+    
+    return meta
+
+
+def _materialize_from_cache(
+    cache_dir: Path,
+    target_path: Path,
+    mode: str = "symlink",
+    verbose: bool = False,
+) -> bool:
+    """Materialize target from cache using specified mode.
+    
+    Modes:
+    - symlink: Create symbolic link (default, read-only convention)
+    - hardlink: Create hard link (shares inode, but independent entry)
+    - copy: Copy file/directory
+    
+    Args:
+        cache_dir: Cache directory path
+        target_path: Target path to create
+        mode: Materialization mode
+        verbose: Print progress messages
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    data_dir = cache_dir / "data"
+    if not data_dir.exists():
+        if verbose:
+            print(f"[cache] Cannot materialize: data/ directory missing")
+        return False
+    
+    # Find the cached file/directory
+    items = list(data_dir.iterdir())
+    if len(items) != 1:
+        if verbose:
+            print(f"[cache] Cannot materialize: expected 1 item in data/, found {len(items)}")
+        return False
+    
+    cached_item = items[0]
+    
+    # Ensure target parent exists
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Remove existing target if present
+    if target_path.exists() or target_path.is_symlink():
+        if target_path.is_dir() and not target_path.is_symlink():
+            shutil.rmtree(target_path)
+        else:
+            target_path.unlink()
+    
+    try:
+        if mode == "symlink":
+            # Create symbolic link with absolute path to avoid resolution issues
+            target_path.symlink_to(cached_item.resolve())
+            if verbose:
+                print(f"[cache] Symlinked {target_path} -> {cached_item.resolve()}")
+        
+        elif mode == "hardlink":
+            # Hard link only works for files, not directories
+            if cached_item.is_file():
+                os.link(cached_item, target_path)
+                if verbose:
+                    print(f"[cache] Hard-linked {target_path} -> {cached_item}")
+            else:
+                # Fall back to copy for directories
+                if verbose:
+                    print(f"[cache] Hard link not supported for directories, copying instead")
+                shutil.copytree(cached_item, target_path)
+        
+        elif mode == "copy":
+            # Copy file or directory
+            if cached_item.is_file():
+                shutil.copy2(cached_item, target_path)
+            else:
+                shutil.copytree(cached_item, target_path)
+            if verbose:
+                print(f"[cache] Copied {cached_item} -> {target_path}")
+        
+        else:
+            if verbose:
+                print(f"[cache] Unknown materialization mode: {mode}")
+            return False
+        
+        return True
+    
+    except Exception as e:
+        if verbose:
+            print(f"[cache] Materialization error: {e}")
+        return False
 
 
 # --------------------------- Integrity Helpers ---------------------------
@@ -978,8 +1746,12 @@ def _print_verify_details(results: List[Dict[str, Any]]) -> None:
 
 #todo: split print and check logic. 
 # print returns None, check returns bool
-def _print_check_summary(results: List[Dict[str, Any]]) -> bool:
+def _print_check_summary(results: List[Dict[str, Any]], show_cache: bool = False) -> bool:
     """Print check summary and return success status.
+    
+    Args:
+        results: List of check results for each data item
+        show_cache: Include cache status columns in output
     
     Returns:
         bool: True if all items exist and match their expected size, False otherwise.
@@ -994,6 +1766,10 @@ def _print_check_summary(results: List[Dict[str, Any]]) -> bool:
         "actual_size",
         "size_note",
     ]
+    
+    if show_cache:
+        headers.extend(["cache_exists", "cache_valid"])
+    
     # Simple column widths
     colw = {h: max(len(h), *(len(str(r.get(h, ""))) for r in results)) for h in headers}
 
@@ -1003,11 +1779,18 @@ def _print_check_summary(results: List[Dict[str, Any]]) -> bool:
     print(fmt_row({h: h for h in headers}))
     for r in results:
         print(fmt_row(r))
+    
     # Basic counts
     total = len(results)
     missing = sum(1 for r in results if not r.get("exists"))
     size_fail = sum(1 for r in results if r.get("size_ok") is False)
-    print(f"[data:check] Items: {total}, missing: {missing}, size_fail: {size_fail}")
+    
+    if show_cache:
+        cached = sum(1 for r in results if r.get("cache_valid") is True)
+        cache_invalid = sum(1 for r in results if r.get("cache_exists") is True and r.get("cache_valid") is False)
+        print(f"[data:check] Items: {total}, missing: {missing}, size_fail: {size_fail}, cached: {cached}, cache_invalid: {cache_invalid}")
+    else:
+        print(f"[data:check] Items: {total}, missing: {missing}, size_fail: {size_fail}")
     
     # Determine success: no missing items and no size failures
     success = missing == 0 and size_fail == 0
@@ -1020,11 +1803,13 @@ def _print_check_summary(results: List[Dict[str, Any]]) -> bool:
             print(f"  - {size_fail} items have size mismatches")
     else:
         print(f"[data:check] SUCCESS: All {total} items passed check")
+        if show_cache:
+            print(f"[data:check] Cache status: {cached} items have valid cache entries")
     
     return success
 
 
-def _print_detailed_results(results: List[Dict[str, Any]]) -> None:
+def _print_detailed_results(results: List[Dict[str, Any]], show_cache: bool = False) -> None:
     print("\n[data:check] Detailed item metadata:")
     for r in results:
         print(f"--- {r.get('name')} ({r.get('source_type')}) ---")
@@ -1034,6 +1819,12 @@ def _print_detailed_results(results: List[Dict[str, Any]]) -> None:
         print(
             f"  actual_size: {r.get('actual_size')} size_ok={r.get('size_ok')} note={r.get('size_note')}"
         )
+        
+        if show_cache:
+            print(f"  cache_exists: {r.get('cache_exists')} cache_valid={r.get('cache_valid')}")
+            if r.get('cache_key'):
+                print(f"  cache_key: {r.get('cache_key')}")
+        
         meta = r.get("meta", {})
         # Limit headers/raw to avoid huge dumps
         raw = meta.get("raw") if isinstance(meta, dict) else None

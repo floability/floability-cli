@@ -142,6 +142,9 @@ def run_workflow(
             verbose=True,
             force=False,
             data_profile=getattr(args, "data_profile", None),
+            data_cache_mode=getattr(args, "data_cache_mode", "off"),
+            force_data_cache=getattr(args, "force_data_cache", False),
+            base_dir=Path(args.base_dir),
         )
         perf.end_timer("data_operation", "Time to perform data operation")
         
