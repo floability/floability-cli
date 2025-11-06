@@ -4,6 +4,7 @@ Run and execute operations for Floability CLI.
 
 import argparse
 import os
+import shutil
 import subprocess
 import time
 import uuid
@@ -15,6 +16,116 @@ from ..resource_provisioner import start_vine_factory
 from ..jupyter_runner import start_jupyterlab, execute_notebook
 from ..utils import create_unique_directory, safe_extract_tar, update_env_vars_in_conda
 from ..catalog import send_catalog_update
+from ..instance_metadata import (
+    create_instance_metadata,
+    update_instance_metadata,
+    finalize_instance_metadata,
+    record_sync_manifest,
+    compute_file_hash,
+)
+
+
+def sync_outputs_to_backpack(workflow_dir, backpack_dir, metadata_dir=None, verbose=True):
+    """
+    Sync a narrow, explicit set of outputs from workflow instance back to backpack.
+    
+    Syncs:
+      1. Executed notebooks (*.ipynb with outputs)
+      2. workflow/outputs/ directory (if it exists)
+    
+    Records sync manifest in metadata/sync.json for auditability.
+    
+    Args:
+        workflow_dir: Path to instance workflow directory
+        backpack_dir: Path to backpack workflow directory
+        metadata_dir: Path to metadata directory for recording sync manifest
+        verbose: Print detailed sync information
+    
+    Returns:
+        True if any files were synced, False otherwise
+    """
+    workflow_path = Path(workflow_dir)
+    backpack_path = Path(backpack_dir)
+    
+    if not workflow_path.exists():
+        print(f"[floability] Warning: Workflow directory does not exist: {workflow_dir}")
+        return False
+    
+    if not backpack_path.exists():
+        print(f"[floability] Warning: Backpack directory does not exist: {backpack_dir}")
+        return False
+    
+    print(f"[floability] Syncing outputs from instance to backpack...")
+    print(f"[floability]   Source: {workflow_dir}")
+    print(f"[floability]   Target: {backpack_dir}")
+    
+    synced_files_manifest = []
+    
+    # 1. Sync executed notebooks (they now contain outputs)
+    print(f"[floability]   Syncing notebooks...")
+    for notebook in workflow_path.glob("*.ipynb"):
+        target = backpack_path / notebook.name
+        try:
+            shutil.copy2(notebook, target)
+            file_info = {
+                "path": notebook.name,
+                "type": "notebook",
+                "size": notebook.stat().st_size,
+                "hash": compute_file_hash(notebook),
+            }
+            synced_files_manifest.append(file_info)
+            if verbose:
+                print(f"[floability]     ✓ {notebook.name}")
+        except Exception as e:
+            print(f"[floability]     ✗ Failed to sync {notebook.name}: {e}")
+    
+    # 2. Sync workflow/outputs/ directory if it exists
+    outputs_dir = workflow_path / "outputs"
+    if outputs_dir.exists() and outputs_dir.is_dir():
+        print(f"[floability]   Syncing outputs/ directory...")
+        target_outputs = backpack_path / "outputs"
+        target_outputs.mkdir(parents=True, exist_ok=True)
+        
+        # Recursively sync all files in outputs/
+        for item in outputs_dir.rglob("*"):
+            if item.is_file():
+                rel_path = item.relative_to(outputs_dir)
+                target = target_outputs / rel_path
+                try:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(item, target)
+                    file_info = {
+                        "path": f"outputs/{rel_path}",
+                        "type": "output",
+                        "size": item.stat().st_size,
+                        "hash": compute_file_hash(item),
+                    }
+                    synced_files_manifest.append(file_info)
+                    if verbose:
+                        print(f"[floability]     ✓ outputs/{rel_path}")
+                except Exception as e:
+                    print(f"[floability]     ✗ Failed to sync outputs/{rel_path}: {e}")
+    
+    # Record sync manifest in metadata
+    if metadata_dir and synced_files_manifest:
+        try:
+            record_sync_manifest(
+                Path(metadata_dir),
+                synced_files_manifest,
+                workflow_path,
+                backpack_path,
+            )
+            if verbose:
+                print(f"[floability]   Recorded sync manifest: {metadata_dir}/sync.json")
+        except Exception as e:
+            print(f"[floability]   Warning: Could not record sync manifest: {e}")
+    
+    if synced_files_manifest:
+        print(f"[floability] Successfully synced {len(synced_files_manifest)} file(s) to backpack")
+        return True
+    else:
+        print(f"[floability] No files to sync")
+        return False
 
 
 def resolve_backpack_args(args):
@@ -108,26 +219,102 @@ def run_workflow(
     """
     # Resolve backpack arguments to fill in any missing specs or paths
     resolve_backpack_args(args)
+    
+    # Determine if we're using sandbox mode
+    run_in_place = getattr(args, "run_in_place", False)
+    update_backpack = not getattr(args, "no_update_backpack", False)  # Default: True
 
-    # Create a unique run directory where all logs and outputs will be stored
-    run_dir = create_unique_directory(base_dir=args.base_dir, prefix="floability_run")
+    # Create a unique instance directory where all logs and outputs will be stored
+    instance_root = create_unique_directory(base_dir=args.base_dir, prefix="floability_instance")
+    run_dir = instance_root  # Keep run_dir for backward compatibility
+    
+    # Create structured subdirectories
+    instance_paths = {
+        "root": Path(instance_root),
+        "workflow": Path(instance_root) / "workflow",
+        "logs": Path(instance_root) / "logs",
+        "metrics": Path(instance_root) / "metrics",
+        "metadata": Path(instance_root) / "metadata",
+    }
+    
+    for subdir in ["workflow", "logs", "metrics", "metadata"]:
+        instance_paths[subdir].mkdir(parents=True, exist_ok=True)
+    
+    print(f"[floability] Created instance structure at: {os.path.abspath(instance_root)}")
+    print(f"[floability]   workflow/ - execution sandbox")
+    print(f"[floability]   logs/     - execution logs")
+    print(f"[floability]   metrics/  - performance data")
+    print(f"[floability]   metadata/ - run metadata")
 
-    # Create a symlink to the latest run directory
-    latest_run_symlink = Path(args.base_dir) / "latest_floability_run"
+    # Create a symlink to the latest instance directory
+    latest_run_symlink = Path(args.base_dir) / "latest_floability_instance"
     if latest_run_symlink.is_symlink() or latest_run_symlink.exists():
         latest_run_symlink.unlink()
-    latest_run_symlink.symlink_to(run_dir)
+    latest_run_symlink.symlink_to(instance_root)
     print(
-        f"[floability] Created symlink to latest run: {os.path.abspath(latest_run_symlink)}"
+        f"[floability] Created symlink to latest instance: {os.path.abspath(latest_run_symlink)}"
     )
 
-    # Initialize performance tracking
+    # Initialize performance tracking (output to metrics/)
     perf_enabled = args.measure_performance
-    perf = PerformanceTracker(output_dir=run_dir, enabled=perf_enabled)
+    perf = PerformanceTracker(output_dir=str(instance_paths["metrics"]), enabled=perf_enabled)
     perf.start_timer("total_run_time")
-    print(
-        f"[floability] Floability run directory: {os.path.abspath(run_dir)}. All logs will be stored here."
-    )
+    
+    # Generate manager name if not provided
+    if args.manager_name is None:
+        args.manager_name = f"floability-{uuid.uuid4()}"
+    
+    # Create instance metadata
+    backpack_path = Path(args.backpack) if args.backpack else None
+    metadata_file = instance_paths["metadata"] / "run.json"
+    
+    try:
+        initial_metadata = create_instance_metadata(
+            instance_dir=instance_paths["root"],
+            backpack_path=backpack_path,
+            cli_args=vars(args),
+            manager_name=args.manager_name,
+            execution_mode=mode,
+            environment_spec=Path(args.environment) if args.environment else None,
+            worker_environment_spec=Path(args.worker_environment) if args.worker_environment else None,
+            data_spec=Path(args.data_spec) if args.data_spec else None,
+        )
+        update_instance_metadata(metadata_file, initial_metadata, merge=False)
+        print(f"[floability] Recorded instance metadata: {metadata_file}")
+    except Exception as e:
+        print(f"[floability] Warning: Could not create metadata: {e}")
+    
+    # Set up workflow execution directory (sandbox or in-place)
+    if run_in_place:
+        print("[floability] Running in-place (directly in backpack directory)")
+        workflow_dir = Path(args.backpack_root) if args.backpack_root else Path.cwd()
+        original_notebook_path = args.notebook
+        original_script_path = args.python_script
+    else:
+        print("[floability] Setting up isolated instance sandbox")
+        workflow_dir = instance_paths["workflow"]
+        print(f"[floability] Workflow directory: {workflow_dir}")
+        
+        # Copy notebook or script into workflow directory
+        original_notebook_path = args.notebook
+        original_script_path = args.python_script
+        
+        if args.notebook:
+            notebook_src = Path(args.notebook).resolve()
+            notebook_dest = workflow_dir / notebook_src.name
+            shutil.copy2(notebook_src, notebook_dest)
+            args.notebook = str(notebook_dest)
+            print(f"[floability] Copied notebook: {notebook_src.name} -> {notebook_dest}")
+        
+        if args.python_script:
+            script_src = Path(args.python_script).resolve()
+            script_dest = workflow_dir / script_src.name
+            shutil.copy2(script_src, script_dest)
+            args.python_script = str(script_dest)
+            print(f"[floability] Copied script: {script_src.name} -> {script_dest}")
+    
+    # Store workflow_dir for later use
+    args.workflow_dir = str(workflow_dir)
 
     # If data_spec is provided, fetch data before proceeding
     # 1) Fetch data if data_spec is provided --> fetch data
@@ -136,15 +323,20 @@ def run_workflow(
         perf.start_timer("data_operation")
         from ..data.data_handler import execute_default_data_operation
 
+        # Materialize data into workflow_dir (sandbox) or backpack_root (in-place)
+        # Note: data_cache_mode and base_dir are passed regardless of run-in-place mode
+        # This ensures caching works in both sandbox and in-place execution
+        data_materialization_root = str(workflow_dir) if not run_in_place else args.backpack_root
+        
         data_success = execute_default_data_operation(
             data_spec=args.data_spec,
-            backpack_root=args.backpack_root,
+            backpack_root=data_materialization_root,
             verbose=True,
             force=False,
             data_profile=getattr(args, "data_profile", None),
-            data_cache_mode=getattr(args, "data_cache_mode", "off"),
+            data_cache_mode=getattr(args, "data_cache_mode", "off"),  # Cache works in both modes
             force_data_cache=getattr(args, "force_data_cache", False),
-            base_dir=Path(args.base_dir),
+            base_dir=Path(args.base_dir),  # Centralized cache location
         )
         perf.end_timer("data_operation", "Time to perform data operation")
         
@@ -162,11 +354,6 @@ def run_workflow(
                 return
         else:
             print("[floability] Data operation completed successfully")
-
-    # Generate a unique manager name if none is provided
-    if args.manager_name is None:
-        args.manager_name = f"floability-{uuid.uuid4()}"
-    print(f"[floability] Manager name: {args.manager_name}")
 
     environment_pack = None
     worker_environment_pack = None
@@ -316,28 +503,45 @@ def run_workflow(
         jupyter_proc = start_jupyterlab(
             notebook_path=args.notebook,
             port=args.jupyter_port,
-            run_dir=run_dir,
+            run_dir=str(instance_paths["logs"]),
             conda_env_dir=env_dir,
+            working_dir=str(workflow_dir),
         )
         cleanup_manager.register_subprocess(jupyter_proc)
 
     elif mode == "execute":
+        execution_success = False
+        
         if args.prefer_python and args.python_script:
             execute_python_script(
                 script_path=args.python_script,
-                run_dir=run_dir,
+                run_dir=str(instance_paths["logs"]),
                 conda_env_dir=env_dir,
+                working_dir=str(workflow_dir),
             )
+            execution_success = True  # Python script execution doesn't return status
         elif args.notebook:
             perf.start_timer("notebook_execute_time")
-            execute_notebook(
+            execution_success = execute_notebook(
                 notebook_path=args.notebook,
-                run_dir=run_dir,
+                run_dir=str(instance_paths["logs"]),
                 conda_env_dir=env_dir,
+                working_dir=str(workflow_dir),
             )
             perf.end_timer(
                 "notebook_execute_time", "Time to execute notebook in execute mode"
             )
+        
+        # Sync outputs back to backpack if execution succeeded and not in run-in-place mode
+        if execution_success and not run_in_place and update_backpack and args.backpack:
+            backpack_workflow_dir = Path(args.backpack) / "workflow"
+            sync_outputs_to_backpack(
+                workflow_dir,
+                backpack_workflow_dir,
+                metadata_dir=instance_paths["metadata"],
+                verbose=True
+            )
+        
         cleanup_manager.cleanup()
 
     # Main loop to monitor subprocesses
@@ -359,29 +563,49 @@ def run_workflow(
         print("[floability] KeyboardInterrupt in main loop. Cleaning up...")
         cleanup_manager.cleanup()
     finally:
+        # Sync outputs back to backpack for run mode (after Jupyter closes)
+        if mode == "run" and not run_in_place and update_backpack and args.backpack:
+            backpack_workflow_dir = Path(args.backpack) / "workflow"
+            sync_outputs_to_backpack(
+                workflow_dir,
+                backpack_workflow_dir,
+                metadata_dir=instance_paths["metadata"],
+                verbose=True
+            )
+        
         if perf_enabled:
             perf.end_timer("total_run_time", "Total run time")
             perf.save_report()
             print(
-                f"[floability] Performance report saved to {os.path.abspath(run_dir)}"
+                f"[floability] Performance report saved to {instance_paths['metrics']}"
             )
+        
+        # Finalize metadata
+        try:
+            finalize_instance_metadata(metadata_file, success=True)
+            print(f"[floability] Finalized instance metadata")
+        except Exception as e:
+            print(f"[floability] Warning: Could not finalize metadata: {e}")
 
     print("[floability] Exiting run.")
 
 
-def execute_python_script(script_path, run_dir, conda_env_dir=None):
+def execute_python_script(script_path, run_dir, conda_env_dir=None, working_dir=None):
     script_abs_path = os.path.abspath(script_path)
-    script_dir = os.path.dirname(script_abs_path)
     script_name = os.path.basename(script_abs_path)
-    print(f"[floability] Changing directory to: {script_dir}")
+    
+    # Use provided working_dir or fall back to script's directory
+    exec_dir = working_dir if working_dir else os.path.dirname(script_abs_path)
+    
+    print(f"[floability] Changing directory to: {exec_dir}")
     print(f"[floability] Executing Python script: {script_name}")
     log_file = os.path.join(run_dir, "python_execution.log")
     print(f"[floability] Logging to: {log_file}")
     with open(log_file, "w") as log:
         original_dir = os.getcwd()
         try:
-            os.chdir(script_dir)
-            log.write(f"[floability] Changed working directory to: {script_dir}\n")
+            os.chdir(exec_dir)
+            log.write(f"[floability] Changed working directory to: {exec_dir}\n")
             cmd = []
             if conda_env_dir:
                 cmd = [

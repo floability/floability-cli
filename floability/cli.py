@@ -164,6 +164,18 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
     )
     
     parser.add_argument(
+        "--run-in-place",
+        action="store_true",
+        help="Run directly in the backpack directory instead of creating an isolated instance sandbox (default: False).",
+    )
+    
+    parser.add_argument(
+        "--no-update-backpack",
+        action="store_true",
+        help="Disable syncing outputs from instance back to backpack (default: sync enabled).",
+    )
+    
+    parser.add_argument(
         "--data-cache-mode",
         default="off",
         choices=["off", "symlink", "hardlink", "copy"],

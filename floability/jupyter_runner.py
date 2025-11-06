@@ -64,6 +64,7 @@ def start_jupyterlab(
     jupyter_ip: str = "0.0.0.0",
     run_dir: str = "/tmp",
     conda_env_dir: str = None,
+    working_dir: str = None,
 ):
 
     cmd = [
@@ -83,6 +84,9 @@ def start_jupyterlab(
         f"[jupyter] Starting JupyterLab on port {port} if available. Correct port will be displayed after starting."
     )
     print(f"[jupyter] Notebook: {notebook_path if notebook_path else '(none)'}")
+    
+    if working_dir:
+        print(f"[jupyter] Working directory: {working_dir}")
 
     if conda_env_dir:
         # Use conda run to start JupyterLab within the extracted environment
@@ -103,6 +107,7 @@ def start_jupyterlab(
                 stdout=stdout,
                 stderr=stdout,
                 text=True,
+                cwd=working_dir,
                 # preexec_fn=os.setsid, #todo: revisit cleanup.py for this
             )
 
@@ -128,6 +133,7 @@ def execute_notebook(
     notebook_path: str = None,
     run_dir: str = "/tmp",
     conda_env_dir: str = None,
+    working_dir: str = None,
 ):
 
     cmd = [
@@ -148,6 +154,9 @@ def execute_notebook(
         stdout_file = os.path.join(run_dir, "jupyterlab.stdout")
 
         print(f"[jupyter] JupyterLab stdout: {os.path.abspath(stdout_file)}")
+        
+        if working_dir:
+            print(f"[jupyter] Executing notebook from working directory: {working_dir}")
 
         with open(stdout_file, "w") as stdout:
             proc = subprocess.Popen(
@@ -155,6 +164,7 @@ def execute_notebook(
                 stdout=stdout,
                 stderr=stdout,
                 text=True,
+                cwd=working_dir,
             )
 
             proc.wait()  # Wait for the process to complete
