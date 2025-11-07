@@ -1,0 +1,11 @@
+name: rag-lite-bm25
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.11
+  - ndcctools              # TaskVine Manager, Worker, PythonTask
+  - langchain              # core LC (includes text_splitter in recent versions)
+  - langchain-community    # BM25 retriever + integrations
+  - langchain-text-splitters
+  - rank-bm25              # actual BM25 scoring backend
