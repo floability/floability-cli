@@ -1,0 +1,24 @@
+name: rag-embeddings
+channels:
+  - conda-forge
+dependencies:
+  # Core Python
+  - python=3.11.14
+  
+  # TaskVine for distributed computing
+  - ndcctools=7.15.14
+  
+  # Data handling (critical: specify both to ensure compatibility)
+  - pyarrow=19.0.0
+  - datasets=4.0.0
+  
+  # LangChain ecosystem
+  - langchain=1.0.4
+  - langchain-community=0.3.31
+  - langchain-text-splitters=0.3.11
+  
+  # ML/Embeddings
+  - sentence-transformers=5.1.2
+  - pytorch=2.6.0
+  - transformers=4.57.1
+  - numpy=1.26.4
