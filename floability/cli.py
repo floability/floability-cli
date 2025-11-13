@@ -427,6 +427,15 @@ def _add_instance_args(parser: argparse.ArgumentParser) -> None:
         help="Show extended metadata (created_at, last_seen, manager_name, tags).",
     )
 
+    # instance stop sub-command
+    stop_parser = instance_subparsers.add_parser(
+        "stop", help="Stop a running Floability instance (Jupyter/manager/workers)"
+    )
+    stop_parser.add_argument(
+        "instance",
+        help="Instance short name or path to the instance directory.",
+    )
+
     return None
 
 

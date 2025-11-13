@@ -5,6 +5,11 @@ Handles creation and management of Floability instance directories.
 """
 
 import argparse
+
+import json
+import os
+import signal
+import time
 from pathlib import Path
 
 from ..performance_tracker import PerformanceTracker
@@ -12,7 +17,12 @@ from ..backpack_manager import resolve_backpack_args, validate_backpack_structur
 from ..instance_manager import prepare_instance, get_registered_instances_status
 from ..environment_manager import setup_manager_and_worker_envs
 from ..instance_metadata import update_instance_metadata
-from ..instance_registry import register_instance
+from ..instance_registry import register_instance, resolve_instance
+from ..instance_lock_manager import (
+    release_instance_lock,
+    is_instance_running,
+)
+from ..workers_manager import stop_workers_for_instance
 
 
 def create_instance(args):
@@ -149,6 +159,7 @@ def run_instance_command(args):
     Supports subcommands:
     - create: Create a new instance from a backpack
     - list:   List registered instances
+    - stop:   Stop a running instance (Jupyter/manager/workers)
     """
     sub = getattr(args, "instance_subcommand", None)
     if sub == "create":
@@ -179,5 +190,86 @@ def run_instance_command(args):
         print(
             "[floability] Use: floability run --instance <name> or workers start --instance <name>"
         )
+    elif sub == "stop":
+        stop_instance(args)
     else:
         print(f"[floability] Unknown instance subcommand: {sub}")
+
+
+def _read_lock_pid(lock_file: Path) -> int:
+    try:
+        with open(lock_file, "r") as f:
+            data = json.load(f) or {}
+        return int(data.get("pid")) if data.get("pid") is not None else -1
+    except Exception:
+        return -1
+
+
+def _send_signal_to_pgid(pid: int, sig) -> bool:
+    try:
+        pgid = os.getpgid(pid)
+        os.killpg(pgid, sig)
+        return True
+    except Exception:
+        # Fallback: try direct process
+        try:
+            os.kill(pid, sig)
+            return True
+        except Exception:
+            return False
+
+
+def stop_instance(args) -> None:
+    """Stop a running Floability instance.
+
+    Behavior:
+    - Resolve short name to path if needed
+    - If instance.lock is active, send SIGINT to the run process group, then SIGTERM if needed
+    - Stop workers via workers manager (best-effort)
+    - Release instance lock file
+    """
+    ref = getattr(args, "instance", None)
+    if not ref:
+        print("[floability] Error: --instance is required for 'instance stop'")
+        return
+
+    # Resolve short name to path
+    resolved = resolve_instance(ref)
+    instance_path = Path(resolved) if resolved else Path(ref)
+    if not instance_path.is_dir():
+        print(f"[floability] Error: Instance not found: {ref}")
+        return
+
+    lock_file = instance_path / "metadata" / "instance.lock"
+    pid = _read_lock_pid(lock_file) if lock_file.exists() else -1
+
+    # Try to gracefully stop the main run process so it can clean up Jupyter/others
+    if is_instance_running(instance_path) and pid > 0:
+        print(
+            f"[floability] Stopping instance run process (pid={pid}) for {instance_path}"
+        )
+        if _send_signal_to_pgid(pid, signal.SIGINT):
+            time.sleep(2)
+        # If still running, escalate
+        if is_instance_running(instance_path):
+            print("[floability] Instance still running; sending SIGTERM...")
+            _send_signal_to_pgid(pid, signal.SIGTERM)
+            time.sleep(1)
+    else:
+        if lock_file.exists():
+            print("[floability] Instance lock present but process not active. Cleaning up lock.")
+
+    # Ensure workers are stopped (best-effort)
+    try:
+        stopped = stop_workers_for_instance(instance_path)
+        if stopped:
+            print("[floability] Workers stopped.")
+    except Exception as e:
+        print(f"[floability] Warning: could not stop workers: {e}")
+
+    # Release instance lock
+    try:
+        release_instance_lock(instance_path)
+    except Exception:
+        pass
+    print("[floability] Instance stop completed.")
