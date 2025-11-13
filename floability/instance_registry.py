@@ -27,6 +27,7 @@ Schema v1:
   }
 }
 """
+
 from __future__ import annotations
 
 import json
@@ -80,7 +81,9 @@ def save_registry(registry: Dict) -> None:
     # Create temporary file in the same directory as the final registry file
     # to ensure os.replace is atomic and avoids cross-device errors (EXDEV).
     tmp_dir = str(path.parent)
-    fd, tmp_path = tempfile.mkstemp(prefix="floability-reg-", suffix=".tmp", dir=tmp_dir)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix="floability-reg-", suffix=".tmp", dir=tmp_dir
+    )
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(registry, f, indent=2)
@@ -97,7 +100,9 @@ def _sanitize(name: str) -> str:
     return name.strip().replace(" ", "_")
 
 
-def _generate_short_name(preferred: Optional[str], instance_path: Path, registry: Dict) -> str:
+def _generate_short_name(
+    preferred: Optional[str], instance_path: Path, registry: Dict
+) -> str:
     base = preferred or instance_path.name
     base = _sanitize(base)
     # If an entry with same path already exists, reuse its short name.
@@ -112,7 +117,12 @@ def _generate_short_name(preferred: Optional[str], instance_path: Path, registry
     return candidate
 
 
-def register_instance(instance_path: Path, manager_name: str, preferred_name: Optional[str] = None, tags: Optional[list] = None) -> str:
+def register_instance(
+    instance_path: Path,
+    manager_name: str,
+    preferred_name: Optional[str] = None,
+    tags: Optional[list] = None,
+) -> str:
     registry = load_registry()
     short_name = _generate_short_name(preferred_name, instance_path, registry)
     registry["instances"][short_name] = {

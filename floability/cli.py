@@ -184,7 +184,7 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
 
     parser.add_argument(
         "--data-cache-mode",
-        default="off",
+        default="symlink",
         choices=["off", "symlink", "hardlink", "copy"],
         help="Data caching mode: off (no cache), symlink (default, read-only), hardlink (shared inode), copy (independent copy).",
     )

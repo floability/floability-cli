@@ -43,7 +43,11 @@ def create_instance(args):
     instance_root = str(instance_paths["root"])
     # Register instance short name
     try:
-        short_name = register_instance(Path(instance_root), args.manager_name, preferred_name=getattr(args, "name", None))
+        short_name = register_instance(
+            Path(instance_root),
+            args.manager_name,
+            preferred_name=getattr(args, "name", None),
+        )
         print(f"[floability] Registered instance short name: {short_name}")
     except Exception as e:
         print(f"[floability] Warning: could not register instance short name: {e}")
@@ -170,8 +174,10 @@ def run_instance_command(args):
                 tags = st.get("tags") or []
                 if tags:
                     print(f"      tags:      {', '.join(tags)}")
-        
+
         print()
-        print("[floability] Use: floability run --instance <name> or workers start --instance <name>")
+        print(
+            "[floability] Use: floability run --instance <name> or workers start --instance <name>"
+        )
     else:
         print(f"[floability] Unknown instance subcommand: {sub}")

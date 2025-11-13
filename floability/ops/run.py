@@ -57,22 +57,27 @@ def run_workflow(
     else:
         using_existing_instance = False
     lock_acquired = False
-    
+
     ################### Step 1: Prepare instance (new or existing) ###################
     if not using_existing_instance:
+        # Ensure manager name early so it's recorded in metadata
+        if getattr(args, "manager_name", None) is None:
+            args.manager_name = f"floability-{uuid.uuid4()}"
         resolve_backpack_args(args)
 
         if getattr(args, "backpack", None):
             validate_backpack_structure(args.backpack, require_workflow=False)
-        
+
         run_in_place = getattr(args, "run_in_place", False)
-        
+
         instance_paths = create_instance_structure(args.base_dir)
         instance_root = str(instance_paths["root"])
         create_latest_symlink(args.base_dir, instance_root)
         # Acquire instance lock for new instance runs to prevent concurrent starts
         if not acquire_instance_lock(Path(instance_root)):
-            print("[floability] Failed to acquire instance run lock for new instance. Abort.")
+            print(
+                "[floability] Failed to acquire instance run lock for new instance. Abort."
+            )
             return
         lock_acquired = True
         metadata_file = instance_paths["metadata"] / "run.json"
@@ -114,9 +119,8 @@ def run_workflow(
     )
     perf.start_timer("total_run_time")
 
-    # Ensure manager name
-    if getattr(args, "manager_name", None) is None:
-        args.manager_name = f"floability-{uuid.uuid4()}"
+    # Manager name already ensured for new instances; for existing instances,
+    # do not override whatever is in metadata.
 
     # Register newly created instance in global registry (short name)
     if not using_existing_instance:
@@ -200,7 +204,7 @@ def run_workflow(
             print(f"[floability] Using existing environment: {env_dir}")
         else:
             print("[floability] No environment found; proceeding without conda env.")
-            #todo: warn or fail?
+            # todo: warn or fail?
     else:
         print("[floability] environment setup (manager & worker)")
         env_dir, worker_environment_pack = setup_manager_and_worker_envs(
@@ -249,7 +253,6 @@ def run_workflow(
     else:
         factory_proc = None
         print("[floability] Workers disabled by --no-worker")
-
 
     ################# Step 5: Run or execute ####################
     notebook_path_for_exec = getattr(args, "notebook", None)
@@ -365,7 +368,7 @@ def run_workflow(
     print("[floability] Exiting run.")
 
 
-#todo: revist and make unified execution for any scripts
+# todo: revist and make unified execution for any scripts
 def execute_python_script(script_path, run_dir, conda_env_dir=None, working_dir=None):
     script_abs_path = os.path.abspath(script_path)
     script_name = os.path.basename(script_abs_path)
