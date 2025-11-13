@@ -195,10 +195,19 @@ def start_workers_for_instance(
     batch_options = batch_options or cli_args.get("batch_options")
     compute_spec = compute_spec or cli_args.get("compute_spec")
     worker_environment_pack = metadata.get("worker_environment_pack")
-
     if not worker_environment_pack:
-        print("[floability] Warning: No worker environment found in instance metadata")
-        print("[floability] Workers will use system Python environment")
+        # Fallback to manager environment pack
+        manager_environment_pack = metadata.get("manager_environment_pack")
+        if manager_environment_pack:
+            worker_environment_pack = manager_environment_pack
+            print(
+                "[floability] No worker environment specified; using manager environment pack for workers"
+            )
+        else:
+            print(
+                "[floability] Warning: No worker or manager environment pack found in metadata"
+            )
+            print("[floability] Workers will use system Python environment")
 
     logs_dir = str(instance_path / "logs")
     print(f"[floability] Starting workers for instance: {instance_path}")

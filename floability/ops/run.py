@@ -31,7 +31,7 @@ from ..instance_lock_manager import (
 )
 from ..instance_registry import resolve_instance, touch_instance, register_instance
 from ..catalog import send_catalog_update
-from ..instance_metadata import finalize_instance_metadata
+from ..instance_metadata import finalize_instance_metadata, update_instance_metadata
 
 
 def run_workflow(
@@ -207,7 +207,7 @@ def run_workflow(
             # todo: warn or fail?
     else:
         print("[floability] environment setup (manager & worker)")
-        env_dir, worker_environment_pack = setup_manager_and_worker_envs(
+        env_dir, worker_environment_pack, manager_environment_pack = setup_manager_and_worker_envs(
             environment_spec=getattr(args, "environment", None),
             worker_environment_spec=getattr(args, "worker_environment", None),
             base_dir=args.base_dir,
@@ -218,6 +218,26 @@ def run_workflow(
             force=False,
             perf=perf if perf_enabled else None,
         )
+        # Persist environment pack info for workers fallback
+        try:
+            update_instance_metadata(
+                metadata_file,
+                {
+                    **(
+                        {"worker_environment_pack": str(worker_environment_pack)}
+                        if worker_environment_pack
+                        else {}
+                    ),
+                    **(
+                        {"manager_environment_pack": str(manager_environment_pack)}
+                        if manager_environment_pack
+                        else {}
+                    ),
+                },
+                merge=True,
+            )
+        except Exception:
+            pass
 
     # Startup catalog event
     backpack_name = (

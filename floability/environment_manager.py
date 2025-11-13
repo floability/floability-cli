@@ -376,7 +376,7 @@ def setup_manager_and_worker_envs(
     env_vars: Optional[str] = None,
     force: bool = False,
     perf=None,  # PerformanceTracker
-) -> Tuple[Optional[str], Optional[str]]:
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """
     Set up both manager and worker conda environments.
 
@@ -392,16 +392,18 @@ def setup_manager_and_worker_envs(
         perf: Optional performance tracker
 
     Returns:
-        Tuple of (env_dir, worker_environment_pack)
-        env_dir is None if no manager environment
-        worker_environment_pack is None if no worker environment
+        Tuple of (env_dir, worker_environment_pack, manager_environment_pack)
+        - env_dir is None if no manager environment
+        - worker_environment_pack is None if no worker environment
+        - manager_environment_pack is None if no manager environment
     """
     env_dir = None
     worker_environment_pack = None
+    manager_environment_pack = None
 
     # Setup manager environment
     if environment_spec:
-        environment_pack = prepare_conda_environment(
+        manager_environment_pack = prepare_conda_environment(
             environment_spec=environment_spec,
             base_dir=base_dir,
             run_dir=instance_root,
@@ -414,7 +416,7 @@ def setup_manager_and_worker_envs(
         # Extract to instance root
         extract_dir = os.path.join(instance_root, "current_conda_env")
         env_dir = extract_conda_environment(
-            environment_pack=environment_pack,
+            environment_pack=manager_environment_pack,
             extract_dir=extract_dir,
             manager_name=manager_name,
             manager_ports=manager_ports,
@@ -437,23 +439,16 @@ def setup_manager_and_worker_envs(
         )
     else:
         # Use manager environment for workers if no separate worker environment
-        if environment_spec:
-            worker_environment_pack = prepare_conda_environment(
-                environment_spec=environment_spec,
-                base_dir=base_dir,
-                run_dir=instance_root,
-                manager_name=manager_name,
-                is_worker_env=False,
-                force=force,
-                perf=None,  # Don't double-track if already created
-            )
+        if manager_environment_pack:
+            # Reuse the manager pack; avoid duplicate creation
+            worker_environment_pack = manager_environment_pack
 
     if (
-        environment_pack
+        manager_environment_pack
         and worker_environment_pack
-        and environment_pack != worker_environment_pack
+        and manager_environment_pack != worker_environment_pack
     ):
         print("[floability] Worker environment is different from main environment.")
         print(f"[floability] Worker environment pack: {worker_environment_pack}")
 
-    return env_dir, worker_environment_pack
+    return env_dir, worker_environment_pack, manager_environment_pack

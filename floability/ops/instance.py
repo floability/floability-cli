@@ -102,7 +102,7 @@ def create_instance(args):
         print("[floability] Skipping data operation (--skip-data enabled)")
 
     # Setup conda environments (manager + worker) via environment manager
-    env_dir, worker_environment_pack = setup_manager_and_worker_envs(
+    env_dir, worker_environment_pack, manager_environment_pack = setup_manager_and_worker_envs(
         environment_spec=(
             args.environment if getattr(args, "environment", None) else None
         ),
@@ -121,12 +121,15 @@ def create_instance(args):
     )
 
     # Record worker environment pack in metadata
-    if worker_environment_pack:
+    if worker_environment_pack or manager_environment_pack:
         metadata_file = instance_paths["metadata"] / "run.json"
         try:
             update_instance_metadata(
                 metadata_file,
-                {"worker_environment_pack": str(worker_environment_pack)},
+                {
+                    **({"worker_environment_pack": str(worker_environment_pack)} if worker_environment_pack else {}),
+                    **({"manager_environment_pack": str(manager_environment_pack)} if manager_environment_pack else {}),
+                },
                 merge=True,
             )
         except Exception as e:
