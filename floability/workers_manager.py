@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import yaml
-from .state_manager import (
+from .instance_lock_manager import (
     acquire_workers_lock,
     release_workers_lock,
     are_workers_running,

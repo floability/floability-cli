@@ -24,7 +24,7 @@ from ..instance_manager import (
     record_initial_metadata,
 )
 from ..jupyter_runner import start_jupyterlab, execute_notebook
-from ..state_manager import (
+from ..instance_lock_manager import (
     acquire_instance_lock,
     release_instance_lock,
     is_instance_running,
@@ -45,8 +45,32 @@ def run_workflow(
         return
 
     using_existing_instance = bool(getattr(args, "instance", None))
+    lock_acquired = False
+    
+    ################### Step 1: Prepare instance (new or existing) ###################
+    if not using_existing_instance:
+        resolve_backpack_args(args)
 
-    if using_existing_instance:
+        if getattr(args, "backpack", None):
+            validate_backpack_structure(args.backpack, require_workflow=False)
+        
+        run_in_place = getattr(args, "run_in_place", False)
+        
+        instance_paths = create_instance_structure(args.base_dir)
+        instance_root = str(instance_paths["root"])
+        create_latest_symlink(args.base_dir, instance_root)
+        # Acquire instance lock for new instance runs to prevent concurrent starts
+        if not acquire_instance_lock(Path(instance_root)):
+            print("[floability] Failed to acquire instance run lock for new instance. Abort.")
+            return
+        lock_acquired = True
+        metadata_file = instance_paths["metadata"] / "run.json"
+        try:
+            record_initial_metadata(args, instance_paths, mode=mode)
+        except Exception as e:
+            print(f"[floability] Warning: Could not create metadata: {e}")
+
+    else:
         instance_root = str(Path(args.instance).resolve())
         if not Path(instance_root).is_dir():
             print(f"[floability] Error: Instance directory not found: {instance_root}")
@@ -57,6 +81,7 @@ def run_workflow(
         if not acquire_instance_lock(Path(instance_root)):
             print("[floability] Failed to acquire instance run lock. Abort.")
             return
+        lock_acquired = True
         print(f"[floability] Running on existing instance: {instance_root}")
         # Load paths map
         instance_paths = {
@@ -70,22 +95,6 @@ def run_workflow(
         metadata_file = instance_paths["metadata"] / "run.json"
         if not metadata_file.exists():
             print(f"[floability] Warning: Missing instance metadata at {metadata_file}")
-    else:
-        resolve_backpack_args(args)
-        if getattr(args, "backpack", None):
-            validate_backpack_structure(args.backpack, require_workflow=False)
-
-        run_in_place = getattr(args, "run_in_place", False)
-        update_backpack = not getattr(args, "no_update_backpack", False)
-
-        instance_paths = create_instance_structure(args.base_dir)
-        instance_root = str(instance_paths["root"])
-        create_latest_symlink(args.base_dir, instance_root)
-        metadata_file = instance_paths["metadata"] / "run.json"
-        try:
-            record_initial_metadata(args, instance_paths, mode=mode)
-        except Exception as e:
-            print(f"[floability] Warning: Could not create metadata: {e}")
 
     # Initialize performance tracking
     perf_enabled = getattr(args, "measure_performance", False)
@@ -132,7 +141,7 @@ def run_workflow(
                 print(f"[floability] Copied script: {py_src.name} -> {py_dst}")
     args.workflow_dir = str(workflow_dir)
 
-    # Data materialization only for new instance (skip for existing)
+    ##################### Step 2: Data materialization ####################
     if not using_existing_instance and getattr(args, "data_spec", None):
         print("[floability] data materialization")
         perf.start_timer("data_operation")
@@ -159,11 +168,11 @@ def run_workflow(
             if not getattr(args, "continue_on_data_failure", False):
                 print("[floability] Aborting due to data failure.")
                 cleanup_manager.cleanup()
-                if using_existing_instance:
+                if lock_acquired:
                     release_instance_lock(Path(instance_root))
                 return
 
-    # Environment setup
+    ################# Step 3: Environment setup ####################
     if using_existing_instance or getattr(args, "prefer_instance", False):
         env_candidate = Path(instance_root) / "current_conda_env"
         env_dir = str(env_candidate) if env_candidate.exists() else None
@@ -172,6 +181,7 @@ def run_workflow(
             print(f"[floability] Using existing environment: {env_dir}")
         else:
             print("[floability] No environment found; proceeding without conda env.")
+            #todo: warn or fail?
     else:
         print("[floability] environment setup (manager & worker)")
         env_dir, worker_environment_pack = setup_manager_and_worker_envs(
@@ -205,7 +215,7 @@ def run_workflow(
         mode=mode,
     )
 
-    # Workers (optional)
+    ################# Step 4: Provision workers ####################
     if not getattr(args, "no_worker", False):
         print("[floability] worker factory startup")
         factory_proc = start_workers_for_instance(
@@ -221,7 +231,8 @@ def run_workflow(
         factory_proc = None
         print("[floability] Workers disabled by --no-worker")
 
-    # Jupyter or execution
+
+    ################# Step 5: Run or execute ####################
     notebook_path_for_exec = getattr(args, "notebook", None)
     script_path_for_exec = getattr(args, "python_script", None)
     if not using_existing_instance and not getattr(args, "run_in_place", False):
@@ -278,7 +289,7 @@ def run_workflow(
                 verbose=True,
             )
         cleanup_manager.cleanup()
-        if using_existing_instance:
+        if lock_acquired:
             release_instance_lock(Path(instance_root))
         if perf_enabled:
             perf.end_timer("total_run_time", "Total run time")
@@ -330,11 +341,12 @@ def run_workflow(
             finalize_instance_metadata(metadata_file, success=True)
         except Exception as e:
             print(f"[floability] Warning: Could not finalize metadata: {e}")
-        if using_existing_instance:
+        if lock_acquired:
             release_instance_lock(Path(instance_root))
     print("[floability] Exiting run.")
 
 
+#todo: revist and make unified execution for any scripts
 def execute_python_script(script_path, run_dir, conda_env_dir=None, working_dir=None):
     script_abs_path = os.path.abspath(script_path)
     script_name = os.path.basename(script_abs_path)

@@ -29,20 +29,21 @@ def get_parsed_arguments() -> argparse.Namespace:
 
     # run sub-command
     run_parser = subparsers.add_parser(
-        "run", help="Run a notebook or Floability backpack"
+        "run",
+        help="Deploy and run a Floability workflow from a backpack in interactive mode.",
     )
     _add_execution_args(run_parser)
 
     # execute sub-command
     execute_parser = subparsers.add_parser(
-        "execute", help="Execute a notebook in a Floability backpack"
+        "execute", help="Execute a Floability workflow from a backpack in batch mode."
     )
     _add_execution_args(execute_parser)
 
     # instance sub-command
     instance_parser = subparsers.add_parser(
         "instance",
-        help="Instance management commands (create, etc.)",
+        help="Instance management commands (create, list, status, etc.)",
     )
     _add_instance_args(instance_parser)
 

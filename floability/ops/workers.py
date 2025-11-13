@@ -7,7 +7,7 @@ from ..workers_manager import (
     stop_workers_for_instance,
     print_worker_status,
 )
-from ..state_manager import are_workers_running
+from ..instance_lock_manager import are_workers_running
 
 
 def start_workers(args):
