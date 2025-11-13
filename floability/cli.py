@@ -9,7 +9,8 @@ from .cleanup import CleanupManager, install_signal_handlers
 
 from .ops.run import run_workflow, execute_python_script
 from .ops.data import run_data_command
-from .ops.setup import run_setup_command, run_provision_command
+from .ops.instance import run_instance_command
+from .ops.workers import run_workers_command
 from .ops.audit import run_audit_command, cell_level_audit
 
 from . import __version__
@@ -38,28 +39,28 @@ def get_parsed_arguments() -> argparse.Namespace:
     )
     _add_execution_args(execute_parser)
 
+    # instance sub-command
+    instance_parser = subparsers.add_parser(
+        "instance",
+        help="Instance management commands (create, etc.)",
+    )
+    _add_instance_args(instance_parser)
+
+    # workers sub-command
+    workers_parser = subparsers.add_parser(
+        "workers",
+        help="Worker management commands (start, stop, status)",
+    )
+    _add_workers_args(workers_parser)
+
     # data sub-command
     data_parser = subparsers.add_parser(
         "data",
         help="Data operations via mode flag: download, check (metadata), verify (download + integrity)",
     )
     _add_data_args(data_parser)
-
-    # setup sub-command
-    setup_parser = subparsers.add_parser(
-        "setup",
-        help="Set up a backpack (prepare environment, fetch data, etc.)",
-    )
-    _add_setup_args(setup_parser)
-
-    # provision sub-command
-    provision_parser = subparsers.add_parser(
-        "provision",
-        help="Provision worker(s) for a backpack (start in background)",
-    )
-    _add_provision_args(provision_parser)
-
-    # floability-env sub-command
+    
+    # audit sub-command
     audit_parser = subparsers.add_parser(
         "audit", help="Generate environment and data dependencies for a notebook"
     )
@@ -112,6 +113,11 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
         "--backpack",
         required=False,
         help="Path to the Floability backpack directory (optional).",
+    )
+    parser.add_argument(
+        "--instance",
+        required=False,
+        help="Path to an existing Floability instance directory (reuses its environment; mutually exclusive with --backpack).",
     )
     parser.add_argument(
         "--environment",
@@ -202,6 +208,11 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
     parser.add_argument(
         "--python-script",
         help="Path to a Python (.py) file to execute (optional).",
+    )
+    parser.add_argument(
+        "--prefer-instance",
+        action="store_true",
+        help="For a new backpack-based run, skip environment setup and reuse current local environment (advanced).",
     )
 
     parser.add_argument(
@@ -320,42 +331,157 @@ def _add_data_args(data_parser: argparse.ArgumentParser) -> None:
     return None
 
 
-def _add_setup_args(parser: argparse.ArgumentParser) -> None:
+def _add_instance_args(parser: argparse.ArgumentParser) -> None:
     """
-    Add arguments for the 'setup' sub-command.
-    Intention: set up everything for a backpack (env, data, etc.).
-    For now, only CLI args are added.
+    Add arguments for the 'instance' sub-command.
+    Supports: create
     """
-    parser.add_argument(
+    instance_subparsers = parser.add_subparsers(
+        dest="instance_subcommand",
+        help="Instance sub-commands"
+    )
+    
+    # instance create sub-command
+    create_parser = instance_subparsers.add_parser(
+        "create",
+        help="Create a Floability instance from a backpack"
+    )
+    create_parser.add_argument(
         "--backpack",
         required=True,
         help="Path to the Floability backpack directory (required).",
     )
-    parser.add_argument(
-        "--data-profile",
-        required=False,
-        help="Optional data profile to use when setting up data.",
+    create_parser.add_argument(
+        "--base-dir",
+        default=".",
+        help="Base directory for floability instance files (default='.').",
     )
+    create_parser.add_argument(
+        "--skip-data",
+        action="store_true",
+        help="Skip data fetch operation during instance creation.",
+    )
+    create_parser.add_argument(
+        "--data-profile",
+        help="Override the profile name in the data spec.",
+    )
+    create_parser.add_argument(
+        "--data-cache-mode",
+        default="off",
+        choices=["off", "symlink", "hardlink", "copy"],
+        help="Data caching mode (default: off).",
+    )
+    create_parser.add_argument(
+        "--force-data-cache",
+        action="store_true",
+        help="Force rebuild of cache entries.",
+    )
+    create_parser.add_argument(
+        "--environment",
+        help="Path to environment.yml or environment.tar.gz (optional).",
+    )
+    create_parser.add_argument(
+        "--worker-environment",
+        help="Path to worker-environment.yml or worker-environment.tar.gz (optional).",
+    )
+    create_parser.add_argument(
+        "--manager-name",
+        help="TaskVine manager name (auto-generated if not provided).",
+    )
+    create_parser.add_argument(
+        "--manager-ports",
+        default="9123,9150",
+        help="Comma-separated range for ports (default=9123,9150).",
+    )
+    create_parser.add_argument(
+        "--env-vars",
+        help="Comma-separated list of KEY=VALUE pairs to set in conda environment.",
+    )
+    create_parser.add_argument(
+        "--measure-performance",
+        action="store_true",
+        help="Enable performance measurements.",
+    )
+    # These will be auto-resolved from backpack
+    create_parser.add_argument("--notebook", help=argparse.SUPPRESS)
+    create_parser.add_argument("--python-script", help=argparse.SUPPRESS)
+    create_parser.add_argument("--data-spec", help=argparse.SUPPRESS)
+    create_parser.add_argument("--compute-spec", help=argparse.SUPPRESS)
+    
     return None
 
 
-def _add_provision_args(parser: argparse.ArgumentParser) -> None:
+def _add_workers_args(parser: argparse.ArgumentParser) -> None:
     """
-    Add arguments for the 'provision' sub-command.
-    Intention: start worker(s) for a backpack in the background.
-    For now, only CLI args are added.
+    Add arguments for the 'workers' sub-command.
+    Supports: start, stop, status
     """
-    parser.add_argument(
-        "--backpack",
-        required=True,
-        help="Path to the Floability backpack directory (required).",
+    workers_subparsers = parser.add_subparsers(
+        dest="workers_subcommand",
+        help="Workers sub-commands"
     )
-    parser.add_argument(
+    
+    # workers start sub-command
+    start_parser = workers_subparsers.add_parser(
+        "start",
+        help="Start workers for a Floability instance"
+    )
+    start_parser.add_argument(
+        "--instance",
+        required=True,
+        help="Path to the Floability instance directory (required).",
+    )
+    start_parser.add_argument(
+        "--batch-type",
+        choices=["local", "condor", "uge", "slurm"],
+        help="Batch system for workers (overrides instance config).",
+    )
+    start_parser.add_argument(
         "--workers",
         type=int,
-        default=5,
-        help="Number of workers to provision (default=5).",
+        help="Maximum number of workers (overrides instance config).",
     )
+    start_parser.add_argument(
+        "--cores-per-worker",
+        type=int,
+        help="Cores per worker (overrides instance config).",
+    )
+    start_parser.add_argument(
+        "--batch-options",
+        help="Batch system options (overrides instance config).",
+    )
+    start_parser.add_argument(
+        "--compute-spec",
+        help="Path to compute.yml (overrides instance config).",
+    )
+    start_parser.add_argument(
+        "--debug-workers",
+        action="store_true",
+        help="Enable debug mode for workers.",
+    )
+    
+    # workers stop sub-command
+    stop_parser = workers_subparsers.add_parser(
+        "stop",
+        help="Stop workers for a Floability instance"
+    )
+    stop_parser.add_argument(
+        "--instance",
+        required=True,
+        help="Path to the Floability instance directory (required).",
+    )
+    
+    # workers status sub-command
+    status_parser = workers_subparsers.add_parser(
+        "status",
+        help="Show worker status for a Floability instance"
+    )
+    status_parser.add_argument(
+        "--instance",
+        required=True,
+        help="Path to the Floability instance directory (required).",
+    )
+    
     return None
 
 
@@ -377,11 +503,11 @@ def main():
     elif args.command == "data":
         run_data_command(args)
 
-    elif args.command == "setup":
-        run_setup_command(args)
+    elif args.command == "instance":
+        run_instance_command(args)
 
-    elif args.command == "provision":
-        run_provision_command(args)
+    elif args.command == "workers":
+        run_workers_command(args)
 
     elif args.command == "audit":
         run_audit_command(args)

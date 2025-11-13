@@ -1,0 +1,116 @@
+"""Instance manager module.
+
+Provides reusable functions for creating and preparing Floability instance
+directories plus metadata recording and backpack argument resolution.
+
+This consolidates logic previously duplicated across `ops/instance.py` and
+`ops/run.py`.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import uuid
+from pathlib import Path
+from typing import Dict, Optional
+
+from .utils import create_unique_directory
+from .instance_metadata import create_instance_metadata, update_instance_metadata
+
+
+"""
+Instance manager module.
+
+Provides reusable functions for creating and preparing Floability instance
+directories plus metadata recording.
+"""
+
+
+def create_instance_structure(base_dir: str, prefix: str = "floability_instance") -> Dict[str, Path]:
+    """Create a unique instance directory with standard sub-directories."""
+    root = create_unique_directory(base_dir=base_dir, prefix=prefix)
+    paths = {
+        "root": Path(root),
+        "workflow": Path(root) / "workflow",
+        "logs": Path(root) / "logs",
+        "metrics": Path(root) / "metrics",
+        "metadata": Path(root) / "metadata",
+    }
+    for key in ["workflow", "logs", "metrics", "metadata"]:
+        paths[key].mkdir(parents=True, exist_ok=True)
+
+    print(f"[floability] Created instance structure at: {os.path.abspath(root)}")
+    print("[floability]   workflow/ - execution sandbox")
+    print("[floability]   logs/     - execution logs")
+    print("[floability]   metrics/  - performance data")
+    print("[floability]   metadata/ - run metadata")
+    return paths
+
+
+def create_latest_symlink(base_dir: str, target_dir: str) -> None:
+    latest = Path(base_dir) / "latest_floability_instance"
+    if latest.is_symlink() or latest.exists():
+        latest.unlink()
+    latest.symlink_to(target_dir)
+    print(f"[floability] Created symlink to latest instance: {os.path.abspath(latest)}")
+
+
+def copy_workflow_artifacts(workflow_dir: Path, notebook_path: Optional[str], python_script_path: Optional[str]) -> None:
+    """Copy notebook and/or script into workflow sandbox."""
+    if notebook_path:
+        src = Path(notebook_path).resolve()
+        dst = workflow_dir / src.name
+        shutil.copy2(src, dst)
+        print(f"[floability] Copied notebook: {src.name} -> {dst}")
+    if python_script_path:
+        src = Path(python_script_path).resolve()
+        dst = workflow_dir / src.name
+        shutil.copy2(src, dst)
+        print(f"[floability] Copied script: {src.name} -> {dst}")
+
+
+def record_initial_metadata(args, instance_paths: Dict[str, Path], mode: str) -> Path:
+    """Create and persist initial instance metadata; returns path to metadata file."""
+    metadata_file = instance_paths["metadata"] / "run.json"
+    backpack_path = Path(args.backpack) if getattr(args, "backpack", None) else None
+    initial = create_instance_metadata(
+        instance_dir=instance_paths["root"],
+        backpack_path=backpack_path,
+        cli_args=vars(args),
+        manager_name=args.manager_name,
+        execution_mode=mode,
+        environment_spec=Path(args.environment) if getattr(args, "environment", None) else None,
+        worker_environment_spec=Path(args.worker_environment) if getattr(args, "worker_environment", None) else None,
+        data_spec=Path(args.data_spec) if getattr(args, "data_spec", None) else None,
+    )
+    update_instance_metadata(metadata_file, initial, merge=False)
+    print(f"[floability] Recorded instance metadata: {metadata_file}")
+    return metadata_file
+
+
+def prepare_instance(args, mode: str = "instance") -> Dict[str, Path]:
+    """High-level helper to fully prepare an instance directory structure.
+
+    Returns the instance_paths dict.
+    """
+    # Ensure manager name
+    if getattr(args, "manager_name", None) is None:
+        args.manager_name = f"floability-{uuid.uuid4()}"
+
+    instance_paths = create_instance_structure(args.base_dir)
+    create_latest_symlink(args.base_dir, str(instance_paths["root"]))
+
+    # Record metadata early (before data/environment operations)
+    try:
+        record_initial_metadata(args, instance_paths, mode=mode)
+    except Exception as e:
+        print(f"[floability] Warning: Could not create metadata: {e}")
+
+    # Copy artifacts (always into sandbox for instance create)
+    copy_workflow_artifacts(
+        workflow_dir=instance_paths["workflow"],
+        notebook_path=getattr(args, "notebook", None),
+        python_script_path=getattr(args, "python_script", None),
+    )
+    return instance_paths
