@@ -41,7 +41,7 @@ def resolve_data_spec(args):
 
 def run_data_command(args):
     """Run data command and return success status.
-    
+
     Returns:
         bool: True if the data operation succeeded, False otherwise.
     """
@@ -50,9 +50,9 @@ def run_data_command(args):
     if not args.data_spec:
         print("[floability] No data spec provided. Cannot proceed with data command.")
         return False
-    
+
     success = False
-    
+
     if args.mode == "check":
         print(
             "[floability] 'data check' selected — metadata-only checks (existence, size, file type)."
@@ -64,7 +64,11 @@ def run_data_command(args):
             verbose=getattr(args, "verbose", False),
             data_profile=getattr(args, "data_profile", None),
             data_cache_mode=getattr(args, "data_cache_mode", "off"),
-            base_dir=Path(getattr(args, "base_dir", ".")) if hasattr(args, "base_dir") else Path.cwd(),
+            base_dir=(
+                Path(getattr(args, "base_dir", "."))
+                if hasattr(args, "base_dir")
+                else Path.cwd()
+            ),
         )
     elif args.mode == "fetch":
         print(f"[floability] Fetching data from {args.data_spec}")
@@ -76,7 +80,11 @@ def run_data_command(args):
             data_profile=getattr(args, "data_profile", None),
             data_cache_mode=getattr(args, "data_cache_mode", "off"),
             force_data_cache=getattr(args, "force_data_cache", False),
-            base_dir=Path(getattr(args, "base_dir", ".")) if hasattr(args, "base_dir") else Path.cwd(),
+            base_dir=(
+                Path(getattr(args, "base_dir", "."))
+                if hasattr(args, "base_dir")
+                else Path.cwd()
+            ),
         )
     elif args.mode == "verify":
         print(
@@ -90,13 +98,17 @@ def run_data_command(args):
             data_profile=getattr(args, "data_profile", None),
             data_cache_mode=getattr(args, "data_cache_mode", "off"),
             force_data_cache=getattr(args, "force_data_cache", False),
-            base_dir=Path(getattr(args, "base_dir", ".")) if hasattr(args, "base_dir") else Path.cwd(),
+            base_dir=(
+                Path(getattr(args, "base_dir", "."))
+                if hasattr(args, "base_dir")
+                else Path.cwd()
+            ),
         )
-    
+
     # Print final status
     if success:
         print(f"\n[floability] Data {args.mode} operation completed successfully")
     else:
         print(f"\n[floability] Data {args.mode} operation FAILED")
-    
+
     return success

@@ -9,7 +9,9 @@ from pathlib import Path
 SYSTEM_INFORMATION = None
 
 
-def create_unique_directory(base_dir=".", prefix="floability_instance", max_attempts=10):
+def create_unique_directory(
+    base_dir=".", prefix="floability_instance", max_attempts=10
+):
     attempt = 0
 
     while attempt < max_attempts:

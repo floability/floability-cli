@@ -16,7 +16,12 @@ from typing import Optional, Dict, Any, List
 from .instance_metadata import record_sync_manifest, compute_file_hash
 
 
-def sync_outputs_to_backpack(workflow_dir: str, backpack_dir: str, metadata_dir: Optional[str] = None, verbose: bool = True) -> bool:
+def sync_outputs_to_backpack(
+    workflow_dir: str,
+    backpack_dir: str,
+    metadata_dir: Optional[str] = None,
+    verbose: bool = True,
+) -> bool:
     """Sync executed notebooks and outputs/ back to the backpack.
 
     - Copies executed notebooks (*.ipynb) from the instance workflow dir to the backpack workflow dir
@@ -29,11 +34,15 @@ def sync_outputs_to_backpack(workflow_dir: str, backpack_dir: str, metadata_dir:
     backpack_path = Path(backpack_dir)
 
     if not workflow_path.exists():
-        print(f"[floability] Warning: Workflow directory does not exist: {workflow_dir}")
+        print(
+            f"[floability] Warning: Workflow directory does not exist: {workflow_dir}"
+        )
         return False
 
     if not backpack_path.exists():
-        print(f"[floability] Warning: Backpack directory does not exist: {backpack_dir}")
+        print(
+            f"[floability] Warning: Backpack directory does not exist: {backpack_dir}"
+        )
         return False
 
     print(f"[floability] Syncing outputs from instance to backpack...")
@@ -96,12 +105,16 @@ def sync_outputs_to_backpack(workflow_dir: str, backpack_dir: str, metadata_dir:
                 backpack_path,
             )
             if verbose:
-                print(f"[floability]   Recorded sync manifest: {metadata_dir}/sync.json")
+                print(
+                    f"[floability]   Recorded sync manifest: {metadata_dir}/sync.json"
+                )
         except Exception as e:
             print(f"[floability]   Warning: Could not record sync manifest: {e}")
 
     if synced_files_manifest:
-        print(f"[floability] Successfully synced {len(synced_files_manifest)} file(s) to backpack")
+        print(
+            f"[floability] Successfully synced {len(synced_files_manifest)} file(s) to backpack"
+        )
         return True
     else:
         print(f"[floability] No files to sync")
@@ -149,7 +162,9 @@ def resolve_backpack_args(args) -> None:
         candidate = backpack_dir / "software" / "worker-environment.yml"
         if candidate.is_file():
             args.worker_environment = str(candidate)
-            print(f"[floability] Using worker environment from backpack: {args.worker_environment}")
+            print(
+                f"[floability] Using worker environment from backpack: {args.worker_environment}"
+            )
 
     # Notebook / Python script selection
     if not getattr(args, "notebook", None) and not getattr(args, "python_script", None):
@@ -171,7 +186,9 @@ def resolve_backpack_args(args) -> None:
                 if chosen is None:
                     chosen = scripts[0]
             args.python_script = str(chosen)
-            print(f"[floability] Using Python script from backpack: {args.python_script}")
+            print(
+                f"[floability] Using Python script from backpack: {args.python_script}"
+            )
         elif notebooks:
             chosen = None
             if len(notebooks) == 1:
@@ -189,7 +206,9 @@ def resolve_backpack_args(args) -> None:
     args.backpack_root = str(backpack_dir)
 
 
-def validate_backpack_structure(backpack_dir: str, require_workflow: bool = True) -> Dict[str, Any]:
+def validate_backpack_structure(
+    backpack_dir: str, require_workflow: bool = True
+) -> Dict[str, Any]:
     """Validate common Floability backpack structure and report findings.
 
     Checks for the presence of standard subdirectories/files:
@@ -258,7 +277,9 @@ def validate_backpack_structure(backpack_dir: str, require_workflow: bool = True
     if comp_dir.exists():
         result["has_compute_spec"] = (comp_dir / "compute.yml").is_file()
     else:
-        print("[floability] Info: No compute/ directory found (will use CLI overrides or defaults)")
+        print(
+            "[floability] Info: No compute/ directory found (will use CLI overrides or defaults)"
+        )
 
     # data/
     data_dir = root / "data"

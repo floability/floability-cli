@@ -76,7 +76,9 @@ def start_vine_factory(
             if vf_config.get("timeout"):
                 cmd.append(f"--timeout={vf_config['timeout']}")
             if vf_config.get("worker-extra-options"):
-                cmd.append(f"--worker-extra-options={vf_config['worker-extra-options']}")
+                cmd.append(
+                    f"--worker-extra-options={vf_config['worker-extra-options']}"
+                )
             if vf_config.get("condor-requirements"):
                 cmd.append(f"--condor-requirements={vf_config['condor-requirements']}")
         except FileNotFoundError:
@@ -123,6 +125,7 @@ def start_vine_factory(
 
 # Metadata helpers ---------------------------------------------------------
 
+
 def _instance_metadata_file(instance_path: Path) -> Path:
     return instance_path / "metadata" / "run.json"
 
@@ -168,6 +171,7 @@ def read_worker_metadata(instance_path: Path) -> Optional[Dict]:
 
 # Lifecycle ----------------------------------------------------------------
 
+
 def start_workers_for_instance(
     instance_path: Path,
     batch_type: Optional[str] = None,
@@ -207,7 +211,9 @@ def start_workers_for_instance(
 
     # Lock check
     if are_workers_running(instance_path):
-        print("[floability] Workers already running for this instance (lock present). Aborting start.")
+        print(
+            "[floability] Workers already running for this instance (lock present). Aborting start."
+        )
         return None
 
     proc = start_vine_factory(
@@ -307,7 +313,9 @@ def print_worker_status(instance_path: Path) -> None:
         print(f"  Batch type: {wd.get('batch_type', 'N/A')}")
         print(f"  Workers: {wd.get('workers', 'N/A')}")
         print(f"  Cores per worker: {wd.get('cores_per_worker', 'N/A')}")
-        print(f"  Process status: {'Running' if status['process_running'] else 'Not running'}")
+        print(
+            f"  Process status: {'Running' if status['process_running'] else 'Not running'}"
+        )
     else:
         print("\nNo worker metadata found.")
     log_file = instance_path / "logs" / "vine_factory.stdout"
@@ -316,7 +324,12 @@ def print_worker_status(instance_path: Path) -> None:
         print("Last 20 lines of vine_factory.stdout:")
         print("=" * 70)
         try:
-            out = subprocess.run(["tail", "-n", "20", str(log_file)], capture_output=True, text=True, check=True)
+            out = subprocess.run(
+                ["tail", "-n", "20", str(log_file)],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
             print(out.stdout)
         except Exception as e:
             print(f"[floability] Error reading log file: {e}")

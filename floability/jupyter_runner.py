@@ -84,7 +84,7 @@ def start_jupyterlab(
         f"[jupyter] Starting JupyterLab on port {port} if available. Correct port will be displayed after starting."
     )
     print(f"[jupyter] Notebook: {notebook_path if notebook_path else '(none)'}")
-    
+
     if working_dir:
         print(f"[jupyter] Working directory: {working_dir}")
 
@@ -154,7 +154,7 @@ def execute_notebook(
         stdout_file = os.path.join(run_dir, "jupyterlab.stdout")
 
         print(f"[jupyter] JupyterLab stdout: {os.path.abspath(stdout_file)}")
-        
+
         if working_dir:
             print(f"[jupyter] Executing notebook from working directory: {working_dir}")
 

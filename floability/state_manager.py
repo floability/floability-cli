@@ -93,6 +93,7 @@ def is_lock_active(instance_path: Path, lock_name: str) -> bool:
 
 # High-level instance helpers -------------------------------------------------
 
+
 def acquire_instance_lock(instance_path: Path) -> bool:
     return acquire_lock(instance_path, INSTANCE_LOCK_NAME)
 
@@ -106,6 +107,7 @@ def is_instance_running(instance_path: Path) -> bool:
 
 
 # High-level workers helpers --------------------------------------------------
+
 
 def acquire_workers_lock(instance_path: Path) -> bool:
     return acquire_lock(instance_path, WORKERS_LOCK_NAME)

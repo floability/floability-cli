@@ -19,21 +19,29 @@ def start_workers(args):
         print(f"[floability] Error: Instance directory not found: {instance_path}")
         return
     if are_workers_running(instance_path):
-        print("[floability] Workers already running (lock present). Use 'floability workers status' or 'workers stop'.")
+        print(
+            "[floability] Workers already running (lock present). Use 'floability workers status' or 'workers stop'."
+        )
         return
     try:
         proc = start_workers_for_instance(
             instance_path=instance_path,
-            batch_type=getattr(args, 'batch_type', None),
-            workers=getattr(args, 'workers', None),
-            cores_per_worker=getattr(args, 'cores_per_worker', None),
-            batch_options=getattr(args, 'batch_options', None),
-            compute_spec=getattr(args, 'compute_spec', None),
-            debug_workers=getattr(args, 'debug_workers', False),
+            batch_type=getattr(args, "batch_type", None),
+            workers=getattr(args, "workers", None),
+            cores_per_worker=getattr(args, "cores_per_worker", None),
+            batch_options=getattr(args, "batch_options", None),
+            compute_spec=getattr(args, "compute_spec", None),
+            debug_workers=getattr(args, "debug_workers", False),
         )
         if proc:
-            print("\n[floability] To check status: floability workers status --instance " + str(instance_path))
-            print("[floability] To stop workers: floability workers stop --instance " + str(instance_path))
+            print(
+                "\n[floability] To check status: floability workers status --instance "
+                + str(instance_path)
+            )
+            print(
+                "[floability] To stop workers: floability workers stop --instance "
+                + str(instance_path)
+            )
     except Exception as e:
         print(f"[floability] Error starting workers: {e}")
 
@@ -64,17 +72,17 @@ def status_workers(args):
 def run_workers_command(args):
     """
     Entry point for 'floability workers' command.
-    
+
     Supports subcommands:
     - start: Start workers for an instance
     - stop: Stop workers for an instance
     - status: Show worker status and logs
     """
-    if args.workers_subcommand == 'start':
+    if args.workers_subcommand == "start":
         start_workers(args)
-    elif args.workers_subcommand == 'stop':
+    elif args.workers_subcommand == "stop":
         stop_workers(args)
-    elif args.workers_subcommand == 'status':
+    elif args.workers_subcommand == "status":
         status_workers(args)
     else:
         print(f"[floability] Unknown workers subcommand: {args.workers_subcommand}")

@@ -58,7 +58,7 @@ def create_instance_metadata(
 ) -> Dict[str, Any]:
     """
     Create comprehensive metadata dictionary for an execution instance.
-    
+
     Args:
         instance_dir: Path to floability_instance_* directory
         backpack_path: Path to source backpack (if any)
@@ -68,7 +68,7 @@ def create_instance_metadata(
         environment_spec: Path to environment.yml
         worker_environment_spec: Path to worker-environment.yml
         data_spec: Path to data.yml
-    
+
     Returns:
         Dictionary containing all metadata
     """
@@ -80,7 +80,7 @@ def create_instance_metadata(
         "execution_mode": execution_mode,
         "manager_name": manager_name,
     }
-    
+
     # Backpack information
     if backpack_path:
         metadata["backpack"] = {
@@ -88,24 +88,28 @@ def create_instance_metadata(
             "name": backpack_path.name,
             "git_commit": get_git_commit(backpack_path),
         }
-    
+
     # CLI arguments (sanitized)
     metadata["cli_args"] = {
         k: str(v) if v is not None else None
         for k, v in cli_args.items()
         if not k.startswith("_")  # Skip private attributes
     }
-    
+
     # Environment information
     metadata["environment"] = {}
     if environment_spec:
         metadata["environment"]["manager_spec"] = str(environment_spec)
-        metadata["environment"]["manager_spec_hash"] = compute_file_hash(environment_spec)
-    
+        metadata["environment"]["manager_spec_hash"] = compute_file_hash(
+            environment_spec
+        )
+
     if worker_environment_spec:
         metadata["environment"]["worker_spec"] = str(worker_environment_spec)
-        metadata["environment"]["worker_spec_hash"] = compute_file_hash(worker_environment_spec)
-    
+        metadata["environment"]["worker_spec_hash"] = compute_file_hash(
+            worker_environment_spec
+        )
+
     # Data specification
     if data_spec:
         metadata["data"] = {
@@ -115,7 +119,7 @@ def create_instance_metadata(
             "cache_mode": cli_args.get("data_cache_mode", "off"),
             "cache_keys": [],  # Will be populated during data operations
         }
-    
+
     # Execution context
     metadata["context"] = {
         "run_in_place": cli_args.get("run_in_place", False),
@@ -124,7 +128,7 @@ def create_instance_metadata(
         "batch_type": cli_args.get("batch_type", "local"),
         "max_workers": cli_args.get("workers", 0),
     }
-    
+
     # Execution status (will be updated)
     metadata["status"] = {
         "state": "initializing",
@@ -133,7 +137,7 @@ def create_instance_metadata(
         "success": None,
         "error": None,
     }
-    
+
     return metadata
 
 
@@ -144,7 +148,7 @@ def update_instance_metadata(
 ) -> None:
     """
     Update instance metadata file with new information.
-    
+
     Args:
         metadata_path: Path to run.json
         updates: Dictionary of updates to apply
@@ -157,19 +161,23 @@ def update_instance_metadata(
                 existing = json.load(f)
         except (OSError, json.JSONDecodeError):
             pass
-    
+
     # Deep merge for nested dictionaries
     def deep_merge(base: dict, update: dict) -> dict:
         result = base.copy()
         for key, value in update.items():
-            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            if (
+                key in result
+                and isinstance(result[key], dict)
+                and isinstance(value, dict)
+            ):
                 result[key] = deep_merge(result[key], value)
             else:
                 result[key] = value
         return result
-    
+
     merged = deep_merge(existing, updates) if merge else updates
-    
+
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     with open(metadata_path, "w") as f:
         json.dump(merged, f, indent=2, default=str)
@@ -183,7 +191,7 @@ def record_sync_manifest(
 ) -> None:
     """
     Record what was synced back to the backpack.
-    
+
     Args:
         metadata_dir: Path to metadata directory
         synced_files: List of dicts with file info (name, hash, size)
@@ -198,7 +206,7 @@ def record_sync_manifest(
         "files": synced_files,
         "file_count": len(synced_files),
     }
-    
+
     sync_path = metadata_dir / "sync.json"
     with open(sync_path, "w") as f:
         json.dump(sync_manifest, f, indent=2)
@@ -207,23 +215,23 @@ def record_sync_manifest(
 def add_data_cache_keys(metadata_path: Path, cache_keys: List[str]) -> None:
     """
     Add data cache keys to metadata.
-    
+
     Args:
         metadata_path: Path to run.json
         cache_keys: List of cache keys used for data
     """
     if not metadata_path.exists():
         return
-    
+
     try:
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
-        
+
         if "data" not in metadata:
             metadata["data"] = {}
-        
+
         metadata["data"]["cache_keys"] = cache_keys
-        
+
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2, default=str)
     except (OSError, json.JSONDecodeError):
@@ -237,7 +245,7 @@ def finalize_instance_metadata(
 ) -> None:
     """
     Mark instance execution as completed.
-    
+
     Args:
         metadata_path: Path to run.json
         success: Whether execution succeeded

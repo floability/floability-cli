@@ -59,7 +59,7 @@ def get_parsed_arguments() -> argparse.Namespace:
         help="Data operations via mode flag: download, check (metadata), verify (download + integrity)",
     )
     _add_data_args(data_parser)
-    
+
     # audit sub-command
     audit_parser = subparsers.add_parser(
         "audit", help="Generate environment and data dependencies for a notebook"
@@ -162,32 +162,32 @@ def _add_execution_args(parser: argparse.ArgumentError) -> None:
         default=".",
         help="Path to the root of the backpack (default='.').",
     )
-    
+
     parser.add_argument(
         "--continue-on-data-failure",
         action="store_true",
         help="Continue workflow execution even if data operations fail (default: abort on data failure).",
     )
-    
+
     parser.add_argument(
         "--run-in-place",
         action="store_true",
         help="Run directly in the backpack directory instead of creating an isolated instance sandbox (default: False).",
     )
-    
+
     parser.add_argument(
         "--no-update-backpack",
         action="store_true",
         help="Disable syncing outputs from instance back to backpack (default: sync enabled).",
     )
-    
+
     parser.add_argument(
         "--data-cache-mode",
         default="off",
         choices=["off", "symlink", "hardlink", "copy"],
         help="Data caching mode: off (no cache), symlink (default, read-only), hardlink (shared inode), copy (independent copy).",
     )
-    
+
     parser.add_argument(
         "--force-data-cache",
         action="store_true",
@@ -337,14 +337,12 @@ def _add_instance_args(parser: argparse.ArgumentParser) -> None:
     Supports: create
     """
     instance_subparsers = parser.add_subparsers(
-        dest="instance_subcommand",
-        help="Instance sub-commands"
+        dest="instance_subcommand", help="Instance sub-commands"
     )
-    
+
     # instance create sub-command
     create_parser = instance_subparsers.add_parser(
-        "create",
-        help="Create a Floability instance from a backpack"
+        "create", help="Create a Floability instance from a backpack"
     )
     create_parser.add_argument(
         "--backpack",
@@ -407,7 +405,7 @@ def _add_instance_args(parser: argparse.ArgumentParser) -> None:
     create_parser.add_argument("--python-script", help=argparse.SUPPRESS)
     create_parser.add_argument("--data-spec", help=argparse.SUPPRESS)
     create_parser.add_argument("--compute-spec", help=argparse.SUPPRESS)
-    
+
     return None
 
 
@@ -417,14 +415,12 @@ def _add_workers_args(parser: argparse.ArgumentParser) -> None:
     Supports: start, stop, status
     """
     workers_subparsers = parser.add_subparsers(
-        dest="workers_subcommand",
-        help="Workers sub-commands"
+        dest="workers_subcommand", help="Workers sub-commands"
     )
-    
+
     # workers start sub-command
     start_parser = workers_subparsers.add_parser(
-        "start",
-        help="Start workers for a Floability instance"
+        "start", help="Start workers for a Floability instance"
     )
     start_parser.add_argument(
         "--instance",
@@ -459,29 +455,27 @@ def _add_workers_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Enable debug mode for workers.",
     )
-    
+
     # workers stop sub-command
     stop_parser = workers_subparsers.add_parser(
-        "stop",
-        help="Stop workers for a Floability instance"
+        "stop", help="Stop workers for a Floability instance"
     )
     stop_parser.add_argument(
         "--instance",
         required=True,
         help="Path to the Floability instance directory (required).",
     )
-    
+
     # workers status sub-command
     status_parser = workers_subparsers.add_parser(
-        "status",
-        help="Show worker status for a Floability instance"
+        "status", help="Show worker status for a Floability instance"
     )
     status_parser.add_argument(
         "--instance",
         required=True,
         help="Path to the Floability instance directory (required).",
     )
-    
+
     return None
 
 

@@ -27,7 +27,9 @@ directories plus metadata recording.
 """
 
 
-def create_instance_structure(base_dir: str, prefix: str = "floability_instance") -> Dict[str, Path]:
+def create_instance_structure(
+    base_dir: str, prefix: str = "floability_instance"
+) -> Dict[str, Path]:
     """Create a unique instance directory with standard sub-directories."""
     root = create_unique_directory(base_dir=base_dir, prefix=prefix)
     paths = {
@@ -56,7 +58,9 @@ def create_latest_symlink(base_dir: str, target_dir: str) -> None:
     print(f"[floability] Created symlink to latest instance: {os.path.abspath(latest)}")
 
 
-def copy_workflow_artifacts(workflow_dir: Path, notebook_path: Optional[str], python_script_path: Optional[str]) -> None:
+def copy_workflow_artifacts(
+    workflow_dir: Path, notebook_path: Optional[str], python_script_path: Optional[str]
+) -> None:
     """Copy notebook and/or script into workflow sandbox."""
     if notebook_path:
         src = Path(notebook_path).resolve()
@@ -80,8 +84,14 @@ def record_initial_metadata(args, instance_paths: Dict[str, Path], mode: str) ->
         cli_args=vars(args),
         manager_name=args.manager_name,
         execution_mode=mode,
-        environment_spec=Path(args.environment) if getattr(args, "environment", None) else None,
-        worker_environment_spec=Path(args.worker_environment) if getattr(args, "worker_environment", None) else None,
+        environment_spec=(
+            Path(args.environment) if getattr(args, "environment", None) else None
+        ),
+        worker_environment_spec=(
+            Path(args.worker_environment)
+            if getattr(args, "worker_environment", None)
+            else None
+        ),
         data_spec=Path(args.data_spec) if getattr(args, "data_spec", None) else None,
     )
     update_instance_metadata(metadata_file, initial, merge=False)

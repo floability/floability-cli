@@ -13,8 +13,16 @@ from ..cleanup import CleanupManager
 from ..performance_tracker import PerformanceTracker
 from ..environment_manager import setup_manager_and_worker_envs
 from ..workers_manager import start_workers_for_instance
-from ..backpack_manager import resolve_backpack_args, validate_backpack_structure, sync_outputs_to_backpack
-from ..instance_manager import create_instance_structure, create_latest_symlink, record_initial_metadata
+from ..backpack_manager import (
+    resolve_backpack_args,
+    validate_backpack_structure,
+    sync_outputs_to_backpack,
+)
+from ..instance_manager import (
+    create_instance_structure,
+    create_latest_symlink,
+    record_initial_metadata,
+)
 from ..jupyter_runner import start_jupyterlab, execute_notebook
 from ..state_manager import (
     acquire_instance_lock,
@@ -22,10 +30,12 @@ from ..state_manager import (
     is_instance_running,
 )
 from ..catalog import send_catalog_update
-from ..instance_metadata import  finalize_instance_metadata
+from ..instance_metadata import finalize_instance_metadata
 
 
-def run_workflow(args: argparse.Namespace, cleanup_manager: CleanupManager, mode="run") -> None:
+def run_workflow(
+    args: argparse.Namespace, cleanup_manager: CleanupManager, mode="run"
+) -> None:
     """Run or execute a workflow either by creating a new instance from a backpack
     or by reusing an existing instance (via --instance).
     """
@@ -79,7 +89,9 @@ def run_workflow(args: argparse.Namespace, cleanup_manager: CleanupManager, mode
 
     # Initialize performance tracking
     perf_enabled = getattr(args, "measure_performance", False)
-    perf = PerformanceTracker(output_dir=str(instance_paths["metrics"]), enabled=perf_enabled)
+    perf = PerformanceTracker(
+        output_dir=str(instance_paths["metrics"]), enabled=perf_enabled
+    )
     perf.start_timer("total_run_time")
 
     # Ensure manager name
@@ -91,9 +103,19 @@ def run_workflow(args: argparse.Namespace, cleanup_manager: CleanupManager, mode
         workflow_dir = instance_paths["workflow"]
     else:
         run_in_place = getattr(args, "run_in_place", False)
-        print("[floability] {}".format("in-place workflow preparation" if run_in_place else "workflow sandbox setup"))
+        print(
+            "[floability] {}".format(
+                "in-place workflow preparation"
+                if run_in_place
+                else "workflow sandbox setup"
+            )
+        )
         if run_in_place:
-            workflow_dir = Path(args.backpack_root) if getattr(args, "backpack_root", None) else Path.cwd()
+            workflow_dir = (
+                Path(args.backpack_root)
+                if getattr(args, "backpack_root", None)
+                else Path.cwd()
+            )
         else:
             workflow_dir = instance_paths["workflow"]
             if args.notebook:
@@ -115,7 +137,12 @@ def run_workflow(args: argparse.Namespace, cleanup_manager: CleanupManager, mode
         print("[floability] data materialization")
         perf.start_timer("data_operation")
         from ..data.data_handler import execute_default_data_operation
-        data_root = str(instance_paths["root"]) if not getattr(args, "run_in_place", False) else args.backpack_root
+
+        data_root = (
+            str(instance_paths["root"])
+            if not getattr(args, "run_in_place", False)
+            else args.backpack_root
+        )
         success = execute_default_data_operation(
             data_spec=args.data_spec,
             backpack_root=data_root,
@@ -160,8 +187,14 @@ def run_workflow(args: argparse.Namespace, cleanup_manager: CleanupManager, mode
         )
 
     # Startup catalog event
-    backpack_name = Path(getattr(args, "backpack", "")).stem if getattr(args, "backpack", None) else None
-    notebook_name = Path(args.notebook).name if getattr(args, "notebook", None) else None
+    backpack_name = (
+        Path(getattr(args, "backpack", "")).stem
+        if getattr(args, "backpack", None)
+        else None
+    )
+    notebook_name = (
+        Path(args.notebook).name if getattr(args, "notebook", None) else None
+    )
     send_catalog_update(
         manager_name=args.manager_name,
         jupyter_port=getattr(args, "jupyter_port", 8888),
@@ -227,8 +260,16 @@ def run_workflow(args: argparse.Namespace, cleanup_manager: CleanupManager, mode
                 conda_env_dir=env_dir,
                 working_dir=str(workflow_dir),
             )
-            perf.end_timer("notebook_execute_time", "Time to execute notebook in execute mode")
-        if execution_success and not using_existing_instance and not getattr(args, "run_in_place", False) and getattr(args, "backpack", None) and not getattr(args, "no_update_backpack", False):
+            perf.end_timer(
+                "notebook_execute_time", "Time to execute notebook in execute mode"
+            )
+        if (
+            execution_success
+            and not using_existing_instance
+            and not getattr(args, "run_in_place", False)
+            and getattr(args, "backpack", None)
+            and not getattr(args, "no_update_backpack", False)
+        ):
             backpack_workflow_dir = Path(args.backpack) / "workflow"
             sync_outputs_to_backpack(
                 workflow_dir,
@@ -253,7 +294,10 @@ def run_workflow(args: argparse.Namespace, cleanup_manager: CleanupManager, mode
     try:
         while True:
             time.sleep(5)
-            if factory_proc is not None and getattr(factory_proc, "poll", lambda: None)() is not None:
+            if (
+                factory_proc is not None
+                and getattr(factory_proc, "poll", lambda: None)() is not None
+            ):
                 print("[floability] Worker factory ended.")
                 break
             if jupyter_proc is not None and jupyter_proc.poll() is not None:
@@ -262,7 +306,13 @@ def run_workflow(args: argparse.Namespace, cleanup_manager: CleanupManager, mode
         print("[floability] KeyboardInterrupt in main loop. Cleaning up...")
         cleanup_manager.cleanup()
     finally:
-        if mode == "run" and not using_existing_instance and not getattr(args, "run_in_place", False) and getattr(args, "backpack", None) and not getattr(args, "no_update_backpack", False):
+        if (
+            mode == "run"
+            and not using_existing_instance
+            and not getattr(args, "run_in_place", False)
+            and getattr(args, "backpack", None)
+            and not getattr(args, "no_update_backpack", False)
+        ):
             backpack_workflow_dir = Path(args.backpack) / "workflow"
             sync_outputs_to_backpack(
                 workflow_dir,
@@ -273,7 +323,9 @@ def run_workflow(args: argparse.Namespace, cleanup_manager: CleanupManager, mode
         if perf_enabled:
             perf.end_timer("total_run_time", "Total run time")
             perf.save_report()
-            print(f"[floability] Performance report saved to {instance_paths['metrics']}")
+            print(
+                f"[floability] Performance report saved to {instance_paths['metrics']}"
+            )
         try:
             finalize_instance_metadata(metadata_file, success=True)
         except Exception as e:
@@ -286,10 +338,10 @@ def run_workflow(args: argparse.Namespace, cleanup_manager: CleanupManager, mode
 def execute_python_script(script_path, run_dir, conda_env_dir=None, working_dir=None):
     script_abs_path = os.path.abspath(script_path)
     script_name = os.path.basename(script_abs_path)
-    
+
     # Use provided working_dir or fall back to script's directory
     exec_dir = working_dir if working_dir else os.path.dirname(script_abs_path)
-    
+
     print(f"[floability] Changing directory to: {exec_dir}")
     print(f"[floability] Executing Python script: {script_name}")
     log_file = os.path.join(run_dir, "python_execution.log")

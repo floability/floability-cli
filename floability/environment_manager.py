@@ -176,6 +176,7 @@ def create_conda_pack_from_yml(
 
 # Higher-level environment management functions
 
+
 def prepare_conda_environment(
     environment_spec: str,
     base_dir: str,
@@ -183,11 +184,11 @@ def prepare_conda_environment(
     manager_name: str,
     is_worker_env: bool = False,
     force: bool = False,
-    perf = None  # PerformanceTracker
+    perf=None,  # PerformanceTracker
 ) -> str:
     """
     Create or resolve a conda-pack environment file.
-    
+
     Args:
         environment_spec: Path to environment.yml or .tar.gz file
         base_dir: Base directory for floability files
@@ -196,26 +197,26 @@ def prepare_conda_environment(
         is_worker_env: Whether this is a worker environment
         force: Force recreation of environment
         perf: Optional performance tracker
-    
+
     Returns:
         Path to the conda-pack .tar.gz file
     """
     env_file_path = Path(environment_spec)
     ext = env_file_path.suffix
-    
+
     # If already a packed environment, return it
     if ext in [".tar", ".gz"] or str(environment_spec).endswith(".tar.gz"):
         print(f"[floability] Using conda-pack from '{environment_spec}'")
         return str(env_file_path.resolve())
-    
+
     # Create conda-pack from YAML
     env_type = "worker" if is_worker_env else "manager"
     print(f"[floability] Creating {env_type} conda-pack from '{environment_spec}'")
-    
+
     timer_name = f"{env_type}_env_creation"
     if perf:
         perf.start_timer(timer_name)
-    
+
     environment_pack = create_conda_pack_from_yml(
         env_yml=environment_spec,
         solver="libmamba",
@@ -225,11 +226,11 @@ def prepare_conda_environment(
         manager_name=manager_name,
         is_worker_env=is_worker_env,
     )
-    
+
     if perf:
         perf.end_timer(timer_name, f"Time to create {env_type} conda environment")
         perf.measure_file_size(environment_pack, f"{env_type}_environment_pack")
-    
+
     return environment_pack
 
 
@@ -239,11 +240,11 @@ def extract_conda_environment(
     manager_name: str,
     manager_ports: str = "9123,9150",
     env_vars: Optional[str] = None,
-    perf = None  # PerformanceTracker
+    perf=None,  # PerformanceTracker
 ) -> str:
     """
     Extract a conda-pack environment and configure it.
-    
+
     Args:
         environment_pack: Path to the conda-pack .tar.gz file
         extract_dir: Directory where environment should be extracted
@@ -251,33 +252,33 @@ def extract_conda_environment(
         manager_ports: Manager ports to set in environment
         env_vars: Additional environment variables to set
         perf: Optional performance tracker
-    
+
     Returns:
         Path to the extracted environment directory
     """
     from .utils import safe_extract_tar, update_env_vars_in_conda
-    
+
     # Make extract_dir absolute to avoid working directory issues
     env_dir = os.path.abspath(extract_dir)
     os.makedirs(env_dir, exist_ok=True)
     print(f"[floability] Conda environment directory: {env_dir}")
-    
+
     # Extract the environment
     try:
         if perf:
             perf.start_timer("extract_environment")
-        
+
         safe_extract_tar(Path(environment_pack), Path(env_dir))
-        
+
         if perf:
             perf.end_timer("extract_environment", "Time to extract conda environment")
             perf.measure_file_size(env_dir, "extracted_environment")
     except Exception as e:
         raise RuntimeError(f"Error extracting environment: {e}")
-    
+
     # Update the manager name in the environment
     update_env_vars_in_conda(env_dir, manager_name, manager_ports, env_vars)
-    
+
     # Run conda-unpack to fix paths after extraction
     try:
         subprocess.run(
@@ -293,7 +294,7 @@ def extract_conda_environment(
         )
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"Error running conda-unpack: {e}")
-    
+
     return env_dir
 
 
@@ -306,11 +307,11 @@ def setup_manager_and_worker_envs(
     manager_ports: str = "9123,9150",
     env_vars: Optional[str] = None,
     force: bool = False,
-    perf = None  # PerformanceTracker
+    perf=None,  # PerformanceTracker
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Set up both manager and worker conda environments.
-    
+
     Args:
         environment_spec: Path to manager environment.yml or .tar.gz
         worker_environment_spec: Path to worker environment.yml or .tar.gz
@@ -321,7 +322,7 @@ def setup_manager_and_worker_envs(
         env_vars: Additional environment variables
         force: Force recreation of environments
         perf: Optional performance tracker
-    
+
     Returns:
         Tuple of (env_dir, worker_environment_pack)
         env_dir is None if no manager environment
@@ -329,7 +330,7 @@ def setup_manager_and_worker_envs(
     """
     env_dir = None
     worker_environment_pack = None
-    
+
     # Setup manager environment
     if environment_spec:
         environment_pack = prepare_conda_environment(
@@ -339,9 +340,9 @@ def setup_manager_and_worker_envs(
             manager_name=manager_name,
             is_worker_env=False,
             force=force,
-            perf=perf
+            perf=perf,
         )
-        
+
         # Extract to instance root
         extract_dir = os.path.join(instance_root, "current_conda_env")
         env_dir = extract_conda_environment(
@@ -350,11 +351,11 @@ def setup_manager_and_worker_envs(
             manager_name=manager_name,
             manager_ports=manager_ports,
             env_vars=env_vars,
-            perf=perf
+            perf=perf,
         )
     else:
         print("[floability] No environment file provided, skipping conda-pack.")
-    
+
     # Setup worker environment
     if worker_environment_spec:
         worker_environment_pack = prepare_conda_environment(
@@ -364,7 +365,7 @@ def setup_manager_and_worker_envs(
             manager_name=manager_name,
             is_worker_env=True,
             force=force,
-            perf=perf
+            perf=perf,
         )
     else:
         # Use manager environment for workers if no separate worker environment
@@ -376,11 +377,15 @@ def setup_manager_and_worker_envs(
                 manager_name=manager_name,
                 is_worker_env=False,
                 force=force,
-                perf=None  # Don't double-track if already created
+                perf=None,  # Don't double-track if already created
             )
-    
-    if environment_pack and worker_environment_pack and environment_pack != worker_environment_pack:
+
+    if (
+        environment_pack
+        and worker_environment_pack
+        and environment_pack != worker_environment_pack
+    ):
         print("[floability] Worker environment is different from main environment.")
         print(f"[floability] Worker environment pack: {worker_environment_pack}")
-    
+
     return env_dir, worker_environment_pack
