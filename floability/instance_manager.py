@@ -124,3 +124,36 @@ def prepare_instance(args, mode: str = "instance") -> Dict[str, Path]:
         python_script_path=getattr(args, "python_script", None),
     )
     return instance_paths
+
+
+def get_registered_instances_status() -> Dict[str, Dict]:
+    """Return a mapping of short_name -> status dict for all registered instances.
+
+    Each status dict contains keys: path, running, created_at, last_seen,
+    manager_name, tags. Instances with missing status (e.g., record corrupted)
+    are skipped.
+    """
+    try:
+        from .instance_registry import (
+            list_instances,
+            instance_status,
+            prune_nonexistent_entries,
+        )
+    except Exception:
+        return {}
+    # Prune stale entries first (paths that no longer exist)
+    try:
+        prune_nonexistent_entries()
+    except Exception:
+        pass
+    entries = list_instances()
+    results: Dict[str, Dict] = {}
+    for name in entries.keys():
+        try:
+            st = instance_status(name)
+            if st:
+                results[name] = st
+        except Exception:
+            # Skip problematic entries silently; could log later
+            continue
+    return results

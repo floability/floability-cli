@@ -351,6 +351,11 @@ def _add_instance_args(parser: argparse.ArgumentParser) -> None:
         help="Path to the Floability backpack directory (required).",
     )
     create_parser.add_argument(
+        "--name",
+        required=False,
+        help="Optional short name to register for this instance (auto-generated if omitted).",
+    )
+    create_parser.add_argument(
         "--base-dir",
         default=".",
         help="Base directory for floability instance files (default='.').",
@@ -406,6 +411,21 @@ def _add_instance_args(parser: argparse.ArgumentParser) -> None:
     create_parser.add_argument("--python-script", help=argparse.SUPPRESS)
     create_parser.add_argument("--data-spec", help=argparse.SUPPRESS)
     create_parser.add_argument("--compute-spec", help=argparse.SUPPRESS)
+
+    # instance list sub-command
+    list_parser = instance_subparsers.add_parser(
+        "list", help="List registered Floability instances and their status"
+    )
+    list_parser.add_argument(
+        "--show-paths",
+        action="store_true",
+        help="Include full paths (default shows short name and running state).",
+    )
+    list_parser.add_argument(
+        "--all-details",
+        action="store_true",
+        help="Show extended metadata (created_at, last_seen, manager_name, tags).",
+    )
 
     return None
 

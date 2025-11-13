@@ -8,13 +8,18 @@ from ..workers_manager import (
     print_worker_status,
 )
 from ..instance_lock_manager import are_workers_running
+from ..instance_registry import resolve_instance
 
 
 def start_workers(args):
     if not args.instance:
         print("[floability] Error: --instance is required for 'workers start'")
         return
-    instance_path = Path(args.instance).resolve()
+    resolved = resolve_instance(args.instance)
+    if not resolved:
+        print(f"[floability] Error: Instance reference not found: {args.instance}")
+        return
+    instance_path = Path(resolved).resolve()
     if not instance_path.is_dir():
         print(f"[floability] Error: Instance directory not found: {instance_path}")
         return
@@ -50,7 +55,11 @@ def stop_workers(args):
     if not args.instance:
         print("[floability] Error: --instance is required for 'workers stop'")
         return
-    instance_path = Path(args.instance).resolve()
+    resolved = resolve_instance(args.instance)
+    if not resolved:
+        print(f"[floability] Error: Instance reference not found: {args.instance}")
+        return
+    instance_path = Path(resolved).resolve()
     if not instance_path.is_dir():
         print(f"[floability] Error: Instance directory not found: {instance_path}")
         return
@@ -62,7 +71,11 @@ def status_workers(args):
     if not args.instance:
         print("[floability] Error: --instance is required for 'workers status'")
         return
-    instance_path = Path(args.instance).resolve()
+    resolved = resolve_instance(args.instance)
+    if not resolved:
+        print(f"[floability] Error: Instance reference not found: {args.instance}")
+        return
+    instance_path = Path(resolved).resolve()
     if not instance_path.is_dir():
         print(f"[floability] Error: Instance directory not found: {instance_path}")
         return

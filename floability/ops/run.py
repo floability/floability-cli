@@ -29,6 +29,7 @@ from ..instance_lock_manager import (
     release_instance_lock,
     is_instance_running,
 )
+from ..instance_registry import resolve_instance, touch_instance, register_instance
 from ..catalog import send_catalog_update
 from ..instance_metadata import finalize_instance_metadata
 
@@ -44,7 +45,17 @@ def run_workflow(
         print("[floability] Error: --backpack and --instance cannot be used together.")
         return
 
-    using_existing_instance = bool(getattr(args, "instance", None))
+    # Resolve short-name to path if necessary
+    if getattr(args, "instance", None):
+        resolved = resolve_instance(args.instance)
+        if not resolved:
+            print(f"[floability] Error: instance reference not found: {args.instance}")
+            return
+        args.instance = resolved
+        using_existing_instance = True
+        touch_instance(args.instance)
+    else:
+        using_existing_instance = False
     lock_acquired = False
     
     ################### Step 1: Prepare instance (new or existing) ###################
@@ -106,6 +117,14 @@ def run_workflow(
     # Ensure manager name
     if getattr(args, "manager_name", None) is None:
         args.manager_name = f"floability-{uuid.uuid4()}"
+
+    # Register newly created instance in global registry (short name)
+    if not using_existing_instance:
+        try:
+            short_name = register_instance(Path(instance_root), args.manager_name)
+            print(f"[floability] Registered instance short name: {short_name}")
+        except Exception as e:
+            print(f"[floability] Warning: could not register instance short name: {e}")
 
     # Workflow directory preparation / sandbox
     if using_existing_instance:

@@ -9,9 +9,10 @@ from pathlib import Path
 
 from ..performance_tracker import PerformanceTracker
 from ..backpack_manager import resolve_backpack_args, validate_backpack_structure
-from ..instance_manager import prepare_instance
+from ..instance_manager import prepare_instance, get_registered_instances_status
 from ..environment_manager import setup_manager_and_worker_envs
 from ..instance_metadata import update_instance_metadata
+from ..instance_registry import register_instance
 
 
 def create_instance(args):
@@ -40,6 +41,12 @@ def create_instance(args):
     # Prepare instance structure & metadata via manager module
     instance_paths = prepare_instance(args, mode="instance")
     instance_root = str(instance_paths["root"])
+    # Register instance short name
+    try:
+        short_name = register_instance(Path(instance_root), args.manager_name, preferred_name=getattr(args, "name", None))
+        print(f"[floability] Registered instance short name: {short_name}")
+    except Exception as e:
+        print(f"[floability] Warning: could not register instance short name: {e}")
 
     # Initialize performance tracking (metrics directory already created)
     perf_enabled = getattr(args, "measure_performance", False)
@@ -137,8 +144,34 @@ def run_instance_command(args):
 
     Supports subcommands:
     - create: Create a new instance from a backpack
+    - list:   List registered instances
     """
-    if args.instance_subcommand == "create":
+    sub = getattr(args, "instance_subcommand", None)
+    if sub == "create":
         create_instance(args)
+    elif sub == "list":
+        statuses = get_registered_instances_status()
+        if not statuses:
+            print("[floability] No registered instances.")
+            return
+        print("[floability] Registered instances:")
+        for name in sorted(statuses.keys()):
+            st = statuses[name]
+            running_flag = "RUNNING" if st.get("running") else "idle"
+            line = f"  {name:25} {running_flag:7}"
+            if getattr(args, "show_paths", False):
+                line += f"  {st.get('path','')}"
+            print(line)
+            if getattr(args, "all_details", False):
+                print(f"      created:   {st.get('created_at','-')}")
+                print(f"      last_seen: {st.get('last_seen','-')}")
+                print(f"      manager:   {st.get('manager_name','-')}")
+                print(f"      path:      {st.get('path','-')}")
+                tags = st.get("tags") or []
+                if tags:
+                    print(f"      tags:      {', '.join(tags)}")
+        
+        print()
+        print("[floability] Use: floability run --instance <name> or workers start --instance <name>")
     else:
-        print(f"[floability] Unknown instance subcommand: {args.instance_subcommand}")
+        print(f"[floability] Unknown instance subcommand: {sub}")
