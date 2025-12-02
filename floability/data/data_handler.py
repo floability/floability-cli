@@ -24,6 +24,7 @@ def execute_default_data_operation(
     data_cache_mode: str = "off",
     force_data_cache: bool = False,
     base_dir: Path | None = None,
+    target_root: Path | None = None,
 ) -> bool:
     """Execute the default data operation as defined in the spec policy.
 
@@ -33,13 +34,14 @@ def execute_default_data_operation(
 
     Args:
         data_spec: Path to data spec YAML file
-        backpack_root: Base directory for resolving relative paths
+        backpack_root: Base directory for resolving backpack:// and relative fs source paths
         verbose: Print detailed progress messages
         force: Force re-download/re-verification even if target exists
         data_profile: Data profile name to use (default: spec's default_profile)
         data_cache_mode: Cache mode: 'off', 'symlink', 'hardlink', 'copy'
         force_data_cache: Force rebuild of cache entries even if they exist
         base_dir: Floability base directory for cache storage (default: current directory)
+        target_root: Target directory for materialized data (typically instance/workflow). If None, defaults to backpack_root/workflow
 
     Returns:
         bool: True if the operation succeeded, False otherwise.
@@ -76,6 +78,7 @@ def execute_default_data_operation(
             data_profile=data_profile,
             data_cache_mode=data_cache_mode,
             base_dir=base_dir,
+            target_root=target_root,
         )
     elif default_op == "fetch":
         return fetch_data_from_spec(
@@ -87,6 +90,7 @@ def execute_default_data_operation(
             data_cache_mode=data_cache_mode,
             force_data_cache=force_data_cache,
             base_dir=base_dir,
+            target_root=target_root,
         )
     elif default_op == "verify":
         return verify_data_from_spec(
@@ -98,6 +102,7 @@ def execute_default_data_operation(
             data_cache_mode=data_cache_mode,
             force_data_cache=force_data_cache,
             base_dir=base_dir,
+            target_root=target_root,
         )
     else:
         print(f"[data] Unknown default operation '{default_op}' specified in policy.")
@@ -112,6 +117,7 @@ def check_data_from_spec(
     data_profile: Optional[str] = None,
     data_cache_mode: str = "off",
     base_dir: Path | None = None,
+    target_root: Path | None = None,
 ) -> bool:
     """High-level entry: perform metadata-only checks for each data item.
 
@@ -124,12 +130,13 @@ def check_data_from_spec(
 
     Args:
         data_spec: Path to data spec YAML file
-        backpack_root: Base directory for resolving relative paths
+        backpack_root: Base directory for resolving backpack:// and relative fs source paths
         show_details: Print detailed item metadata after summary
         verbose: Print detailed progress messages
         data_profile: Data profile name to use (default: spec's default_profile)
         data_cache_mode: Cache mode to check cache status ('off' = no cache check)
         base_dir: Floability base directory for cache storage (default: current directory)
+        target_root: Target directory for checking target paths (optional, not used for metadata-only checks)
 
     Returns:
         bool: True if all items exist and match their expected size, False otherwise.
@@ -194,25 +201,28 @@ def fetch_data_from_spec(
     data_cache_mode: str = "off",
     force_data_cache: bool = False,
     base_dir: Path | None = None,
+    target_root: Path | None = None,
 ) -> bool:
     """Fetch (download/copy) all data items defined in the selected profile.
 
     Rules:
       * If backpack_root is None, infer as spec_path.parent.parent (grand-parent) to match
         expected structure: <backpack_root>/data/data.yml.
-      * All relative sources (for fs) and target_path resolutions are relative to backpack_root.
+      * Relative sources (source_type: backpack, fs) are resolved against backpack_root.
+      * Relative target_location paths are resolved against target_root (or backpack_root/workflow if target_root not provided).
       * multi source_type: iterate sources until first successful fetch.
       * For now, post_process is ignored (placeholder).
 
     Args:
         data_spec: Path to data spec YAML file
-        backpack_root: Base directory for resolving relative paths
+        backpack_root: Base directory for resolving backpack:// and relative fs source paths
         verbose: Print detailed progress messages
         force: Force re-download even if target exists
         data_profile: Data profile name to use (default: spec's default_profile)
         data_cache_mode: Cache mode: 'off', 'symlink', 'hardlink', 'copy'
         force_data_cache: Force rebuild of cache entries even if they exist
         base_dir: Floability base directory for cache storage (default: current directory)
+        target_root: Target directory for materialized data (typically instance/workflow). If None, defaults to backpack_root/workflow
 
     Returns:
         bool: True if all items were successfully fetched and copied to target locations, False otherwise.
@@ -257,6 +267,14 @@ def fetch_data_from_spec(
     # Use base_dir for cache, default to current directory
     cache_base_dir = Path(base_dir) if base_dir else Path.cwd()
 
+    # Determine target_prefix for materializing data
+    if target_root:
+        target_prefix = Path(target_root).resolve()
+    elif backpack_root:
+        target_prefix = (Path(backpack_root) / "workflow").resolve()
+    else:
+        target_prefix = Path.cwd() / "workflow"
+
     total = len(normalized_items)
     failed_items = []
 
@@ -272,16 +290,12 @@ def fetch_data_from_spec(
             data_cache_mode=data_cache_mode,
             force_data_cache=force_data_cache,
             cache_base_dir=cache_base_dir,
+            target_prefix=target_prefix,
         )
 
         # Check if fetch was successful (returns source on success, None on failure or skip)
-        default_prefix = (
-            (Path(backpack_root) / "workflow").resolve()
-            if backpack_root
-            else Path.cwd() / "workflow"
-        )
         target_path = _resolve_target_path(
-            item, backpack_root, target_prefix=default_prefix
+            item, backpack_root, target_prefix=target_prefix
         )
 
         # Verify the file actually exists after fetch attempt
@@ -315,6 +329,7 @@ def verify_data_from_spec(
     data_cache_mode: str = "off",
     force_data_cache: bool = False,
     base_dir: Path | None = None,
+    target_root: Path | None = None,
 ) -> bool:
     """Verify data items: ensure present (download/copy if needed) then validate integrity.
 
@@ -326,13 +341,14 @@ def verify_data_from_spec(
 
     Args:
         data_spec: Path to data spec YAML file
-        backpack_root: Base directory for resolving relative paths
+        backpack_root: Base directory for resolving backpack:// and relative fs source paths
         verbose: Print detailed progress messages
         force: Force re-download even if target exists
         data_profile: Data profile name to use (default: spec's default_profile)
         data_cache_mode: Cache mode: 'off', 'symlink', 'hardlink', 'copy'
         force_data_cache: Force rebuild of cache entries even if they exist
         base_dir: Floability base directory for cache storage (default: current directory)
+        target_root: Target directory for materialized data (typically instance/workflow). If None, defaults to backpack_root/workflow
 
     Returns:
         bool: True if all items pass verification (exist, size matches, checksum matches if required), False otherwise.
@@ -381,6 +397,14 @@ def verify_data_from_spec(
     # Use base_dir for cache, default to current directory
     cache_base_dir = Path(base_dir) if base_dir else Path.cwd()
 
+    # Determine target_prefix for materializing data
+    if target_root:
+        target_prefix = Path(target_root).resolve()
+    elif backpack_root:
+        target_prefix = (Path(backpack_root) / "workflow").resolve()
+    else:
+        target_prefix = (Path.cwd() / "workflow").resolve()
+
     results: List[Dict[str, Any]] = []
     total = len(normalized_items)
     for idx, item in enumerate(normalized_items, start=1):
@@ -396,15 +420,11 @@ def verify_data_from_spec(
             data_cache_mode=data_cache_mode,
             force_data_cache=force_data_cache,
             cache_base_dir=cache_base_dir,
+            target_prefix=target_prefix,
         )
         # Evaluate integrity on local target
-        default_prefix = (
-            (Path(backpack_root) / "workflow").resolve()
-            if backpack_root
-            else (Path.cwd() / "workflow").resolve()
-        )
         target_path = _resolve_target_path(
-            item, backpack_root, target_prefix=default_prefix
+            item, backpack_root, target_prefix=target_prefix
         )
         local_exists = target_path.exists()
         is_dir = target_path.is_dir() if local_exists else False
@@ -826,20 +846,19 @@ def _metadata_for_source(item: Dict[str, Any], backpack_root: Path) -> Dict[str,
 
 # --------------------------- Fetch Logic ---------------------------
 def _resolve_target_path(
-    item: Dict[str, Any], backpack_root: Path, target_prefix: Optional[Path] = None
+    item: Dict[str, Any], backpack_root: Path, target_prefix: Path
 ) -> Path:
     """Resolve final target path for an item.
 
     Parameters:
       - item: data item dict (may contain target_path/target_location/name)
-      - backpack_root: base backpack path (may be None-ish)
-      - target_prefix: explicit prefix Path to use for relative targets. If None,
-        defaults to <backpack_root>/workflow (or ./workflow when backpack_root is missing).
+      - backpack_root: base backpack path for resolving item-level relative target_prefix (if any)
+      - target_prefix: explicit prefix Path to use for relative targets (required)
 
     Behavior:
       - Absolute target paths are returned as-is (resolved).
       - Relative targets are placed under `target_prefix/target`.
-      - If `target_prefix` is relative, it is interpreted relative to `backpack_root`.
+      - Per-item target_prefix (if relative) is resolved against backpack_root.
     """
     target_rel = item.get("target_location") or item.get("target_path")
     if not target_rel:
@@ -850,22 +869,16 @@ def _resolve_target_path(
     if target_p.is_absolute():
         return target_p.resolve()
 
-    # Choose prefix path: per-item target_prefix overrides function argument
+    # Check for per-item target_prefix override
     item_prefix = item.get("target_prefix")
-    # Compute prefix path
     if item_prefix:
         prefix_p = Path(item_prefix)
         if not prefix_p.is_absolute():
             base = Path(backpack_root) if backpack_root else Path.cwd()
             prefix_p = (base / prefix_p).resolve()
-    elif target_prefix:
-        prefix_p = Path(target_prefix)
-        if not prefix_p.is_absolute():
-            base = Path(backpack_root) if backpack_root else Path.cwd()
-            prefix_p = (base / prefix_p).resolve()
     else:
-        base = Path(backpack_root) if backpack_root else Path.cwd()
-        prefix_p = (base / "workflow").resolve()
+        # Use provided target_prefix
+        prefix_p = Path(target_prefix).resolve()
 
     prefix_p.mkdir(parents=True, exist_ok=True)
     return (prefix_p / target_p).resolve()
@@ -911,30 +924,29 @@ def _fetch_single_item(
     data_cache_mode: str = "off",
     force_data_cache: bool = False,
     cache_base_dir: Path | None = None,
+    target_prefix: Path | None = None,
 ) -> Optional[Dict[str, Any]]:
     """Fetch a single data item, optionally using cache.
 
     Args:
         item: Normalized data item from spec
-        backpack_root: Base directory for resolving paths
+        backpack_root: Base directory for resolving backpack:// and fs source paths
         verbose: Print detailed progress messages
         force: Force re-download even if target exists
         data_cache_mode: Cache mode: 'off', 'symlink', 'hardlink', 'copy'
         force_data_cache: Force rebuild of cache entries
         cache_base_dir: Floability base directory for cache storage
+        target_prefix: Target directory prefix for materialization (required)
 
     Returns:
         Data item dict on success, None on failure
     """
     name = item.get("name", "<unnamed>")
     stype = item.get("source_type")
-    default_prefix = (
-        (Path(backpack_root) / "workflow").resolve()
-        if backpack_root
-        else Path.cwd() / "workflow"
-    )
+    if not target_prefix:
+        raise ValueError("target_prefix is required for _fetch_single_item")
     target_path = _resolve_target_path(
-        item, backpack_root, target_prefix=default_prefix
+        item, backpack_root, target_prefix=target_prefix
     )
     target_path.parent.mkdir(parents=True, exist_ok=True)
 

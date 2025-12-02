@@ -79,17 +79,20 @@ def create_instance(args):
         from ..data.data_handler import execute_default_data_operation
 
         # Materialize data into instance workflow
-        data_materialization_root = str(instance_paths["root"])
+        # backpack_root is used for resolving source paths only
+        backpack_root_for_sources = args.backpack_root if getattr(args, "backpack_root", None) else None
+        target_root = instance_paths["workflow"]
 
         data_success = execute_default_data_operation(
             data_spec=args.data_spec,
-            backpack_root=data_materialization_root,
+            backpack_root=backpack_root_for_sources,
             verbose=True,
             force=False,
             data_profile=getattr(args, "data_profile", None),
             data_cache_mode=getattr(args, "data_cache_mode", "off"),
             force_data_cache=getattr(args, "force_data_cache", False),
             base_dir=Path(args.base_dir),
+            target_root=target_root,
         )
         perf.end_timer("data_operation", "Time to perform data operation")
 

@@ -170,20 +170,27 @@ def run_workflow(
         perf.start_timer("data_operation")
         from ..data.data_handler import execute_default_data_operation
 
-        data_root = (
-            str(instance_paths["root"])
-            if not getattr(args, "run_in_place", False)
-            else args.backpack_root
-        )
+        # Determine target_root based on run_in_place flag
+        if getattr(args, "run_in_place", False):
+            # For in-place runs, materialize data into backpack workflow
+            target_root = Path(args.backpack_root) / "workflow" if args.backpack_root else Path.cwd() / "workflow"
+        else:
+            # For instance runs, materialize into instance workflow
+            target_root = instance_paths["workflow"]
+        
+        # backpack_root is used only for resolving source paths
+        backpack_root_for_sources = args.backpack_root if getattr(args, "backpack_root", None) else None
+        
         success = execute_default_data_operation(
             data_spec=args.data_spec,
-            backpack_root=data_root,
+            backpack_root=backpack_root_for_sources,
             verbose=True,
             force=False,
             data_profile=getattr(args, "data_profile", None),
             data_cache_mode=getattr(args, "data_cache_mode", "off"),
             force_data_cache=getattr(args, "force_data_cache", False),
             base_dir=Path(args.base_dir),
+            target_root=target_root,
         )
         perf.end_timer("data_operation", "Time to perform data operation")
         if not success:
