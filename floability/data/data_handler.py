@@ -644,15 +644,9 @@ def _normalize_data_profile(
 
     data_list = out.get("data") or []
     norm_list: List[Dict[str, Any]] = []
-    default_prefix: Optional[str] = None
-    if backpack_root:
-        default_prefix = str((Path(backpack_root) / "workflow").resolve())
 
     for item in data_list:
         it = _normalize_data_item(item)
-        # default target_prefix if backpack_root provided and item missing it
-        if default_prefix and not it.get("target_prefix"):
-            it["target_prefix"] = default_prefix
         norm_list.append(it)
 
     out["data"] = norm_list
@@ -943,8 +937,10 @@ def _fetch_single_item(
     """
     name = item.get("name", "<unnamed>")
     stype = item.get("source_type")
+    
     if not target_prefix:
         raise ValueError("target_prefix is required for _fetch_single_item")
+    
     target_path = _resolve_target_path(
         item, backpack_root, target_prefix=target_prefix
     )
