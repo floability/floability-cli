@@ -14,7 +14,7 @@ Floability consumes a backpack and creates a runnable instance. An instance cont
 - a built Conda environment from the backpack’s software spec
 - a resolved data set from the backpack’s data spec
 - a worker factory configured from the backpack’s compute spec
-- the original notebook or script placed in a workflow directory
+- the complete workflow directory contents including notebooks, scripts, helper modules, and any supporting files
 
 A floabilty instance is created when you pefrom a `floability run --backpack <path>` or `floability instance create --backpack <path>`. You can then start Jupyter and workers against the instance.
 

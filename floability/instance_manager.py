@@ -58,20 +58,52 @@ def create_latest_symlink(base_dir: str, target_dir: str) -> None:
     print(f"[floability] Created symlink to latest instance: {os.path.abspath(latest)}")
 
 
-def copy_workflow_artifacts(
-    workflow_dir: Path, notebook_path: Optional[str], python_script_path: Optional[str]
-) -> None:
-    """Copy notebook and/or script into workflow sandbox."""
-    if notebook_path:
-        src = Path(notebook_path).resolve()
-        dst = workflow_dir / src.name
-        shutil.copy2(src, dst)
-        print(f"[floability] Copied notebook: {src.name} -> {dst}")
-    if python_script_path:
-        src = Path(python_script_path).resolve()
-        dst = workflow_dir / src.name
-        shutil.copy2(src, dst)
-        print(f"[floability] Copied script: {src.name} -> {dst}")
+def copy_workflow_directory(
+    source_workflow_dir: Path,
+    dest_workflow_dir: Path,
+    skip_patterns: Optional[list] = None,
+) -> int:
+    """Copy entire workflow directory contents from backpack to instance.
+    
+    Args:
+        source_workflow_dir: Source workflow directory (typically backpack/workflow)
+        dest_workflow_dir: Destination workflow directory (typically instance/workflow)
+        skip_patterns: Directory/file patterns to skip (default: .ipynb_checkpoints, __pycache__, vine-run-info)
+    
+    Returns:
+        Number of files copied
+    """
+    if skip_patterns is None:
+        skip_patterns = [".ipynb_checkpoints", "__pycache__", "vine-run-info", ".git"]
+    
+    if not source_workflow_dir.exists():
+        print(f"[floability] Warning: Source workflow directory not found: {source_workflow_dir}")
+        return 0
+    
+    dest_workflow_dir.mkdir(parents=True, exist_ok=True)
+    files_copied = 0
+    
+    print(f"[floability] Copying workflow directory contents...")
+    print(f"[floability]   From: {source_workflow_dir}")
+    print(f"[floability]   To:   {dest_workflow_dir}")
+    
+    for item in source_workflow_dir.rglob("*"):
+        # Skip patterns
+        if any(pattern in item.parts for pattern in skip_patterns):
+            continue
+        
+        rel_path = item.relative_to(source_workflow_dir)
+        dest_path = dest_workflow_dir / rel_path
+        
+        if item.is_file():
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, dest_path)
+            files_copied += 1
+        elif item.is_dir():
+            dest_path.mkdir(parents=True, exist_ok=True)
+    
+    print(f"[floability] Copied {files_copied} file(s) from workflow directory")
+    return files_copied
 
 
 def record_initial_metadata(args, instance_paths: Dict[str, Path], mode: str) -> Path:
@@ -117,12 +149,13 @@ def prepare_instance(args, mode: str = "instance") -> Dict[str, Path]:
     except Exception as e:
         print(f"[floability] Warning: Could not create metadata: {e}")
 
-    # Copy artifacts (always into sandbox for instance create)
-    copy_workflow_artifacts(
-        workflow_dir=instance_paths["workflow"],
-        notebook_path=getattr(args, "notebook", None),
-        python_script_path=getattr(args, "python_script", None),
-    )
+    # Copy entire workflow directory contents (always into sandbox for instance create)
+    if getattr(args, "backpack_root", None):
+        source_workflow = Path(args.backpack_root) / "workflow"
+        copy_workflow_directory(
+            source_workflow_dir=source_workflow,
+            dest_workflow_dir=instance_paths["workflow"],
+        )
     return instance_paths
 
 

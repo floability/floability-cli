@@ -1,6 +1,6 @@
 # Instances
 
-An instance is a self-contained execution sandbox created from a backpack. It contains a workflow directory, logs, metrics, and metadata, plus an extracted/activated software environment. You can start workers and Jupyter against an instance, reuse it later, and stop it safely.
+An instance is a self-contained execution sandbox created from a backpack. It contains a complete copy of the workflow directory, logs, metrics, and metadata, plus an extracted/activated software environment. You can start workers and Jupyter against an instance, reuse it later, and stop it safely.
 
 ## Why instances?
 

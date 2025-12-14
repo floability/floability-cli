@@ -39,7 +39,7 @@ Key options:
 - --measure-performance: Enable timing and size measurements
 
 Behavior:
-- New instance: creates an instance directory, prepares workflow sandbox, materializes data (optional), sets up environments, starts workers and Jupyter.
+- New instance: creates an instance directory, copies entire workflow/ directory from backpack, materializes data (optional), sets up environments, starts workers and Jupyter.
 - Existing instance (via --instance): reuses the instance directory and its environment; avoids creating a new one.
 - Produces a registry entry for new instances so they can be referenced by short name later.
 
@@ -52,7 +52,7 @@ Batch-style execution without starting Jupyter (runs notebook or script to compl
 Manage instances.
 
 - floability instance create --backpack PATH [--name NAME] [options]
-  - Creates a new instance directory structure, copies workflow artifacts, optionally fetches data, sets up manager and worker environments, and registers a short name.
+  - Creates a new instance directory structure, copies entire workflow/ directory from backpack, optionally fetches data, sets up manager and worker environments, and registers a short name.
   - Useful options: --base-dir, --skip-data, --data-profile, --data-cache-mode, --force-data-cache, --environment, --worker-environment, --manager-name, --manager-ports, --env-vars, --measure-performance
 
 - floability instance list [--show-paths] [--all-details]

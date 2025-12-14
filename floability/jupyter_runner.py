@@ -99,8 +99,7 @@ def start_jupyterlab(
 
         # note: conda run opens a temporary bash process to run the command.
         # This bash process is the parent of the jupyterlab process.
-        # That is causing some problem with the cleanup.py script.
-        # this combination seems to work. but we should revisit this.
+        # os.setsid creates a new process group so cleanup.py can kill the entire group.
         with open(stdout_file, "w") as stdout:
             proc = subprocess.Popen(
                 cmd,
@@ -108,7 +107,7 @@ def start_jupyterlab(
                 stderr=stdout,
                 text=True,
                 cwd=working_dir,
-                # preexec_fn=os.setsid, #todo: revisit cleanup.py for this
+                # preexec_fn=os.setsid,
             )
 
             print(

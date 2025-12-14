@@ -144,24 +144,27 @@ def run_workflow(
         )
         if run_in_place:
             workflow_dir = (
-                Path(args.backpack_root)
+                Path(args.backpack_root) / "workflow"
                 if getattr(args, "backpack_root", None)
                 else Path.cwd()
             )
         else:
+            # Copy entire workflow directory from backpack to instance
             workflow_dir = instance_paths["workflow"]
-            if args.notebook:
-                nb_src = Path(args.notebook).resolve()
-                nb_dst = workflow_dir / nb_src.name
-                shutil.copy2(nb_src, nb_dst)
-                args.notebook = str(nb_dst)
-                print(f"[floability] Copied notebook: {nb_src.name} -> {nb_dst}")
-            if args.python_script:
-                py_src = Path(args.python_script).resolve()
-                py_dst = workflow_dir / py_src.name
-                shutil.copy2(py_src, py_dst)
-                args.python_script = str(py_dst)
-                print(f"[floability] Copied script: {py_src.name} -> {py_dst}")
+            if getattr(args, "backpack_root", None):
+                from ..instance_manager import copy_workflow_directory
+                backpack_workflow_dir = Path(args.backpack_root) / "workflow"
+                copy_workflow_directory(
+                    source_workflow_dir=backpack_workflow_dir,
+                    dest_workflow_dir=workflow_dir,
+                )
+
+                #todo: check if these are needed anymore
+                # Update paths to point to copied files in instance
+                if args.notebook:
+                    args.notebook = str(workflow_dir / Path(args.notebook).name)
+                if args.python_script:
+                    args.python_script = str(workflow_dir / Path(args.python_script).name)
     args.workflow_dir = str(workflow_dir)
 
     ##################### Step 2: Data materialization ####################
@@ -277,6 +280,8 @@ def run_workflow(
             compute_spec=getattr(args, "compute_spec", None),
             debug_workers=getattr(args, "debug_workers", False),
         )
+        if factory_proc:
+            cleanup_manager.register_subprocess(factory_proc)
     else:
         factory_proc = None
         print("[floability] Workers disabled by --no-worker")
@@ -299,6 +304,8 @@ def run_workflow(
             conda_env_dir=env_dir,
             working_dir=str(workflow_dir),
         )
+        if jupyter_proc:
+            cleanup_manager.register_subprocess(jupyter_proc)
     else:
         jupyter_proc = None
         execution_success = False
