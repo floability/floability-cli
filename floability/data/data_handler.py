@@ -25,6 +25,7 @@ def execute_default_data_operation(
     force_data_cache: bool = False,
     base_dir: Path | None = None,
     target_root: Path | None = None,
+    fingerprint_mode: str = "meta",
 ) -> bool:
     """Execute the default data operation as defined in the spec policy.
 
@@ -42,6 +43,7 @@ def execute_default_data_operation(
         force_data_cache: Force rebuild of cache entries even if they exist
         base_dir: Floability base directory for cache storage (default: current directory)
         target_root: Target directory for materialized data (typically instance/workflow). If None, defaults to backpack_root/workflow
+        fingerprint_mode: Fingerprint mode for filesystem sources: 'meta', 'sample', or 'strict'
 
     Returns:
         bool: True if the operation succeeded, False otherwise.
@@ -91,6 +93,7 @@ def execute_default_data_operation(
             force_data_cache=force_data_cache,
             base_dir=base_dir,
             target_root=target_root,
+            fingerprint_mode=fingerprint_mode,
         )
     elif default_op == "verify":
         return verify_data_from_spec(
@@ -103,6 +106,7 @@ def execute_default_data_operation(
             force_data_cache=force_data_cache,
             base_dir=base_dir,
             target_root=target_root,
+            fingerprint_mode=fingerprint_mode,
         )
     else:
         print(f"[data] Unknown default operation '{default_op}' specified in policy.")
@@ -202,6 +206,7 @@ def fetch_data_from_spec(
     force_data_cache: bool = False,
     base_dir: Path | None = None,
     target_root: Path | None = None,
+    fingerprint_mode: str = "meta",
 ) -> bool:
     """Fetch (download/copy) all data items defined in the selected profile.
 
@@ -291,6 +296,7 @@ def fetch_data_from_spec(
             force_data_cache=force_data_cache,
             cache_base_dir=cache_base_dir,
             target_prefix=target_prefix,
+            fingerprint_mode=fingerprint_mode,
         )
 
         # Check if fetch was successful (returns source on success, None on failure or skip)
@@ -330,6 +336,7 @@ def verify_data_from_spec(
     force_data_cache: bool = False,
     base_dir: Path | None = None,
     target_root: Path | None = None,
+    fingerprint_mode: str = "meta",
 ) -> bool:
     """Verify data items: ensure present (download/copy if needed) then validate integrity.
 
@@ -421,6 +428,7 @@ def verify_data_from_spec(
             force_data_cache=force_data_cache,
             cache_base_dir=cache_base_dir,
             target_prefix=target_prefix,
+            fingerprint_mode=fingerprint_mode,
         )
         # Evaluate integrity on local target
         target_path = _resolve_target_path(
@@ -919,6 +927,7 @@ def _fetch_single_item(
     force_data_cache: bool = False,
     cache_base_dir: Path | None = None,
     target_prefix: Path | None = None,
+    fingerprint_mode: str = "meta",
 ) -> Optional[Dict[str, Any]]:
     """Fetch a single data item, optionally using cache.
 
@@ -931,6 +940,7 @@ def _fetch_single_item(
         force_data_cache: Force rebuild of cache entries
         cache_base_dir: Floability base directory for cache storage
         target_prefix: Target directory prefix for materialization (required)
+        fingerprint_mode: Fingerprint mode for filesystem sources: 'meta', 'sample', or 'strict'
 
     Returns:
         Data item dict on success, None on failure
@@ -978,7 +988,10 @@ def _fetch_single_item(
         # Try to lookup existing cache entry
         cache_meta = None
         if not force_data_cache:
-            cache_meta = _lookup_cache_entry(cache_dir, artifact_spec, verbose=verbose)
+            cache_meta = _lookup_cache_entry(
+                cache_dir, artifact_spec, verbose=verbose,
+                fingerprint_mode=fingerprint_mode, backpack_root=backpack_root
+            )
 
         # Build cache if not found or forced
         if cache_meta is None:
@@ -997,7 +1010,7 @@ def _fetch_single_item(
                 try:
                     # Build cache entry
                     if _build_cache_entry(
-                        item, cache_dir, backpack_root, verbose=verbose
+                        item, cache_dir, backpack_root, verbose=verbose, fingerprint_mode=fingerprint_mode
                     ):
                         cache_meta = _read_cache_metadata(cache_dir)
                     else:
@@ -1249,6 +1262,7 @@ def _write_cache_metadata(
     artifact_spec: Dict[str, Any],
     content_sha256: str,
     actual_size: int,
+    source_fingerprint: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Write cache metadata to .meta.json.
 
@@ -1257,6 +1271,7 @@ def _write_cache_metadata(
         artifact_spec: Original artifact spec used to compute cache key
         content_sha256: SHA-256 hash of cached content
         actual_size: Actual size of cached content in bytes
+        source_fingerprint: Optional fingerprint dict from fingerprint.compute_fingerprint()
     """
     meta = {
         "artifact_spec": artifact_spec,
@@ -1265,6 +1280,12 @@ def _write_cache_metadata(
         "created_at": time.time(),
         "created_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+
+    # Add source fingerprint if provided
+    if source_fingerprint:
+        meta["source_fingerprint"] = source_fingerprint.get("fingerprint")
+        meta["fingerprint_mode"] = source_fingerprint.get("mode")
+        meta["fingerprint_params"] = source_fingerprint.get("params", {})
 
     meta_file = cache_dir / ".meta.json"
     with meta_file.open("w", encoding="utf-8") as f:
@@ -1349,6 +1370,7 @@ def _build_cache_entry(
     cache_dir: Path,
     backpack_root: Path,
     verbose: bool = False,
+    fingerprint_mode: str = "meta",
 ) -> bool:
     """Build a new cache entry by downloading and processing data.
 
@@ -1357,13 +1379,15 @@ def _build_cache_entry(
     2. Download/copy data to cache_dir/data/
     3. Apply post_process if specified
     4. Compute content hash and size
-    5. Write metadata to .meta.json
+    5. Compute source fingerprint (for filesystem sources)
+    6. Write metadata to .meta.json
 
     Args:
         item: Normalized data item from spec
         cache_dir: Cache directory path
         backpack_root: Base path for resolving sources
         verbose: Print progress messages
+        fingerprint_mode: Fingerprint mode for filesystem sources: 'meta', 'sample', or 'strict'
 
     Returns:
         True if cache entry built successfully, False otherwise
@@ -1428,13 +1452,38 @@ def _build_cache_entry(
         # Create artifact spec for metadata
         artifact_spec = _create_artifact_spec(item, backpack_root)
 
+        # Compute source fingerprint for filesystem sources
+        source_fingerprint = None
+        if stype in ("fs", "backpack"):
+            try:
+                from .fingerprint import compute_fingerprint
+                source = item.get("source")
+                if source:
+                    source_path = Path(source)
+                    if not source_path.is_absolute():
+                        source_path = (backpack_root / source_path).resolve()
+                    if source_path.exists():
+                        if verbose:
+                            print(f"[cache] Computing {fingerprint_mode} fingerprint for source...")
+                        source_fingerprint = compute_fingerprint(
+                            str(source_path),
+                            mode=fingerprint_mode,
+                            verbose=verbose
+                        )
+            except Exception as e:
+                if verbose:
+                    print(f"[cache] Warning: Failed to compute source fingerprint: {e}")
+
         # Write metadata
-        _write_cache_metadata(cache_dir, artifact_spec, content_sha256, actual_size)
+        _write_cache_metadata(cache_dir, artifact_spec, content_sha256, actual_size, source_fingerprint)
 
         if verbose:
             print(f"[cache] Cache entry built successfully")
             print(f"[cache]   content_sha256: {content_sha256}")
             print(f"[cache]   actual_size: {actual_size}")
+            if source_fingerprint:
+                print(f"[cache]   source_fingerprint: {source_fingerprint.get('fingerprint', '')[:16]}...")
+                print(f"[cache]   fingerprint_mode: {source_fingerprint.get('mode')}")
 
         return True
 
@@ -1522,6 +1571,8 @@ def _lookup_cache_entry(
     cache_dir: Path,
     artifact_spec: Dict[str, Any],
     verbose: bool = False,
+    fingerprint_mode: str = "meta",
+    backpack_root: Path | None = None,
 ) -> Optional[Dict[str, Any]]:
     """Look up and validate an existing cache entry.
 
@@ -1531,11 +1582,14 @@ def _lookup_cache_entry(
     3. data/ directory exists
     4. Artifact spec matches (deterministic check)
     5. Size matches (if specified in artifact_spec)
+    6. Source fingerprint matches (for filesystem sources)
 
     Args:
         cache_dir: Cache directory path
         artifact_spec: Expected artifact spec
         verbose: Print validation messages
+        fingerprint_mode: Fingerprint mode for filesystem source validation
+        backpack_root: Base path for resolving relative filesystem sources
 
     Returns:
         Metadata dict if valid, None if invalid/missing
@@ -1585,6 +1639,58 @@ def _lookup_cache_entry(
                     f"[cache] Cache invalid: size mismatch (expected {expected_size}, got {actual_size})"
                 )
             return None
+
+    # Validate source fingerprint for filesystem sources
+    source_type = artifact_spec.get("source_type")
+    if source_type in ("fs", "backpack"):
+        cached_fingerprint = meta.get("source_fingerprint")
+        cached_mode = meta.get("fingerprint_mode")
+        
+        # If no cached fingerprint, cache is invalid (needs rebuild with fingerprinting)
+        if not cached_fingerprint:
+            if verbose:
+                print(f"[cache] Cache invalid: no source fingerprint (old cache format)")
+            return None
+        
+        # Recompute fingerprint from source
+        source = artifact_spec.get("source")
+        if source and backpack_root:
+            try:
+                from .fingerprint import compute_fingerprint
+                source_path = Path(source)
+                if not source_path.is_absolute():
+                    source_path = (backpack_root / source_path).resolve()
+                
+                if not source_path.exists():
+                    if verbose:
+                        print(f"[cache] Cache invalid: source no longer exists: {source_path}")
+                    return None
+                
+                if verbose:
+                    print(f"[cache] Validating source fingerprint (mode={fingerprint_mode})...")
+                
+                current_fingerprint = compute_fingerprint(
+                    str(source_path),
+                    mode=fingerprint_mode,
+                    verbose=False  # Suppress fingerprint details
+                )
+                
+                # Compare fingerprints
+                if current_fingerprint.get("fingerprint") != cached_fingerprint:
+                    if verbose:
+                        print(f"[cache] Cache invalid: source fingerprint mismatch")
+                        print(f"[cache]   Cached:  {cached_fingerprint[:16]}... (mode={cached_mode})")
+                        print(f"[cache]   Current: {current_fingerprint.get('fingerprint', '')[:16]}... (mode={fingerprint_mode})")
+                    return None
+                
+                if verbose:
+                    print(f"[cache] Source fingerprint valid: {cached_fingerprint[:16]}...")
+                    
+            except Exception as e:
+                if verbose:
+                    print(f"[cache] Warning: Failed to validate source fingerprint: {e}")
+                # Don't invalidate cache on fingerprint errors, just warn
+                # This allows cache to work even if fingerprinting fails
 
     if verbose:
         print(f"[cache] Cache hit: {cache_dir}")

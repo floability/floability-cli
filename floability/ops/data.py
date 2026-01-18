@@ -173,6 +173,7 @@ def run_data_command(args):
                 force_data_cache=getattr(args, "force_data_cache", False),
                 base_dir=base_dir,
                 target_root=target_root,
+                fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
             )
         elif args.mode == "verify":
             print(
@@ -188,6 +189,7 @@ def run_data_command(args):
                 force_data_cache=getattr(args, "force_data_cache", False),
                 base_dir=base_dir,
                 target_root=target_root,
+                fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
             )
 
         if success and instance_root:

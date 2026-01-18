@@ -194,6 +194,7 @@ def run_workflow(
             force_data_cache=getattr(args, "force_data_cache", False),
             base_dir=Path(args.base_dir),
             target_root=target_root,
+            fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
         )
         perf.end_timer("data_operation", "Time to perform data operation")
         if not success:
