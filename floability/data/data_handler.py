@@ -26,6 +26,7 @@ def execute_default_data_operation(
     base_dir: Path | None = None,
     target_root: Path | None = None,
     fingerprint_mode: str = "meta",
+    perf: Optional[Any] = None,
 ) -> bool:
     """Execute the default data operation as defined in the spec policy.
 
@@ -94,6 +95,7 @@ def execute_default_data_operation(
             base_dir=base_dir,
             target_root=target_root,
             fingerprint_mode=fingerprint_mode,
+            perf=perf,
         )
     elif default_op == "verify":
         return verify_data_from_spec(
@@ -207,6 +209,7 @@ def fetch_data_from_spec(
     base_dir: Path | None = None,
     target_root: Path | None = None,
     fingerprint_mode: str = "meta",
+    perf: Optional[Any] = None,
 ) -> bool:
     """Fetch (download/copy) all data items defined in the selected profile.
 
@@ -287,6 +290,8 @@ def fetch_data_from_spec(
         item_name = item.get("name", "<unnamed>")
         if verbose:
             print(f"[data:fetch] Fetching {idx}/{total}: {item_name} (force={force})")
+        if perf:
+            perf.start_timer(f"data_fetch_{item_name}")
         result = _fetch_single_item(
             item,
             backpack_root,
@@ -297,7 +302,10 @@ def fetch_data_from_spec(
             cache_base_dir=cache_base_dir,
             target_prefix=target_prefix,
             fingerprint_mode=fingerprint_mode,
+            perf=perf,
         )
+        if perf:
+            perf.end_timer(f"data_fetch_{item_name}", f"Time to fetch '{item_name}'")
 
         # Check if fetch was successful (returns source on success, None on failure or skip)
         target_path = _resolve_target_path(
@@ -928,6 +936,7 @@ def _fetch_single_item(
     cache_base_dir: Path | None = None,
     target_prefix: Path | None = None,
     fingerprint_mode: str = "meta",
+    perf: Optional[Any] = None,
 ) -> Optional[Dict[str, Any]]:
     """Fetch a single data item, optionally using cache.
 
@@ -977,8 +986,12 @@ def _fetch_single_item(
             print(f"[data:fetch] Using cache mode: {data_cache_mode}")
 
         # Create artifact spec and compute cache key
+        if perf:
+            perf.start_timer(f"cache_key_compute_{name}")
         artifact_spec = _create_artifact_spec(item, backpack_root)
         cache_key = _compute_cache_key(artifact_spec)
+        if perf:
+            perf.end_timer(f"cache_key_compute_{name}", f"Cache key computation for '{name}'")
         cache_dir = _get_cache_dir(cache_base_dir, cache_key)
 
         if verbose:
@@ -988,10 +1001,14 @@ def _fetch_single_item(
         # Try to lookup existing cache entry
         cache_meta = None
         if not force_data_cache:
+            if perf:
+                perf.start_timer(f"cache_lookup_{name}")
             cache_meta = _lookup_cache_entry(
                 cache_dir, artifact_spec, verbose=verbose,
-                fingerprint_mode=fingerprint_mode, backpack_root=backpack_root
+                fingerprint_mode=fingerprint_mode, backpack_root=backpack_root, perf=perf
             )
+            if perf:
+                perf.end_timer(f"cache_lookup_{name}", f"Cache lookup for '{name}'")
 
         # Build cache if not found or forced
         if cache_meta is None:
@@ -1009,11 +1026,17 @@ def _fetch_single_item(
             else:
                 try:
                     # Build cache entry
+                    if perf:
+                        perf.start_timer(f"cache_build_{name}")
                     if _build_cache_entry(
-                        item, cache_dir, backpack_root, verbose=verbose, fingerprint_mode=fingerprint_mode
+                        item, cache_dir, backpack_root, verbose=verbose, fingerprint_mode=fingerprint_mode, perf=perf
                     ):
+                        if perf:
+                            perf.end_timer(f"cache_build_{name}", f"Cache build for '{name}'")
                         cache_meta = _read_cache_metadata(cache_dir)
                     else:
+                        if perf:
+                            perf.end_timer(f"cache_build_{name}", f"Cache build failed for '{name}'")
                         print(f"[data:fetch] ERROR: Failed to build cache entry")
                         # Fall back to direct fetch
                         if verbose:
@@ -1026,15 +1049,21 @@ def _fetch_single_item(
 
         # Materialize from cache if we have a valid entry
         if cache_meta is not None:
+            if perf:
+                perf.start_timer(f"cache_materialize_{name}")
             if _materialize_from_cache(
                 cache_dir, target_path, mode=data_cache_mode, verbose=verbose
             ):
+                if perf:
+                    perf.end_timer(f"cache_materialize_{name}", f"Cache materialization for '{name}'")
                 if verbose:
                     print(
                         f"[data:fetch] '{name}' materialized from cache -> {target_path}"
                     )
                 return item
             else:
+                if perf:
+                    perf.end_timer(f"cache_materialize_{name}", f"Cache materialization failed for '{name}'")
                 print(f"[data:fetch] ERROR: Failed to materialize from cache")
                 # Fall through to direct fetch
 
@@ -1371,6 +1400,7 @@ def _build_cache_entry(
     backpack_root: Path,
     verbose: bool = False,
     fingerprint_mode: str = "meta",
+    perf: Optional[Any] = None,
 ) -> bool:
     """Build a new cache entry by downloading and processing data.
 
@@ -1465,11 +1495,16 @@ def _build_cache_entry(
                     if source_path.exists():
                         if verbose:
                             print(f"[cache] Computing {fingerprint_mode} fingerprint for source...")
+                        if perf:
+                            perf.start_timer(f"fingerprint_{fingerprint_mode}_{source_path.name}")
                         source_fingerprint = compute_fingerprint(
                             str(source_path),
                             mode=fingerprint_mode,
                             verbose=verbose
                         )
+                        if perf:
+                            perf.end_timer(f"fingerprint_{fingerprint_mode}_{source_path.name}", 
+                                         f"Fingerprint ({fingerprint_mode}) for {source_path.name}")
             except Exception as e:
                 if verbose:
                     print(f"[cache] Warning: Failed to compute source fingerprint: {e}")
@@ -1573,6 +1608,7 @@ def _lookup_cache_entry(
     verbose: bool = False,
     fingerprint_mode: str = "meta",
     backpack_root: Path | None = None,
+    perf: Optional[Any] = None,
 ) -> Optional[Dict[str, Any]]:
     """Look up and validate an existing cache entry.
 
@@ -1669,11 +1705,16 @@ def _lookup_cache_entry(
                 if verbose:
                     print(f"[cache] Validating source fingerprint (mode={fingerprint_mode})...")
                 
+                if perf:
+                    perf.start_timer(f"fingerprint_validation_{source_path.name}")
                 current_fingerprint = compute_fingerprint(
                     str(source_path),
                     mode=fingerprint_mode,
                     verbose=False  # Suppress fingerprint details
                 )
+                if perf:
+                    perf.end_timer(f"fingerprint_validation_{source_path.name}", 
+                                 f"Fingerprint validation for {source_path.name}")
                 
                 # Compare fingerprints
                 if current_fingerprint.get("fingerprint") != cached_fingerprint:

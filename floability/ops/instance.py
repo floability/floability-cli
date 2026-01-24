@@ -94,6 +94,7 @@ def create_instance(args):
             base_dir=Path(args.base_dir),
             target_root=target_root,
             fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
+            perf=perf,
         )
         perf.end_timer("data_operation", "Time to perform data operation")
 
