@@ -122,7 +122,6 @@ def create_instance_metadata(
 
     # Execution context
     metadata["context"] = {
-        "run_in_place": cli_args.get("run_in_place", False),
         "update_backpack": not cli_args.get("no_update_backpack", False),
         "no_worker": cli_args.get("no_worker", False),
         "batch_type": cli_args.get("batch_type", "local"),

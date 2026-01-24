@@ -105,7 +105,6 @@ Example `run.json`:
     "data_profile": null,
     "backpack_root": "/users/mislam5/floability-project/floability-cli/example/rag-lite-bm25",
     "continue_on_data_failure": "False",
-    "run_in_place": "False",
     "no_update_backpack": "False",
     "data_cache_mode": "copy",
     "force_data_cache": "False",
@@ -135,7 +134,6 @@ Example `run.json`:
     "cache_keys": []
   },
   "context": {
-    "run_in_place": false,
     "update_backpack": true,
     "no_worker": false,
     "batch_type": "local",

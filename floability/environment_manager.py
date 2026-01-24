@@ -16,12 +16,15 @@ def create_conda_pack_from_yml(
     env_yml: str,
     force: bool = False,
     output_file: str = None,
-    base_dir: str = "/tmp",
+    base_dir: str = "~/floability-base-dir",
     run_dir: str = "/tmp",
     manager_name: str = None,
     manager_ports: str = "9123,9150",
     is_worker_env: bool = False,
 ) -> str:
+    # Expand ~ to home directory
+    base_dir = os.path.expanduser(base_dir)
+    
     # Prepare shared directories for env cache
     common_env_dir = os.path.join(base_dir, "flo_common_env")
     extracted_envs_dir = os.path.join(common_env_dir, "extracted_envs")
@@ -225,6 +228,10 @@ def prepare_conda_environment(
     Returns:
         Path to the conda-pack .tar.gz file
     """
+    # Expand ~ in paths
+    base_dir = os.path.expanduser(base_dir)
+    environment_spec = os.path.expanduser(environment_spec)
+    
     env_file_path = Path(environment_spec)
     ext = env_file_path.suffix
 
@@ -281,7 +288,8 @@ def extract_conda_environment(
     """
     from .utils import safe_extract_tar, update_env_vars_in_conda
 
-    # Make extract_dir absolute to avoid working directory issues
+    # Expand ~ and make extract_dir absolute to avoid working directory issues
+    extract_dir = os.path.expanduser(extract_dir)
     env_dir = os.path.abspath(extract_dir)
     print(f"[floability] Conda environment directory: {env_dir}")
     # Fast path: if environment_pack looks like our cached tarball name env_<hash>.tar.gz,
@@ -397,6 +405,14 @@ def setup_manager_and_worker_envs(
         - worker_environment_pack is None if no worker environment
         - manager_environment_pack is None if no manager environment
     """
+    # Expand ~ in paths
+    base_dir = os.path.expanduser(base_dir)
+    instance_root = os.path.expanduser(instance_root)
+    if environment_spec:
+        environment_spec = os.path.expanduser(environment_spec)
+    if worker_environment_spec:
+        worker_environment_spec = os.path.expanduser(worker_environment_spec)
+    
     env_dir = None
     worker_environment_pack = None
     manager_environment_pack = None

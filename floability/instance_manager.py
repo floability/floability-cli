@@ -31,6 +31,7 @@ def create_instance_structure(
     base_dir: str, prefix: str = "floability_instance"
 ) -> Dict[str, Path]:
     """Create a unique instance directory with standard sub-directories."""
+    base_dir = os.path.expanduser(base_dir)
     root = create_unique_directory(base_dir=base_dir, prefix=prefix)
     paths = {
         "root": Path(root),
@@ -51,6 +52,8 @@ def create_instance_structure(
 
 
 def create_latest_symlink(base_dir: str, target_dir: str) -> None:
+    base_dir = os.path.expanduser(base_dir)
+    target_dir = os.path.expanduser(target_dir)
     latest = Path(base_dir) / "latest_floability_instance"
     if latest.is_symlink() or latest.exists():
         latest.unlink()

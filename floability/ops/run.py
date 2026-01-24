@@ -68,8 +68,6 @@ def run_workflow(
         if getattr(args, "backpack", None):
             validate_backpack_structure(args.backpack, require_workflow=False)
 
-        run_in_place = getattr(args, "run_in_place", False)
-
         instance_paths = create_instance_structure(args.base_dir)
         instance_root = str(instance_paths["root"])
         create_latest_symlink(args.base_dir, instance_root)
@@ -134,37 +132,22 @@ def run_workflow(
     if using_existing_instance:
         workflow_dir = instance_paths["workflow"]
     else:
-        run_in_place = getattr(args, "run_in_place", False)
-        print(
-            "[floability] {}".format(
-                "in-place workflow preparation"
-                if run_in_place
-                else "workflow sandbox setup"
+        print("[floability] workflow sandbox setup")
+        # Copy entire workflow directory from backpack to instance
+        workflow_dir = instance_paths["workflow"]
+        if getattr(args, "backpack_root", None):
+            from ..instance_manager import copy_workflow_directory
+            backpack_workflow_dir = Path(args.backpack_root) / "workflow"
+            copy_workflow_directory(
+                source_workflow_dir=backpack_workflow_dir,
+                dest_workflow_dir=workflow_dir,
             )
-        )
-        if run_in_place:
-            workflow_dir = (
-                Path(args.backpack_root) / "workflow"
-                if getattr(args, "backpack_root", None)
-                else Path.cwd()
-            )
-        else:
-            # Copy entire workflow directory from backpack to instance
-            workflow_dir = instance_paths["workflow"]
-            if getattr(args, "backpack_root", None):
-                from ..instance_manager import copy_workflow_directory
-                backpack_workflow_dir = Path(args.backpack_root) / "workflow"
-                copy_workflow_directory(
-                    source_workflow_dir=backpack_workflow_dir,
-                    dest_workflow_dir=workflow_dir,
-                )
 
-                #todo: check if these are needed anymore
-                # Update paths to point to copied files in instance
-                if args.notebook:
-                    args.notebook = str(workflow_dir / Path(args.notebook).name)
-                if args.python_script:
-                    args.python_script = str(workflow_dir / Path(args.python_script).name)
+            # Update paths to point to copied files in instance
+            if args.notebook:
+                args.notebook = str(workflow_dir / Path(args.notebook).name)
+            if args.python_script:
+                args.python_script = str(workflow_dir / Path(args.python_script).name)
     args.workflow_dir = str(workflow_dir)
 
     ##################### Step 2: Data materialization ####################
@@ -173,13 +156,8 @@ def run_workflow(
         perf.start_timer("data_operation")
         from ..data.data_handler import execute_default_data_operation
 
-        # Determine target_root based on run_in_place flag
-        if getattr(args, "run_in_place", False):
-            # For in-place runs, materialize data into backpack workflow
-            target_root = Path(args.backpack_root) / "workflow" if args.backpack_root else Path.cwd() / "workflow"
-        else:
-            # For instance runs, materialize into instance workflow
-            target_root = instance_paths["workflow"]
+        # Materialize data into instance workflow
+        target_root = instance_paths["workflow"]
         
         # backpack_root is used only for resolving source paths
         backpack_root_for_sources = args.backpack_root if getattr(args, "backpack_root", None) else None
@@ -291,7 +269,7 @@ def run_workflow(
     ################# Step 5: Run or execute ####################
     notebook_path_for_exec = getattr(args, "notebook", None)
     script_path_for_exec = getattr(args, "python_script", None)
-    if not using_existing_instance and not getattr(args, "run_in_place", False):
+    if not using_existing_instance:
         if notebook_path_for_exec:
             notebook_path_for_exec = Path(notebook_path_for_exec).name
         if script_path_for_exec:
@@ -335,7 +313,6 @@ def run_workflow(
         if (
             execution_success
             and not using_existing_instance
-            and not getattr(args, "run_in_place", False)
             and getattr(args, "backpack", None)
             and not getattr(args, "no_update_backpack", False)
         ):
@@ -378,7 +355,6 @@ def run_workflow(
         if (
             mode == "run"
             and not using_existing_instance
-            and not getattr(args, "run_in_place", False)
             and getattr(args, "backpack", None)
             and not getattr(args, "no_update_backpack", False)
         ):

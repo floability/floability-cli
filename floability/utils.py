@@ -12,6 +12,7 @@ SYSTEM_INFORMATION = None
 def create_unique_directory(
     base_dir=".", prefix="floability_instance", max_attempts=10
 ):
+    base_dir = os.path.expanduser(base_dir)
     attempt = 0
 
     while attempt < max_attempts:
