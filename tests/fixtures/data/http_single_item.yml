@@ -1,0 +1,18 @@
+schema_version: 1.0
+default_profile: gutenberg_data
+
+profiles:
+  gutenberg_data:
+    policy:
+      retry_attempts: 3
+      timeout: 60
+      size_tolerance_bytes: 1024
+
+    data:
+      - name: gatsby
+        source_type: http
+        source: https://www.gutenberg.org/cache/epub/64317/pg64317.txt
+        content_type: text/plain
+        expected_size: 306594
+        checksum: sha256:e6b7897aa8498b8dac4df0664827f857bc01135c3d9311adb820979bbc44b763
+        target_path: data/pg64317.txt

@@ -1,0 +1,16 @@
+schema_version: 1.0
+default_profile: test_nonexistent
+
+profiles:
+  test_nonexistent:
+    policy:
+      retry_attempts: 0
+      timeout: 10
+      size_tolerance_bytes: 0
+    
+    data:
+      - name: nonexistent_file
+        source_type: pelican
+        source: pelican://disc-head-002.crc.nd.edu:443/nd/disc2/apps/floability/nonexistent/file.root
+        expected_size: 1000
+        target_path: data/nonexistent.root
