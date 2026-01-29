@@ -14,5 +14,6 @@ dependencies:
   - tqdm          # progress bars for streaming
   - aiohttp       # optional async HTTP client
   - fsspec
+  - boto3         # AWS S3 support
   - pip:
       - pelicanfs

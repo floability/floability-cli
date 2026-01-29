@@ -49,9 +49,14 @@ case "$1" in
         pytest tests/test_http_file_utils.py tests/test_data_handler_http.py -v
         ;;
     
+    s3)
+        echo "Running S3 tests..."
+        pytest tests/test_s3_file_utils.py tests/test_data_handler_s3.py -v
+        ;;
+    
     handler)
         echo "Running all data handler tests..."
-        pytest tests/test_data_handler.py tests/test_data_handler_http.py -v
+        pytest tests/test_data_handler.py tests/test_data_handler_http.py tests/test_data_handler_s3.py -v
         ;;
     
     check)
@@ -108,6 +113,7 @@ Commands:
   slow         Run slow tests
   pelican      Run Pelican tests (file utils + handler)
   http         Run HTTP tests (file utils + handler)
+  s3           Run S3 tests (file utils + handler)
   handler      Run all data handler tests
   check        Run check_data_from_spec tests
   fetch        Run fetch_data_from_spec tests

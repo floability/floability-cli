@@ -11,6 +11,7 @@ import shutil
 # Reuse existing low-level helpers
 from .http_file_utils import http_file_metadata, http_file_download
 from .pelican_file_utils import pelican_file_metadata, pelican_file_download
+from .s3_file_utils import s3_file_metadata, s3_file_download, s3_list_objects
 from .fs_file_utils import fs_file_metadata, fs_file_copy
 
 
@@ -699,6 +700,8 @@ def _normalize_data_item(item: Dict[str, Any]) -> Dict[str, Any]:
                 it["source"] = src[len("backpack://") :]
             elif src.startswith("http://") or src.startswith("https://"):
                 it["source_type"] = "http"
+            elif src.startswith("s3://"):
+                it["source_type"] = "s3"
             elif src.startswith("osdf://") or src.startswith("pelican://"):
                 it["source_type"] = "pelican"
             elif src:
@@ -719,6 +722,8 @@ def _normalize_data_item(item: Dict[str, Any]) -> Dict[str, Any]:
                     s_it["source"] = src[len("backpack://") :]
                 elif src.startswith("http://") or src.startswith("https://"):
                     s_it["source_type"] = "http"
+                elif src.startswith("s3://"):
+                    s_it["source_type"] = "s3"
                 elif src.startswith("osdf://") or src.startswith("pelican://"):
                     s_it["source_type"] = "pelican"
                 elif src:
@@ -830,6 +835,8 @@ def _metadata_for_source(item: Dict[str, Any], backpack_root: Path) -> Dict[str,
     src = item.get("source")
     if stype == "http":
         return http_file_metadata(src)
+    if stype == "s3":
+        return s3_file_metadata(src)
     if stype == "pelican":
         return pelican_file_metadata(src)
     if stype == "backpack":
@@ -1116,6 +1123,14 @@ def _attempt_fetch_source(
         if stype == "http":
             # Download into target directory with final name
             http_file_download(
+                src,
+                dest_dir=str(target_path.parent),
+                filename=target_path.name,
+                overwrite=force,
+            )
+            return True
+        if stype == "s3":
+            s3_file_download(
                 src,
                 dest_dir=str(target_path.parent),
                 filename=target_path.name,
@@ -1551,6 +1566,15 @@ def _download_to_cache(
     try:
         if stype == "http":
             http_file_download(
+                source,
+                dest_dir=str(cache_file.parent),
+                filename=cache_file.name,
+                overwrite=True,
+            )
+            return cache_file.exists()
+
+        elif stype == "s3":
+            s3_file_download(
                 source,
                 dest_dir=str(cache_file.parent),
                 filename=cache_file.name,

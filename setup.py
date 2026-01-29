@@ -20,6 +20,7 @@ setup(
         "requests",
         "tqdm",
         "nbformat",
+        "boto3",
     ],
     entry_points={
         "console_scripts": [

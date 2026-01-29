@@ -1,0 +1,8 @@
+default_profile: test
+
+profiles:
+  test:
+    data:
+      - name: nonexistent-file
+        source: s3://floability/does-not-exist.zip
+        target_path: data/does-not-exist.zip

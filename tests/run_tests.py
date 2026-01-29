@@ -9,6 +9,7 @@ Usage:
     python tests/run_tests.py network           # Run network tests only
     python tests/run_tests.py pelican           # Run pelican tests only
     python tests/run_tests.py http              # Run HTTP tests only
+    python tests/run_tests.py s3                # Run S3 tests only
     python tests/run_tests.py handler           # Run data handler tests only
     python tests/run_tests.py <test_name>       # Run specific test by name
 """
@@ -63,9 +64,15 @@ def run_http():
     return run_command(cmd, "Running HTTP Tests")
 
 
+def run_s3():
+    """Run S3 file utils tests."""
+    cmd = "pytest tests/test_s3_file_utils.py tests/test_data_handler_s3.py -v"
+    return run_command(cmd, "Running S3 Tests")
+
+
 def run_handler():
     """Run all data handler tests."""
-    cmd = "pytest tests/test_data_handler.py tests/test_data_handler_http.py -v"
+    cmd = "pytest tests/test_data_handler.py tests/test_data_handler_http.py tests/test_data_handler_s3.py -v"
     return run_command(cmd, "Running All Data Handler Tests")
 
 
@@ -100,6 +107,7 @@ def main():
         'network': run_network,
         'pelican': run_pelican,
         'http': run_http,
+        's3': run_s3,
         'handler': run_handler,
         'help': show_help,
         '-h': show_help,
