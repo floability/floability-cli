@@ -39,8 +39,8 @@ class InstanceCommand(BaseCommand):
         )
         create_parser.add_argument(
             "--base-dir",
-            default="~/floability-base-dir",
-            help="Base directory for floability instance files (default='~/floability-base-dir').",
+            default=None,
+            help="Base directory for floability instance files (default: create ~/floability-base-dir if omitted).",
         )
         create_parser.add_argument(
             "--skip-data",

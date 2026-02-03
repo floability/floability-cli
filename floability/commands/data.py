@@ -59,6 +59,11 @@ class DataCommand(BaseCommand):
             help="Data caching mode: off (no cache), symlink (default, read-only), hardlink (shared inode), copy (independent copy).",
         )
         parser.add_argument(
+            "--data-cache-dir",
+            default=None,
+            help="Path to data cache directory (overrides default <base-dir>/floability-data-cache).",
+        )
+        parser.add_argument(
             "--force-data-cache",
             action="store_true",
             help="Force rebuild of cache entries even if they already exist.",
@@ -71,8 +76,8 @@ class DataCommand(BaseCommand):
         )
         parser.add_argument(
             "--base-dir",
-            default="~/floability-base-dir",
-            help="Base directory for floability cache storage (default='~/floability-base-dir').",
+            default=None,
+            help="Base directory for floability cache storage (default: create ~/floability-base-dir if omitted).",
         )
     
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:

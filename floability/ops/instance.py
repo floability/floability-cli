@@ -17,6 +17,7 @@ from ..backpack_manager import resolve_backpack_args, validate_backpack_structur
 from ..instance_manager import prepare_instance, get_registered_instances_status
 from ..environment_manager import setup_manager_and_worker_envs
 from ..instance_metadata import update_instance_metadata
+from ..utils import normalize_cli_base_dir
 from ..instance_registry import register_instance, resolve_instance
 from ..instance_lock_manager import (
     release_instance_lock,
@@ -47,6 +48,26 @@ def create_instance(args):
     if not args.backpack:
         print("[floability] Error: --backpack is required for 'instance create'")
         return
+
+    # Normalize base_dir and data cache dir
+    raw_base = getattr(args, "base_dir", None) if hasattr(args, "base_dir") else None
+    args.base_dir = str(normalize_cli_base_dir(raw_base))
+    
+    # Determine data cache directory: allow CLI override, else use base_dir/floability-data-cache
+    raw_cache_override = getattr(args, "data_cache_dir", None) if hasattr(args, "data_cache_dir") else None
+    if raw_cache_override:
+        cache_base_dir = Path(os.path.expanduser(raw_cache_override)).resolve()
+        try:
+            cache_base_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+    else:
+        cache_base_dir = (Path(args.base_dir) / "floability-data-cache").resolve()
+        try:
+            cache_base_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+    args.cache_base_dir = str(cache_base_dir)
 
     # Prepare instance structure & metadata via manager module
     instance_paths = prepare_instance(args, mode="instance")
@@ -92,6 +113,7 @@ def create_instance(args):
             data_cache_mode=getattr(args, "data_cache_mode", "off"),
             force_data_cache=getattr(args, "force_data_cache", False),
             base_dir=Path(args.base_dir),
+            cache_base_dir=Path(args.cache_base_dir),
             target_root=target_root,
             fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
             perf=perf,

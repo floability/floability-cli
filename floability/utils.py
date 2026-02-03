@@ -37,6 +37,30 @@ def create_unique_directory(
     )
 
 
+def normalize_cli_base_dir(raw_base: str | None) -> Path:
+    """Normalize a CLI-provided base_dir value.
+
+    Rules:
+      - If `raw_base` is None, empty, or '.', default to `~/floability-base-dir`.
+      - Expand user (~) for provided values.
+      - Ensure the directory exists (create parents as needed).
+
+    Returns a resolved `Path` instance.
+    """
+    if raw_base is None or str(raw_base).strip() == "" or str(raw_base).strip() == ".":
+        base = Path.home() / "floability-base-dir"
+    else:
+        base = Path(os.path.expanduser(str(raw_base)))
+
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # Best-effort: if creation fails, just return the path object
+        pass
+
+    return base
+
+
 def get_local_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

@@ -23,6 +23,7 @@ from ..instance_manager import (
     create_latest_symlink,
     record_initial_metadata,
 )
+from ..utils import normalize_cli_base_dir
 from ..jupyter_runner import start_jupyterlab, execute_notebook
 from ..instance_lock_manager import (
     acquire_instance_lock,
@@ -67,6 +68,26 @@ def run_workflow(
 
         if getattr(args, "backpack", None):
             validate_backpack_structure(args.backpack, require_workflow=False)
+
+        # Normalize base_dir and data cache dir
+        raw_base = getattr(args, "base_dir", None) if hasattr(args, "base_dir") else None
+        args.base_dir = str(normalize_cli_base_dir(raw_base))
+        
+        # Determine data cache directory: allow CLI override, else use base_dir/floability-data-cache
+        raw_cache_override = getattr(args, "data_cache_dir", None) if hasattr(args, "data_cache_dir") else None
+        if raw_cache_override:
+            cache_base_dir = Path(os.path.expanduser(raw_cache_override)).resolve()
+            try:
+                cache_base_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+        else:
+            cache_base_dir = (Path(args.base_dir) / "floability-data-cache").resolve()
+            try:
+                cache_base_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+        args.cache_base_dir = str(cache_base_dir)
 
         instance_paths = create_instance_structure(args.base_dir)
         instance_root = str(instance_paths["root"])
@@ -171,6 +192,7 @@ def run_workflow(
             data_cache_mode=getattr(args, "data_cache_mode", "off"),
             force_data_cache=getattr(args, "force_data_cache", False),
             base_dir=Path(args.base_dir),
+            cache_base_dir=Path(args.cache_base_dir),
             target_root=target_root,
             fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
             perf=perf,

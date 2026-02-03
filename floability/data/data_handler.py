@@ -25,6 +25,7 @@ def execute_default_data_operation(
     data_cache_mode: str = "off",
     force_data_cache: bool = False,
     base_dir: Path | None = None,
+    cache_base_dir: Path | None = None,
     target_root: Path | None = None,
     fingerprint_mode: str = "meta",
     perf: Optional[Any] = None,
@@ -44,6 +45,7 @@ def execute_default_data_operation(
         data_cache_mode: Cache mode: 'off', 'symlink', 'hardlink', 'copy'
         force_data_cache: Force rebuild of cache entries even if they exist
         base_dir: Floability base directory for cache storage (default: current directory)
+        cache_base_dir: Floability data cache directory (overrides default <base_dir>/floability-data-cache)
         target_root: Target directory for materialized data (typically instance/workflow). If None, defaults to backpack_root/workflow
         fingerprint_mode: Fingerprint mode for filesystem sources: 'meta', 'sample', or 'strict'
 
@@ -82,6 +84,7 @@ def execute_default_data_operation(
             data_profile=data_profile,
             data_cache_mode=data_cache_mode,
             base_dir=base_dir,
+            cache_base_dir=cache_base_dir,
             target_root=target_root,
         )
     elif default_op == "fetch":
@@ -94,6 +97,7 @@ def execute_default_data_operation(
             data_cache_mode=data_cache_mode,
             force_data_cache=force_data_cache,
             base_dir=base_dir,
+            cache_base_dir=cache_base_dir,
             target_root=target_root,
             fingerprint_mode=fingerprint_mode,
             perf=perf,
@@ -108,6 +112,7 @@ def execute_default_data_operation(
             data_cache_mode=data_cache_mode,
             force_data_cache=force_data_cache,
             base_dir=base_dir,
+            cache_base_dir=cache_base_dir,
             target_root=target_root,
             fingerprint_mode=fingerprint_mode,
         )
@@ -124,6 +129,7 @@ def check_data_from_spec(
     data_profile: Optional[str] = None,
     data_cache_mode: str = "off",
     base_dir: Path | None = None,
+    cache_base_dir: Path | None = None,
     target_root: Path | None = None,
 ) -> bool:
     """High-level entry: perform metadata-only checks for each data item.
@@ -177,8 +183,16 @@ def check_data_from_spec(
 
     normalized_items = items
 
-    # Use base_dir for cache, default to current directory
-    cache_base_dir = Path(base_dir) if base_dir else Path.cwd()
+    # Use explicit cache_base_dir if provided, otherwise fall back to base_dir/floability-data-cache
+    if cache_base_dir is not None:
+        cache_base_dir = Path(cache_base_dir)
+    else:
+        base_path = Path(base_dir) if base_dir else Path.cwd()
+        cache_base_dir = base_path / "floability-data-cache"
+    try:
+        cache_base_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
 
     results: List[Dict[str, Any]] = []
     for item in normalized_items:
@@ -208,6 +222,7 @@ def fetch_data_from_spec(
     data_cache_mode: str = "off",
     force_data_cache: bool = False,
     base_dir: Path | None = None,
+    cache_base_dir: Path | None = None,
     target_root: Path | None = None,
     fingerprint_mode: str = "meta",
     perf: Optional[Any] = None,
@@ -273,8 +288,16 @@ def fetch_data_from_spec(
 
     normalized_items = items
 
-    # Use base_dir for cache, default to current directory
-    cache_base_dir = Path(base_dir) if base_dir else Path.cwd()
+    # Use explicit cache_base_dir if provided, otherwise fall back to base_dir/floability-data-cache
+    if cache_base_dir is not None:
+        cache_base_dir = Path(cache_base_dir)
+    else:
+        base_path = Path(base_dir) if base_dir else Path.cwd()
+        cache_base_dir = base_path / "floability-data-cache"
+    try:
+        cache_base_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
 
     # Determine target_prefix for materializing data
     if target_root:
@@ -344,6 +367,7 @@ def verify_data_from_spec(
     data_cache_mode: str = "off",
     force_data_cache: bool = False,
     base_dir: Path | None = None,
+    cache_base_dir: Path | None = None,
     target_root: Path | None = None,
     fingerprint_mode: str = "meta",
 ) -> bool:
@@ -410,8 +434,16 @@ def verify_data_from_spec(
 
     normalized_items = items
 
-    # Use base_dir for cache, default to current directory
-    cache_base_dir = Path(base_dir) if base_dir else Path.cwd()
+    # Use explicit cache_base_dir if provided, otherwise fall back to base_dir/floability-data-cache
+    if cache_base_dir is not None:
+        cache_base_dir = Path(cache_base_dir)
+    else:
+        base_path = Path(base_dir) if base_dir else Path.cwd()
+        cache_base_dir = base_path / "floability-data-cache"
+    try:
+        cache_base_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
 
     # Determine target_prefix for materializing data
     if target_root:
@@ -1253,9 +1285,9 @@ def _get_cache_dir(base_dir: Path, cache_key: str) -> Path:
         cache_key: Cache key (SHA-256 hex)
 
     Returns:
-        Path to cache directory: base_dir/flo_data_cache/{cache_key}/
+        Path to cache directory: base_dir/floability-data-cache/{cache_key}/
     """
-    cache_root = base_dir / "flo_data_cache"
+    cache_root = base_dir / "floability-data-cache"
     return cache_root / cache_key
 
 

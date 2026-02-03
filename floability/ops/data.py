@@ -5,11 +5,13 @@ Data operations for Floability CLI.
 import uuid
 from datetime import datetime
 from pathlib import Path
+import os
 from ..data.data_handler import (
     check_data_from_spec,
     fetch_data_from_spec,
     verify_data_from_spec,
 )
+from ..utils import normalize_cli_base_dir
 
 
 def resolve_data_spec(args):
@@ -58,12 +60,25 @@ def run_data_command(args):
         print("[floability] No data spec provided. Cannot proceed with data command.")
         return False
 
-    # Determine base_dir
-    base_dir = (
-        Path(getattr(args, "base_dir", "."))
-        if hasattr(args, "base_dir")
-        else Path.cwd()
-    )
+    # Determine and normalize base_dir (CLI behavior):
+    # If user did not provide a base_dir (or provided '.'), default to ~/floability-base-dir
+    raw_base = getattr(args, "base_dir", None) if hasattr(args, "base_dir") else None
+    base_dir = normalize_cli_base_dir(raw_base)
+
+    # Determine data cache directory: allow CLI override, else use base_dir/floability-data-cache
+    raw_cache_override = getattr(args, "data_cache_dir", None) if hasattr(args, "data_cache_dir") else None
+    if raw_cache_override:
+        cache_base_dir = Path(os.path.expanduser(raw_cache_override)).resolve()
+        try:
+            cache_base_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+    else:
+        cache_base_dir = (base_dir / "floability-data-cache").resolve()
+        try:
+            cache_base_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
 
     # Enable data cache by default for all operations
     data_cache_mode = getattr(args, "data_cache_mode", "symlink")
@@ -90,6 +105,7 @@ def run_data_command(args):
             data_profile=getattr(args, "data_profile", None),
             data_cache_mode=data_cache_mode,
             base_dir=base_dir,
+            cache_base_dir=cache_base_dir,
             target_root=None,  # Not needed for check
         )
     elif args.mode in ("fetch", "verify"):
@@ -122,13 +138,13 @@ def run_data_command(args):
                 from ..instance_manager import create_instance_structure, create_latest_symlink
                 
                 instance_paths = create_instance_structure(
-                    args.base_dir if hasattr(args, "base_dir") else ".",
+                    str(base_dir),
                     prefix="floability_data_instance"
                 )
                 instance_root = instance_paths["root"]
                 target_root = instance_paths["workflow"]
                 create_latest_symlink(
-                    args.base_dir if hasattr(args, "base_dir") else ".",
+                    str(base_dir),
                     str(instance_root)
                 )
                 print(f"[floability] Created instance for data operation: {instance_root}")
@@ -172,6 +188,7 @@ def run_data_command(args):
                 data_cache_mode=data_cache_mode,
                 force_data_cache=getattr(args, "force_data_cache", False),
                 base_dir=base_dir,
+                cache_base_dir=cache_base_dir,
                 target_root=target_root,
                 fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
             )
@@ -188,6 +205,7 @@ def run_data_command(args):
                 data_cache_mode=data_cache_mode,
                 force_data_cache=getattr(args, "force_data_cache", False),
                 base_dir=base_dir,
+                cache_base_dir=cache_base_dir,
                 target_root=target_root,
                 fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
             )
