@@ -197,3 +197,168 @@ def pelican_file_download(
 
     tmp.replace(dest)  # atomic finalize
     return dest
+
+
+# ---------------- directory operations ----------------
+def pelican_list_directory(url: str, recursive: bool = True):
+    """
+    List all files in a Pelican directory.
+    
+    Args:
+        url: Pelican directory URL (must end with / or be a directory)
+        recursive: If True, recursively list all files in subdirectories
+    
+    Returns:
+        List of dicts with keys: path (remote), size, type, name
+    """
+    fs, base_path = _get_fs_and_path(url)
+    
+    # Ensure base_path is treated as directory
+    if not base_path.endswith('/'):
+        base_path = base_path + '/'
+    
+    files = []
+    
+    if recursive:
+        # Use walk to recursively traverse
+        try:
+            for dirpath, dirnames, filenames in fs.walk(base_path):
+                for fname in filenames:
+                    fpath = f"{dirpath.rstrip('/')}/{fname}"
+                    try:
+                        info = fs.info(fpath)
+                        files.append({
+                            'path': fpath,
+                            'size': info.get('size'),
+                            'type': info.get('type'),
+                            'name': fname,
+                        })
+                    except Exception:
+                        # Skip files that can't be accessed
+                        pass
+        except Exception as e:
+            raise IOError(f"Failed to walk directory {url}: {e}")
+    else:
+        # List only immediate children
+        try:
+            entries = fs.ls(base_path, detail=True)
+            for entry in entries:
+                if entry.get('type') == 'file':
+                    files.append({
+                        'path': entry.get('name'),
+                        'size': entry.get('size'),
+                        'type': entry.get('type'),
+                        'name': Path(entry.get('name', '')).name,
+                    })
+        except Exception as e:
+            raise IOError(f"Failed to list directory {url}: {e}")
+    
+    return files
+
+
+def pelican_directory_download(
+    url: str,
+    dest_dir: str = ".",
+    *,
+    overwrite: bool = False,
+    show_progress: bool = True,
+) -> Path:
+    """
+    Download all files from a Pelican directory recursively.
+    
+    Args:
+        url: Pelican directory URL (should end with /)
+        dest_dir: Local destination directory
+        overwrite: Overwrite existing files
+        show_progress: Show progress for individual files
+    
+    Returns:
+        Path to destination directory
+    """
+    dest_path = Path(dest_dir)
+    dest_path.mkdir(parents=True, exist_ok=True)
+    
+    # Get base path to compute relative paths
+    fs, base_path = _get_fs_and_path(url)
+    if not base_path.endswith('/'):
+        base_path = base_path + '/'
+    
+    # List all files
+    try:
+        files = pelican_list_directory(url, recursive=True)
+    except Exception as e:
+        raise IOError(f"Failed to list directory {url}: {e}")
+    
+    if not files:
+        print(f"[pelican] Warning: No files found in {url}")
+        return dest_path
+    
+    # Download each file, preserving directory structure
+    total_files = len(files)
+    failed = []
+    
+    for idx, file_info in enumerate(files, 1):
+        remote_path = file_info['path']
+        
+        # Compute relative path from base
+        if remote_path.startswith(base_path):
+            rel_path = remote_path[len(base_path):]
+        else:
+            rel_path = Path(remote_path).name
+        
+        # Construct full destination path
+        local_file = dest_path / rel_path
+        local_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Construct full Pelican URL for this file
+        u = urlparse(url)
+        file_url = f"{u.scheme}://{u.netloc}{remote_path}"
+        
+        if show_progress:
+            print(f"[pelican] ({idx}/{total_files}) Downloading {rel_path}")
+        
+        try:
+            pelican_file_download(
+                file_url,
+                dest_dir=str(local_file.parent),
+                filename=local_file.name,
+                overwrite=overwrite,
+                show_progress=False,  # Don't show per-file progress for cleaner output
+            )
+        except Exception as e:
+            failed.append((rel_path, str(e)))
+            if show_progress:
+                print(f"[pelican] Error downloading {rel_path}: {e}")
+    
+    if failed:
+        print(f"[pelican] Warning: {len(failed)}/{total_files} files failed to download")
+        for rel_path, error in failed[:5]:  # Show first 5 failures
+            print(f"[pelican]   - {rel_path}: {error}")
+        if len(failed) > 5:
+            print(f"[pelican]   ... and {len(failed) - 5} more")
+    
+    return dest_path
+
+
+def is_pelican_directory(url: str) -> bool:
+    """
+    Check if a Pelican URL points to a directory.
+    
+    Args:
+        url: Pelican URL to check
+    
+    Returns:
+        True if URL points to a directory, False if it's a file
+    """
+    # Quick heuristic: if URL ends with /, it's a directory
+    if url.endswith('/'):
+        return True
+    
+    # Otherwise, check metadata
+    try:
+        fs, path = _get_fs_and_path(url)
+        info = fs.info(path)
+        return info.get('type') == 'directory'
+    except Exception:
+        # If we can't determine, assume file
+        return False

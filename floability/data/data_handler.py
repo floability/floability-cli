@@ -10,8 +10,19 @@ import shutil
 
 # Reuse existing low-level helpers
 from .http_file_utils import http_file_metadata, http_file_download
-from .pelican_file_utils import pelican_file_metadata, pelican_file_download
-from .s3_file_utils import s3_file_metadata, s3_file_download, s3_list_objects
+from .pelican_file_utils import (
+    pelican_file_metadata,
+    pelican_file_download,
+    pelican_directory_download,
+    is_pelican_directory,
+)
+from .s3_file_utils import (
+    s3_file_metadata,
+    s3_file_download,
+    s3_list_objects,
+    s3_directory_download,
+    is_s3_directory,
+)
 from .fs_file_utils import fs_file_metadata, fs_file_copy
 
 
@@ -1162,20 +1173,74 @@ def _attempt_fetch_source(
             )
             return True
         if stype == "s3":
-            s3_file_download(
-                src,
-                dest_dir=str(target_path.parent),
-                filename=target_path.name,
-                overwrite=force,
-            )
+            # Determine if source is a directory
+            # Priority: 1) Explicit source_object_type field, 2) URL trailing slash, 3) Metadata check
+            source_obj_type = item.get("source_object_type", "").lower()
+            
+            is_dir = False
+            if source_obj_type == "directory":
+                is_dir = True
+            elif source_obj_type == "file":
+                is_dir = False
+            else:
+                # Auto-detect: trailing slash or metadata check
+                is_dir = src.endswith('/') or is_s3_directory(src)
+            
+            if is_dir:
+                # Directory download - target_path is the destination directory
+                if verbose:
+                    print(f"[data:fetch] S3 directory download: {src} -> {target_path}")
+                s3_directory_download(
+                    src,
+                    dest_dir=str(target_path),
+                    overwrite=force,
+                    show_progress=verbose,
+                )
+            else:
+                # Single file download
+                if verbose:
+                    print(f"[data:fetch] S3 file download: {src} -> {target_path.parent}/{target_path.name}")
+                s3_file_download(
+                    src,
+                    dest_dir=str(target_path.parent),
+                    filename=target_path.name,
+                    overwrite=force,
+                )
             return True
         if stype == "pelican":
-            pelican_file_download(
-                src,
-                dest_dir=str(target_path.parent),
-                filename=target_path.name,
-                overwrite=force,
-            )
+            # Determine if source is a directory
+            # Priority: 1) Explicit source_object_type field, 2) URL trailing slash, 3) Metadata check
+            source_obj_type = item.get("source_object_type", "").lower()
+            
+            is_dir = False
+            if source_obj_type == "directory":
+                is_dir = True
+            elif source_obj_type == "file":
+                is_dir = False
+            else:
+                # Auto-detect: trailing slash or metadata check
+                is_dir = src.endswith('/') or is_pelican_directory(src)
+            
+            if is_dir:
+                # Directory download - target_path is the destination directory
+                if verbose:
+                    print(f"[data:fetch] Pelican directory download: {src} -> {target_path}")
+                pelican_directory_download(
+                    src,
+                    dest_dir=str(target_path),
+                    overwrite=force,
+                    show_progress=verbose,
+                )
+            else:
+                # Single file download
+                if verbose:
+                    print(f"[data:fetch] Pelican file download: {src} -> {target_path.parent}/{target_path.name}")
+                pelican_file_download(
+                    src,
+                    dest_dir=str(target_path.parent),
+                    filename=target_path.name,
+                    overwrite=force,
+                )
             return True
         if stype in ("backpack", "fs"):
             p = Path(src)
@@ -1452,8 +1517,8 @@ def _build_cache_entry(
     """Build a new cache entry by downloading and processing data.
 
     Steps:
-    1. Create cache_dir/data/ directory
-    2. Download/copy data to cache_dir/data/
+    1. Create cache_dir/cached_data/ directory
+    2. Download/copy data to cache_dir/cached_data/<target_location>
     3. Apply post_process if specified
     4. Compute content hash and size
     5. Compute source fingerprint (for filesystem sources)
@@ -1469,18 +1534,19 @@ def _build_cache_entry(
     Returns:
         True if cache entry built successfully, False otherwise
     """
-    data_dir = cache_dir / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
+    cached_data_dir = cache_dir / "cached_data"
+    cached_data_dir.mkdir(parents=True, exist_ok=True)
 
-    # Determine target filename from item
+    # Get full target_location path
     target_location = item.get("target_location") or item.get("target_path")
     if not target_location:
         if verbose:
             print("[cache] ERROR: Missing target_location in item")
         return False
 
-    filename = Path(target_location).name
-    cache_file = data_dir / filename
+    # Store with full target_location path inside cached_data/
+    # e.g., target_location="data/samples/file.root" -> cached_data/data/samples/file.root
+    cache_file = cached_data_dir / target_location
 
     if verbose:
         print(f"[cache] Building cache entry: {cache_dir}")
@@ -1606,21 +1672,67 @@ def _download_to_cache(
             return cache_file.exists()
 
         elif stype == "s3":
-            s3_file_download(
-                source,
-                dest_dir=str(cache_file.parent),
-                filename=cache_file.name,
-                overwrite=True,
-            )
+            # Determine if source is a directory
+            # Priority: 1) Explicit source_object_type field, 2) URL trailing slash, 3) Metadata check
+            source_obj_type = item.get("source_object_type", "").lower()
+            
+            is_dir = False
+            if source_obj_type == "directory":
+                is_dir = True
+            elif source_obj_type == "file":
+                is_dir = False
+            else:
+                # Auto-detect: trailing slash or metadata check
+                is_dir = source.endswith('/') or is_s3_directory(source)
+            
+            if is_dir:
+                # Directory download - cache_file is the destination directory
+                s3_directory_download(
+                    source,
+                    dest_dir=str(cache_file),
+                    overwrite=True,
+                    show_progress=verbose,
+                )
+            else:
+                # Single file download
+                s3_file_download(
+                    source,
+                    dest_dir=str(cache_file.parent),
+                    filename=cache_file.name,
+                    overwrite=True,
+                )
             return cache_file.exists()
 
         elif stype == "pelican":
-            pelican_file_download(
-                source,
-                dest_dir=str(cache_file.parent),
-                filename=cache_file.name,
-                overwrite=True,
-            )
+            # Determine if source is a directory
+            # Priority: 1) Explicit source_object_type field, 2) URL trailing slash, 3) Metadata check
+            source_obj_type = item.get("source_object_type", "").lower()
+            
+            is_dir = False
+            if source_obj_type == "directory":
+                is_dir = True
+            elif source_obj_type == "file":
+                is_dir = False
+            else:
+                # Auto-detect: trailing slash or metadata check
+                is_dir = source.endswith('/') or is_pelican_directory(source)
+            
+            if is_dir:
+                # Directory download - cache_file is the destination directory
+                pelican_directory_download(
+                    source,
+                    dest_dir=str(cache_file),
+                    overwrite=True,
+                    show_progress=verbose,
+                )
+            else:
+                # Single file download
+                pelican_file_download(
+                    source,
+                    dest_dir=str(cache_file.parent),
+                    filename=cache_file.name,
+                    overwrite=True,
+                )
             return cache_file.exists()
 
         elif stype in ("fs", "backpack"):
@@ -1715,10 +1827,10 @@ def _lookup_cache_entry(
         return None
 
     # Check data directory exists
-    data_dir = cache_dir / "data"
-    if not data_dir.exists():
+    cached_data_dir = cache_dir / "cached_data"
+    if not cached_data_dir.exists():
         if verbose:
-            print(f"[cache] Cache invalid: data/ directory missing")
+            print(f"[cache] Cache invalid: cached_data/ directory missing")
         return None
 
     # Quick size validation if expected_size specified
@@ -1820,22 +1932,31 @@ def _materialize_from_cache(
     Returns:
         True if successful, False otherwise
     """
-    data_dir = cache_dir / "data"
-    if not data_dir.exists():
+    cached_data_dir = cache_dir / "cached_data"
+    if not cached_data_dir.exists():
         if verbose:
-            print(f"[cache] Cannot materialize: data/ directory missing")
+            print(f"[cache] Cannot materialize: cached_data/ directory missing")
         return False
 
-    # Find the cached file/directory
-    items = list(data_dir.iterdir())
-    if len(items) != 1:
+    # Determine what to materialize based on target_path
+    # The cached structure mirrors the target_location exactly
+    # We need to find the common root to materialize
+    # For now, find the top-level item(s) to symlink
+    items = list(cached_data_dir.iterdir())
+    if len(items) == 0:
         if verbose:
-            print(
-                f"[cache] Cannot materialize: expected 1 item in data/, found {len(items)}"
-            )
+            print(f"[cache] Cannot materialize: cached_data/ is empty")
         return False
-
-    cached_item = items[0]
+    
+    # If single item, use it; if multiple items, we need to materialize the directory
+    if len(items) == 1:
+        cached_item = items[0]
+    else:
+        # Multiple items means we're caching a directory's contents
+        # The target_path should be the parent directory
+        if verbose:
+            print(f"[cache] Multiple items in cached_data/, will materialize directory")
+        cached_item = cached_data_dir
 
     # Ensure target parent exists
     target_path.parent.mkdir(parents=True, exist_ok=True)

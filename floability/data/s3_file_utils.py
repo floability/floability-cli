@@ -354,6 +354,163 @@ def s3_file_download(
         raise IOError(f"S3 download failed: {e}") from e
 
 
+def is_s3_directory(uri: str, anonymous: bool = None) -> bool:
+    """
+    Check if an S3 URI represents a directory (prefix with multiple objects).
+    
+    Detection logic:
+    1. If URI ends with "/", assume it's a directory
+    2. Otherwise, try to list objects with the prefix
+    3. If multiple objects exist or object ends with "/", it's a directory
+    
+    Args:
+        uri: S3 URI (s3://bucket/prefix or s3://bucket/prefix/)
+        anonymous: If True, use anonymous access (no credentials required).
+                  If None, auto-detect from AWS_NO_SIGN_REQUEST env var
+    
+    Returns:
+        True if URI represents a directory, False otherwise
+    
+    Examples:
+        >>> is_s3_directory("s3://mybucket/data/")
+        True
+        >>> is_s3_directory("s3://mybucket/file.txt")
+        False
+    """
+    # Quick check: if URI ends with "/", it's a directory
+    if uri.endswith("/"):
+        return True
+    
+    try:
+        bucket, prefix = parse_s3_uri(uri)
+        
+        # Auto-detect anonymous from env if not specified
+        if anonymous is None:
+            anonymous = os.environ.get('AWS_NO_SIGN_REQUEST', '').lower() in ('true', '1', 'yes')
+        
+        client = _get_boto3_client(anonymous=anonymous)
+        
+        # List up to 2 objects with this prefix
+        response = client.list_objects_v2(
+            Bucket=bucket,
+            Prefix=prefix,
+            MaxKeys=2
+        )
+        
+        contents = response.get("Contents", [])
+        
+        # If no objects found, not a directory
+        if not contents:
+            return False
+        
+        # If exactly one object and its key matches the prefix exactly, it's a file
+        if len(contents) == 1 and contents[0]["Key"] == prefix:
+            return False
+        
+        # Otherwise (multiple objects or key is different), it's a directory
+        return True
+    
+    except Exception:
+        # On error, assume it's not a directory
+        return False
+
+
+def s3_directory_download(
+    uri: str,
+    dest_dir: str = ".",
+    *,
+    overwrite: bool = False,
+    resume: bool = True,
+    chunk_size: int = 8 * 1024 * 1024,
+    show_progress: bool = True,
+    anonymous: bool = None,
+    preserve_structure: bool = True,
+) -> Path:
+    """
+    Download an entire S3 directory (prefix) recursively.
+    
+    Args:
+        uri: S3 URI pointing to a directory/prefix (s3://bucket/prefix/)
+        dest_dir: Local directory to save files
+        overwrite: If True, re-download existing files
+        resume: If True, resume partial downloads
+        chunk_size: Download chunk size in bytes (default: 8MB)
+        show_progress: Show progress bar during downloads
+        anonymous: If True, use anonymous access (no credentials required).
+                  If None, auto-detect from AWS_NO_SIGN_REQUEST env var
+        preserve_structure: If True, preserve the S3 directory structure under dest_dir.
+                           If False, flatten all files into dest_dir.
+    
+    Returns:
+        Path to destination directory
+    
+    Raises:
+        ValueError: If URI is invalid
+        IOError: If download fails
+    
+    Examples:
+        >>> dest = s3_directory_download("s3://mybucket/data/", dest_dir="/tmp/data")
+        >>> dest.exists()
+        True
+    """
+    bucket, prefix = parse_s3_uri(uri)
+    
+    # Ensure prefix ends with / for directory listing
+    if prefix and not prefix.endswith("/"):
+        prefix += "/"
+    
+    dest_dir_p = Path(dest_dir)
+    dest_dir_p.mkdir(parents=True, exist_ok=True)
+    
+    # List all objects in the prefix
+    objects = s3_list_objects(f"s3://{bucket}/{prefix}", recursive=True, anonymous=anonymous)
+    
+    if not objects:
+        print(f"Warning: No objects found in {uri}")
+        return dest_dir_p
+    
+    print(f"Found {len(objects)} objects to download from {uri}")
+    
+    # Download each object
+    for obj in objects:
+        obj_key = obj["key"]
+        
+        # Skip if it's a directory marker (key ends with /)
+        if obj_key.endswith("/"):
+            continue
+        
+        # Determine local path
+        if preserve_structure:
+            # Preserve directory structure relative to the prefix
+            rel_path = obj_key[len(prefix):] if obj_key.startswith(prefix) else obj_key
+            local_path = dest_dir_p / rel_path
+        else:
+            # Flatten: just use the basename
+            local_path = dest_dir_p / Path(obj_key).name
+        
+        # Create parent directories
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Download the file
+        try:
+            obj_uri = obj["uri"]
+            s3_file_download(
+                uri=obj_uri,
+                dest_dir=str(local_path.parent),
+                filename=local_path.name,
+                overwrite=overwrite,
+                resume=resume,
+                chunk_size=chunk_size,
+                show_progress=show_progress,
+                anonymous=anonymous,
+            )
+        except Exception as e:
+            print(f"Warning: Failed to download {obj_key}: {e}")
+            # Continue with other files
+    
+    return dest_dir_p
+
+
 def s3_list_objects(
     uri: str,
     recursive: bool = True,
