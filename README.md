@@ -12,6 +12,9 @@ If you do not have Conda installed, you can install it via Miniconda or Miniforg
 - [Miniconda Installation](https://docs.anaconda.com/miniconda/install)
 
 For development or to get the latest features, you can install Floability from source code using the following steps:
+```
+git clone https://github.com/floability/floability-cli && cd floability-cli/
+```
 
 All conda specific dependencies for floability are specified in the `environment.yml` file. To create the environment, use the following command:
 
