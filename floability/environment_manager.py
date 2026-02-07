@@ -33,9 +33,31 @@ def create_conda_pack_from_yml(
     os.makedirs(tarballs_dir, exist_ok=True)
 
     # Generate a unique filename based on the hash of the environment file content
+    # and post-install script content (if present)
     with open(env_yml, "r") as f:
         raw_content = f.read()
-    cleaned_content = "".join(raw_content.split())
+    
+    # Load env data to check for post-install script
+    env_data = yaml.safe_load(raw_content)
+    post_install_script = env_data.get("post_install_script", None)
+    
+    # Include post-install script content in hash if present
+    hash_content = raw_content
+    if post_install_script:
+        script_dir = os.path.dirname(env_yml)
+        if not os.path.isabs(post_install_script):
+            post_install_script_path = os.path.join(script_dir, post_install_script)
+        else:
+            post_install_script_path = post_install_script
+            
+        if os.path.exists(post_install_script_path):
+            with open(post_install_script_path, "r") as f:
+                script_content = f.read()
+            hash_content += script_content
+        else:
+            print(f"[environment] Warning: Post-install script not found: {post_install_script_path}")
+    
+    cleaned_content = "".join(hash_content.split())
     file_hash = hashlib.md5(cleaned_content.encode("utf-8")).hexdigest()
 
     extracted_env_path = os.path.join(extracted_envs_dir, f"env_{file_hash}")
@@ -57,8 +79,8 @@ def create_conda_pack_from_yml(
             "[environment] Creating worker environment (no Jupyter or ndcctools required)"
         )
     else:
-        required_packages = ["python", "jupyter", "ndcctools", "cloudpickle"]
-        print("[environment] Creating manager environment with Jupyter and ndcctools")
+        required_packages = ["jupyter",  "cloudpickle"]
+        # print("[environment] Creating manager environment with Jupyter and ndcctools")
 
     env_path = extracted_env_path
     if os.path.exists(env_path) and force:
@@ -67,8 +89,23 @@ def create_conda_pack_from_yml(
     os.makedirs(os.path.dirname(env_path), exist_ok=True)
 
     # Determine whether we need to (re)create and/or (re)pack
-    need_create = not os.path.exists(env_path)
+    # Check if environment exists and is valid (has python executable and core packages)
+    env_is_valid = False
+    if os.path.exists(env_path):
+        # Check if the environment has a python executable
+        python_exe = os.path.join(env_path, "bin", "python")
+        if os.path.exists(python_exe):
+            # Additional validation - check if required packages are installed
+            env_is_valid = True
+        else:
+            print(f"[environment] Environment directory exists but is incomplete (no python executable)")
+    
+    need_create = not env_is_valid
     need_pack = force or not os.path.exists(output_file)
+    
+    if need_create and os.path.exists(env_path):
+        print(f"[environment] Removing incomplete environment: {env_path}")
+        shutil.rmtree(env_path, ignore_errors=True)
 
     modified_yml = None
     wrapper_script = None

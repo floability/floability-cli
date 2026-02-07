@@ -235,6 +235,7 @@ def run_workflow(
             update_instance_metadata(
                 metadata_file,
                 {
+                    **({"env_dir": str(env_dir)} if env_dir else {}),
                     **(
                         {"worker_environment_pack": str(worker_environment_pack)}
                         if worker_environment_pack

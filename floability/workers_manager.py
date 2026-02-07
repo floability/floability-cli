@@ -35,14 +35,30 @@ def start_vine_factory(
     batch_options: str = None,
     config_yml: str = None,
     debug_workers: bool = False,
+    use_manager_env: bool = True,
+    manager_env_dir: str = None,
 ):
-    """Launch the ``vine_factory`` process returning a ``Popen`` handle."""
+    """Launch the ``vine_factory`` process returning a ``Popen`` handle.
+    
+    Args:
+        use_manager_env: If True, run vine_factory in the same environment as the manager
+        manager_env_dir: Path to extracted manager conda environment directory
+    """
+    
+    # Build the base vine_factory command
     cmd = [
         "vine_factory",
         f"-T{batch_type}",
         f"--scratch-dir={scratch_dir}",
         f"--manager-name={manager_name}",
     ]
+    
+    # Use conda run if manager environment is specified
+    if use_manager_env and manager_env_dir:
+        cmd = ["conda", "run", "--prefix", manager_env_dir, "--no-capture-output"] + cmd
+        print(f"[workers] Using manager environment for vine_factory: {manager_env_dir}")
+    elif use_manager_env:
+        print("[workers] Warning: use_manager_env=True but no manager_env_dir provided, falling back to system vine_factory")
 
     if config_yml:
         try:
@@ -180,6 +196,7 @@ def start_workers_for_instance(
     batch_options: Optional[str] = None,
     compute_spec: Optional[str] = None,
     debug_workers: bool = False,
+    use_manager_env_for_factory: bool = True,
 ):
     metadata = read_instance_metadata(instance_path)
     if not metadata:
@@ -196,18 +213,10 @@ def start_workers_for_instance(
     compute_spec = compute_spec or cli_args.get("compute_spec")
     worker_environment_pack = metadata.get("worker_environment_pack")
     if not worker_environment_pack:
-        # Fallback to manager environment pack
-        manager_environment_pack = metadata.get("manager_environment_pack")
-        if manager_environment_pack:
-            worker_environment_pack = manager_environment_pack
-            print(
-                "[floability] No worker environment specified; using manager environment pack for workers"
-            )
-        else:
-            print(
-                "[floability] Warning: No worker or manager environment pack found in metadata"
-            )
-            print("[floability] Workers will use system Python environment")
+        print(
+            "[floability] Warning: No worker environment pack found in metadata"
+        )
+        print("[floability] Workers will use system Python environment")
 
     logs_dir = str(instance_path / "logs")
     print(f"[floability] Starting workers for instance: {instance_path}")
@@ -237,6 +246,8 @@ def start_workers_for_instance(
         batch_options=batch_options,
         config_yml=compute_spec,
         debug_workers=debug_workers,
+        use_manager_env=use_manager_env_for_factory,
+        manager_env_dir=metadata.get("env_dir"),
     )
 
     # Acquire workers lock
