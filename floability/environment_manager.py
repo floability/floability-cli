@@ -8,8 +8,44 @@ import subprocess
 import tempfile
 import hashlib
 import textwrap
+import time
 from pathlib import Path
 from typing import Optional, Tuple
+
+
+def fix_file_timestamps(env_path: str):
+    """
+    Fix files with invalid timestamps (None mtime) that cause conda-pack to fail.
+    This can happen after post-install scripts create files.
+    """
+    current_time = time.time()
+    fixed_count = 0
+    
+    print(f"[environment] Checking and fixing file timestamps in {env_path}")
+    
+    for root, dirs, files in os.walk(env_path):
+        for file in files:
+            filepath = os.path.join(root, file)
+            try:
+                # Check if file has valid mtime
+                stat_info = os.stat(filepath)
+                if stat_info.st_mtime is None or stat_info.st_mtime == 0:
+                    # Fix invalid timestamp
+                    os.utime(filepath, (current_time, current_time))
+                    fixed_count += 1
+            except (OSError, IOError) as e:
+                # Handle cases where file might not be accessible
+                try:
+                    # Try to set a valid timestamp anyway
+                    os.utime(filepath, (current_time, current_time))
+                    fixed_count += 1
+                except (OSError, IOError):
+                    # If we still can't fix it, just continue
+                    print(f"[environment] Warning: Could not fix timestamp for {filepath}: {e}")
+                    continue
+    
+    if fixed_count > 0:
+        print(f"[environment] Fixed timestamps for {fixed_count} files")
 
 
 def create_conda_pack_from_yml(
@@ -212,6 +248,9 @@ def create_conda_pack_from_yml(
 
         # Pack environment if needed
         if need_pack:
+            # Fix any files with invalid timestamps before packing
+            fix_file_timestamps(env_path)
+            
             print(f"[environment] Packing environment into '{output_file}'...")
             cmd_pack = ["conda-pack", "-p", env_path, "-o", output_file, "--force"]
             subprocess.run(cmd_pack, check=True)

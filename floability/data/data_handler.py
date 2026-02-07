@@ -1917,15 +1917,18 @@ def _materialize_from_cache(
     verbose: bool = False,
 ) -> bool:
     """Materialize target from cache using specified mode.
+    The cache structure in cached_data/ mirrors the target structure.
+    This function creates symlinks/copies from cached_data/* into the workflow directory,
+    preserving the exact directory structure.
 
     Modes:
-    - symlink: Create symbolic link (default, read-only convention)
-    - hardlink: Create hard link (shares inode, but independent entry)
-    - copy: Copy file/directory
+    - symlink: Create symbolic links (default, read-only convention)
+    - hardlink: Create hard links (shares inode, but independent entry)
+    - copy: Copy files/directories
 
     Args:
         cache_dir: Cache directory path
-        target_path: Target path to create
+        target_path: Target path to create (e.g., workflow/data/samples/)
         mode: Materialization mode
         verbose: Print progress messages
 
@@ -1938,76 +1941,95 @@ def _materialize_from_cache(
             print(f"[cache] Cannot materialize: cached_data/ directory missing")
         return False
 
-    # Determine what to materialize based on target_path
-    # The cached structure mirrors the target_location exactly
-    # We need to find the common root to materialize
-    # For now, find the top-level item(s) to symlink
+    # Get all items in cached_data/
     items = list(cached_data_dir.iterdir())
     if len(items) == 0:
         if verbose:
             print(f"[cache] Cannot materialize: cached_data/ is empty")
         return False
+
+    # Simple approach: Get everything from cached_data/ (only top-level),
+    # and for each item create a symlink in the workflow directory.
+    #
+    # Example:
+    #   cached_data/data/samples/test/file.root
+    #   target_path: /workflow/data/samples/test
+    #   First item: "data"
+    #   Find "data" in target_path, everything before it is workflow root
     
-    # If single item, use it; if multiple items, we need to materialize the directory
-    if len(items) == 1:
-        cached_item = items[0]
-    else:
-        # Multiple items means we're caching a directory's contents
-        # The target_path should be the parent directory
-        if verbose:
-            print(f"[cache] Multiple items in cached_data/, will materialize directory")
-        cached_item = cached_data_dir
-
-    # Ensure target parent exists
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Remove existing target if present
-    if target_path.exists() or target_path.is_symlink():
-        if target_path.is_dir() and not target_path.is_symlink():
-            shutil.rmtree(target_path)
-        else:
-            target_path.unlink()
-
+    # Get the first top-level item name to find workflow root
+    first_item_name = items[0].name
+    
+    # Find workflow root by locating where first_item_name appears in target_path
+    # Walk up from target_path until we find the parent of where first_item_name should be
+    workflow_root = target_path
+    while workflow_root.name != first_item_name and workflow_root.parent != workflow_root:
+        workflow_root = workflow_root.parent
+    
+    # Now workflow_root.name == first_item_name, so go up one more to get the actual root
+    if workflow_root.name == first_item_name:
+        workflow_root = workflow_root.parent
+    
+    if verbose:
+        print(f"[cache] First cached item: {first_item_name}")
+        print(f"[cache] Workflow root: {workflow_root}")
+        print(f"[cache] Materializing from {cached_data_dir}")
+        print(f"[cache] Materializing from {cached_data_dir}")
+    
+    # Now materialize each item from cached_data into workflow_root
     try:
-        if mode == "symlink":
-            # Create symbolic link with absolute path to avoid resolution issues
-            target_path.symlink_to(cached_item.resolve())
-            if verbose:
-                print(f"[cache] Symlinked {target_path} -> {cached_item.resolve()}")
-
-        elif mode == "hardlink":
-            # Hard link only works for files, not directories
-            if cached_item.is_file():
-                os.link(cached_item, target_path)
+        for cached_item in items:
+            # Get relative path from cached_data
+            rel_path = cached_item.relative_to(cached_data_dir)
+            target_item = workflow_root / rel_path
+            
+            # Ensure parent directory exists
+            target_item.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Remove existing target if present
+            if target_item.exists() or target_item.is_symlink():
+                if target_item.is_dir() and not target_item.is_symlink():
+                    shutil.rmtree(target_item)
+                else:
+                    target_item.unlink()
+            
+            if mode == "symlink":
+                # Create symbolic link
+                target_item.symlink_to(cached_item.resolve())
                 if verbose:
-                    print(f"[cache] Hard-linked {target_path} -> {cached_item}")
-            else:
-                # Fall back to copy for directories
+                    print(f"[cache] Symlinked {target_item} -> {cached_item.resolve()}")
+            
+            elif mode == "hardlink":
+                # Hard link only works for files
+                if cached_item.is_file():
+                    os.link(cached_item, target_item)
+                    if verbose:
+                        print(f"[cache] Hard-linked {target_item} -> {cached_item}")
+                else:
+                    # For directories, recursively hardlink files or fall back to copy
+                    if verbose:
+                        print(f"[cache] Hard link for directory, copying instead")
+                    shutil.copytree(cached_item, target_item)
+            
+            elif mode == "copy":
+                # Copy file or directory
+                if cached_item.is_file():
+                    shutil.copy2(cached_item, target_item)
+                else:
+                    shutil.copytree(cached_item, target_item)
                 if verbose:
-                    print(
-                        f"[cache] Hard link not supported for directories, copying instead"
-                    )
-                shutil.copytree(cached_item, target_path)
-
-        elif mode == "copy":
-            # Copy file or directory
-            if cached_item.is_file():
-                shutil.copy2(cached_item, target_path)
+                    print(f"[cache] Copied {cached_item} -> {target_item}")
+            
             else:
-                shutil.copytree(cached_item, target_path)
-            if verbose:
-                print(f"[cache] Copied {cached_item} -> {target_path}")
-
-        else:
-            if verbose:
-                print(f"[cache] Unknown materialization mode: {mode}")
-            return False
-
+                if verbose:
+                    print(f"[cache] Unknown mode: {mode}")
+                return False
+        
         return True
-
+    
     except Exception as e:
         if verbose:
-            print(f"[cache] Materialization error: {e}")
+            print(f"[cache] Error during materialization: {e}")
         return False
 
 
