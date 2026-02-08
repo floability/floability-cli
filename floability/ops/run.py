@@ -89,7 +89,12 @@ def run_workflow(
                 pass
         args.cache_base_dir = str(cache_base_dir)
 
-        instance_paths = create_instance_structure(args.base_dir)
+        # Build instance prefix
+        instance_prefix = "floability_instance"
+        if getattr(args, "instance_prefix", None):
+            instance_prefix = f"floability_instance_{args.instance_prefix}"
+        
+        instance_paths = create_instance_structure(args.base_dir, prefix=instance_prefix)
         instance_root = str(instance_paths["root"])
         create_latest_symlink(args.base_dir, instance_root)
         # Acquire instance lock for new instance runs to prevent concurrent starts
@@ -174,7 +179,9 @@ def run_workflow(
     ##################### Step 2: Data materialization ####################
     if not using_existing_instance and getattr(args, "data_spec", None):
         print("[floability] data materialization")
-        perf.start_timer("data_operation")
+        if perf_enabled:
+            perf.start_timer("total_data_materialization_time")
+            perf.start_timer("data_operation")
         from ..data.data_handler import execute_default_data_operation
 
         # Materialize data into instance workflow
@@ -195,9 +202,11 @@ def run_workflow(
             cache_base_dir=Path(args.cache_base_dir),
             target_root=target_root,
             fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
-            perf=perf,
+            perf=perf if perf_enabled else None,
         )
-        perf.end_timer("data_operation", "Time to perform data operation")
+        if perf_enabled:
+            perf.end_timer("data_operation", "Time to perform data operation (fetch/check/verify)")
+            perf.end_timer("total_data_materialization_time", "Total time for data materialization (includes all data operations)")
         if not success:
             print("[floability] WARNING: Data operation failed.")
             if not getattr(args, "continue_on_data_failure", False):
@@ -297,6 +306,33 @@ def run_workflow(
             notebook_path_for_exec = Path(notebook_path_for_exec).name
         if script_path_for_exec:
             script_path_for_exec = Path(script_path_for_exec).name
+    
+    # If no notebook specified or not found, search for any .ipynb in workflow dir
+    if not notebook_path_for_exec or mode == "execute":
+        workflow_notebooks = list(Path(workflow_dir).rglob("*.ipynb"))
+        # Filter out checkpoint notebooks
+        workflow_notebooks = [nb for nb in workflow_notebooks if ".ipynb_checkpoints" not in str(nb)]
+        if workflow_notebooks:
+            if notebook_path_for_exec:
+                # Try to find the specified notebook
+                matching = [nb for nb in workflow_notebooks if nb.name == notebook_path_for_exec]
+                if matching:
+                    notebook_path_for_exec = str(matching[0])
+                    print(f"[floability] Found notebook: {notebook_path_for_exec}")
+                else:
+                    # Use the first notebook found
+                    notebook_path_for_exec = str(workflow_notebooks[0])
+                    print(f"[floability] Specified notebook not found, using: {notebook_path_for_exec}")
+            else:
+                # Use the first notebook found
+                notebook_path_for_exec = str(workflow_notebooks[0])
+                print(f"[floability] No notebook specified, auto-detected: {notebook_path_for_exec}")
+        elif mode == "execute":
+            print("[floability] ERROR: No notebook found in workflow directory for execute mode")
+            cleanup_manager.cleanup()
+            if lock_acquired:
+                release_instance_lock(Path(instance_root))
+            return
 
     if mode == "run":
         print("[floability] JupyterLab startup")
@@ -323,16 +359,18 @@ def run_workflow(
             execution_success = True
         elif notebook_path_for_exec:
             print("[floability] notebook execution")
-            perf.start_timer("notebook_execute_time")
+            if perf_enabled:
+                perf.start_timer("notebook_execute_time")
             execution_success = execute_notebook(
                 notebook_path=notebook_path_for_exec,
                 run_dir=str(instance_paths["logs"]),
                 conda_env_dir=env_dir,
                 working_dir=str(workflow_dir),
             )
-            perf.end_timer(
-                "notebook_execute_time", "Time to execute notebook in execute mode"
-            )
+            if perf_enabled:
+                perf.end_timer(
+                    "notebook_execute_time", "Time to execute notebook in execute mode"
+                )
         if (
             execution_success
             and not using_existing_instance

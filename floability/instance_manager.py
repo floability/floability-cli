@@ -143,7 +143,12 @@ def prepare_instance(args, mode: str = "instance") -> Dict[str, Path]:
     if getattr(args, "manager_name", None) is None:
         args.manager_name = f"floability-{uuid.uuid4()}"
 
-    instance_paths = create_instance_structure(args.base_dir)
+    # Build instance prefix
+    instance_prefix = "floability_instance"
+    if getattr(args, "instance_prefix", None):
+        instance_prefix = f"floability_instance_{args.instance_prefix}"
+    
+    instance_paths = create_instance_structure(args.base_dir, prefix=instance_prefix)
     create_latest_symlink(args.base_dir, str(instance_paths["root"]))
 
     # Record metadata early (before data/environment operations)

@@ -55,6 +55,11 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
         help="Base directory for floability run directory files (default: create ~/floability-base-dir if omitted).",
     )
     parser.add_argument(
+        "--instance-prefix",
+        default=None,
+        help="Optional prefix to append to instance directory name (e.g., 'experiment1' creates floability_instance_experiment1_<timestamp>).",
+    )
+    parser.add_argument(
         "--data-spec",
         help="Path to data.yml file specifying data to be fetched.",
     )
