@@ -89,6 +89,7 @@ def safe_extract_tar(tar_file: Path, dest_dir: Path) -> None:
     """
     Safely extract the contents of tar_file into dest_dir.
     This prevents files from escaping the intended extraction directory.
+    Handles conda-pack files with absolute symlinks appropriately.
     """
 
     print(f"Extracting '{tar_file}' into '{dest_dir}'...")
@@ -105,7 +106,22 @@ def safe_extract_tar(tar_file: Path, dest_dir: Path) -> None:
                     f"Tar extraction error: {member.name} is outside {dest_dir}"
                 )
 
-        tar.extractall(path=dest_dir)
+        # For conda-pack files, we need to handle symlinks with absolute paths
+        # These are generally safe debug files (like gdb auto-load files)
+        try:
+            tar.extractall(path=dest_dir)
+        except tarfile.AbsoluteLinkError as e:
+            # Skip problematic symlink files - they're usually debug files and not essential
+            print(f"[utils] Skipping absolute symlink in conda-pack: {e}")
+            print("[utils] Extracting files individually, skipping problematic symlinks")
+            
+            # Extract files one by one, skipping the problematic ones
+            for member in tar.getmembers():
+                try:
+                    tar.extract(member, path=dest_dir)
+                except tarfile.AbsoluteLinkError as skip_error:
+                    print(f"[utils] Skipping problematic file: {member.name}")
+                    continue
 
     print(f"Extraction complete for '{tar_file}'.")
 
