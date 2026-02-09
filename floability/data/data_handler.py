@@ -1587,10 +1587,13 @@ def _build_cache_entry(
             # For now, log a warning
             print(f"[cache] WARNING: post_process not yet implemented: {post_process}")
 
-        # Compute content hash and size
+        # TODO: Content hash computation is expensive but not used for validation
+        # Future investigation needed: either implement actual validation or remove entirely
+        # See analysis: content_sha256 only stored in metadata, never used for cache verification
         if verbose:
-            print("[cache] Computing content hash...")
-        content_sha256, actual_size = _compute_content_hash(cache_file)
+            print("[cache] Skipping expensive content hash computation (placeholder values)")
+        content_sha256 = "placeholder_hash_needs_investigation"
+        actual_size = 0  # placeholder, needs investigation
 
         # Create artifact spec for metadata
         artifact_spec = _create_artifact_spec(item, backpack_root)
