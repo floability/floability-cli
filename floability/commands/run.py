@@ -9,24 +9,27 @@ from .argument_groups import add_execution_args
 
 class RunCommand(BaseCommand):
     """Deploy and run a Floability workflow from a backpack in interactive mode."""
-    
+
     @property
     def name(self) -> str:
         return "run"
-    
+
     @property
     def help(self) -> str:
-        return "Deploy and run a Floability workflow from a backpack in interactive mode."
-    
+        return (
+            "Deploy and run a Floability workflow from a backpack in interactive mode."
+        )
+
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         """Add run command arguments."""
         add_execution_args(parser)
-    
+
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
         """Execute run command."""
         from ..ops.run import run_workflow
+
         run_workflow(args, cleanup_manager)
-    
+
     def get_examples(self) -> list:
         return [
             "floability run --backpack example/matrix-multiplication",

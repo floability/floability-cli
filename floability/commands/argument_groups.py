@@ -10,7 +10,7 @@ import argparse
 def add_execution_args(parser: argparse.ArgumentParser) -> None:
     """
     Add execution-related arguments (used by run/execute commands).
-    
+
     Args:
         parser: ArgumentParser to add arguments to
     """

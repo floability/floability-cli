@@ -8,15 +8,15 @@ from .base import BaseCommand
 
 class AuditCommand(BaseCommand):
     """Generate environment and data dependencies for a notebook."""
-    
+
     @property
     def name(self) -> str:
         return "audit"
-    
+
     @property
     def help(self) -> str:
         return "Generate environment and data dependencies for a notebook"
-    
+
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         """Add audit command arguments."""
         parser.add_argument(
@@ -47,12 +47,13 @@ class AuditCommand(BaseCommand):
             action="store_true",
             help="Generate dependencies at the cell level instead of notebook level",
         )
-    
+
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
         """Execute audit command."""
         from ..ops.audit import run_audit_command
+
         run_audit_command(args)
-    
+
     def get_examples(self) -> list:
         return [
             "floability audit --notebook example/matrix-multiplication/workflow/matrix-multiplication.ipynb",

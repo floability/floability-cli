@@ -30,12 +30,12 @@ def get_all_commands():
 
 
 __all__ = [
-    'BaseCommand',
-    'RunCommand',
-    'ExecuteCommand',
-    'InstanceCommand',
-    'DataCommand',
-    'WorkersCommand',
-    'AuditCommand',
-    'get_all_commands',
+    "BaseCommand",
+    "RunCommand",
+    "ExecuteCommand",
+    "InstanceCommand",
+    "DataCommand",
+    "WorkersCommand",
+    "AuditCommand",
+    "get_all_commands",
 ]

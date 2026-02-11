@@ -8,15 +8,15 @@ from .base import BaseCommand
 
 class WorkersCommand(BaseCommand):
     """Worker management commands (start, stop, status)."""
-    
+
     @property
     def name(self) -> str:
         return "workers"
-    
+
     @property
     def help(self) -> str:
         return "Worker management commands (start, stop, status)"
-    
+
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         """Add workers command arguments."""
         workers_subparsers = parser.add_subparsers(
@@ -80,12 +80,13 @@ class WorkersCommand(BaseCommand):
             required=True,
             help="Path to the Floability instance directory (required).",
         )
-    
+
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
         """Execute workers command."""
         from ..ops.workers import run_workers_command
+
         run_workers_command(args)
-    
+
     def get_examples(self) -> list:
         return [
             "floability workers start --instance flo_instances/run_20260124_123456",

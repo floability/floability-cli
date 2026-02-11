@@ -8,15 +8,15 @@ from .base import BaseCommand
 
 class DataCommand(BaseCommand):
     """Data operations via mode flag: download, check (metadata), verify (download + integrity)."""
-    
+
     @property
     def name(self) -> str:
         return "data"
-    
+
     @property
     def help(self) -> str:
         return "Data operations via mode flag: download, check (metadata), verify (download + integrity)"
-    
+
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         """Add data command arguments."""
         parser.add_argument(
@@ -79,12 +79,13 @@ class DataCommand(BaseCommand):
             default=None,
             help="Base directory for floability cache storage (default: create ~/floability-base-dir if omitted).",
         )
-    
+
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
         """Execute data command."""
         from ..ops.data import run_data_command
+
         run_data_command(args)
-    
+
     def get_examples(self) -> list:
         return [
             "floability data --mode check --data-spec example/rag-lite-bm25/data/data.yml",

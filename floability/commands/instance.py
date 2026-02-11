@@ -8,15 +8,15 @@ from .base import BaseCommand
 
 class InstanceCommand(BaseCommand):
     """Instance management commands (create, list, status, etc.)."""
-    
+
     @property
     def name(self) -> str:
         return "instance"
-    
+
     @property
     def help(self) -> str:
         return "Instance management commands (create, list, status, etc.)."
-    
+
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         """Add instance command arguments."""
         instance_subparsers = parser.add_subparsers(
@@ -123,12 +123,13 @@ class InstanceCommand(BaseCommand):
             "instance",
             help="Instance short name or path to the instance directory.",
         )
-    
+
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
         """Execute instance command."""
         from ..ops.instance import run_instance_command
+
         run_instance_command(args)
-    
+
     def get_examples(self) -> list:
         return [
             "floability instance create --backpack example/matrix-multiplication",

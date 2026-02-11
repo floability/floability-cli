@@ -4,7 +4,6 @@ Run and execute operations for Floability CLI.
 
 import argparse
 import os
-import shutil
 import subprocess
 import time
 import uuid
@@ -70,11 +69,17 @@ def run_workflow(
             validate_backpack_structure(args.backpack, require_workflow=False)
 
         # Normalize base_dir and data cache dir
-        raw_base = getattr(args, "base_dir", None) if hasattr(args, "base_dir") else None
+        raw_base = (
+            getattr(args, "base_dir", None) if hasattr(args, "base_dir") else None
+        )
         args.base_dir = str(normalize_cli_base_dir(raw_base))
-        
+
         # Determine data cache directory: allow CLI override, else use base_dir/floability-data-cache
-        raw_cache_override = getattr(args, "data_cache_dir", None) if hasattr(args, "data_cache_dir") else None
+        raw_cache_override = (
+            getattr(args, "data_cache_dir", None)
+            if hasattr(args, "data_cache_dir")
+            else None
+        )
         if raw_cache_override:
             cache_base_dir = Path(os.path.expanduser(raw_cache_override)).resolve()
             try:
@@ -93,8 +98,10 @@ def run_workflow(
         instance_prefix = "floability_instance"
         if getattr(args, "instance_prefix", None):
             instance_prefix = f"floability_instance_{args.instance_prefix}"
-        
-        instance_paths = create_instance_structure(args.base_dir, prefix=instance_prefix)
+
+        instance_paths = create_instance_structure(
+            args.base_dir, prefix=instance_prefix
+        )
         instance_root = str(instance_paths["root"])
         create_latest_symlink(args.base_dir, instance_root)
         # Acquire instance lock for new instance runs to prevent concurrent starts
@@ -163,6 +170,7 @@ def run_workflow(
         workflow_dir = instance_paths["workflow"]
         if getattr(args, "backpack_root", None):
             from ..instance_manager import copy_workflow_directory
+
             backpack_workflow_dir = Path(args.backpack_root) / "workflow"
             copy_workflow_directory(
                 source_workflow_dir=backpack_workflow_dir,
@@ -186,10 +194,12 @@ def run_workflow(
 
         # Materialize data into instance workflow
         target_root = instance_paths["workflow"]
-        
+
         # backpack_root is used only for resolving source paths
-        backpack_root_for_sources = args.backpack_root if getattr(args, "backpack_root", None) else None
-        
+        backpack_root_for_sources = (
+            args.backpack_root if getattr(args, "backpack_root", None) else None
+        )
+
         success = execute_default_data_operation(
             data_spec=args.data_spec,
             backpack_root=backpack_root_for_sources,
@@ -205,8 +215,13 @@ def run_workflow(
             perf=perf if perf_enabled else None,
         )
         if perf_enabled:
-            perf.end_timer("data_operation", "Time to perform data operation (fetch/check/verify)")
-            perf.end_timer("total_data_materialization_time", "Total time for data materialization (includes all data operations)")
+            perf.end_timer(
+                "data_operation", "Time to perform data operation (fetch/check/verify)"
+            )
+            perf.end_timer(
+                "total_data_materialization_time",
+                "Total time for data materialization (includes all data operations)",
+            )
         if not success:
             print("[floability] WARNING: Data operation failed.")
             if not getattr(args, "continue_on_data_failure", False):
@@ -228,16 +243,18 @@ def run_workflow(
             # todo: warn or fail?
     else:
         print("[floability] environment setup (manager & worker)")
-        env_dir, worker_environment_pack, manager_environment_pack = setup_manager_and_worker_envs(
-            environment_spec=getattr(args, "environment", None),
-            worker_environment_spec=getattr(args, "worker_environment", None),
-            base_dir=args.base_dir,
-            instance_root=instance_root,
-            manager_name=args.manager_name,
-            manager_ports=getattr(args, "manager_ports", "9123,9150"),
-            env_vars=getattr(args, "env_vars", None),
-            force=False,
-            perf=perf if perf_enabled else None,
+        env_dir, worker_environment_pack, manager_environment_pack = (
+            setup_manager_and_worker_envs(
+                environment_spec=getattr(args, "environment", None),
+                worker_environment_spec=getattr(args, "worker_environment", None),
+                base_dir=args.base_dir,
+                instance_root=instance_root,
+                manager_name=args.manager_name,
+                manager_ports=getattr(args, "manager_ports", "9123,9150"),
+                env_vars=getattr(args, "env_vars", None),
+                force=False,
+                perf=perf if perf_enabled else None,
+            )
         )
         # Persist environment pack info for workers fallback
         try:
@@ -306,29 +323,39 @@ def run_workflow(
             notebook_path_for_exec = Path(notebook_path_for_exec).name
         if script_path_for_exec:
             script_path_for_exec = Path(script_path_for_exec).name
-    
+
     # If no notebook specified or not found, search for any .ipynb in workflow dir
     if not notebook_path_for_exec or mode == "execute":
         workflow_notebooks = list(Path(workflow_dir).rglob("*.ipynb"))
         # Filter out checkpoint notebooks
-        workflow_notebooks = [nb for nb in workflow_notebooks if ".ipynb_checkpoints" not in str(nb)]
+        workflow_notebooks = [
+            nb for nb in workflow_notebooks if ".ipynb_checkpoints" not in str(nb)
+        ]
         if workflow_notebooks:
             if notebook_path_for_exec:
                 # Try to find the specified notebook
-                matching = [nb for nb in workflow_notebooks if nb.name == notebook_path_for_exec]
+                matching = [
+                    nb for nb in workflow_notebooks if nb.name == notebook_path_for_exec
+                ]
                 if matching:
                     notebook_path_for_exec = str(matching[0])
                     print(f"[floability] Found notebook: {notebook_path_for_exec}")
                 else:
                     # Use the first notebook found
                     notebook_path_for_exec = str(workflow_notebooks[0])
-                    print(f"[floability] Specified notebook not found, using: {notebook_path_for_exec}")
+                    print(
+                        f"[floability] Specified notebook not found, using: {notebook_path_for_exec}"
+                    )
             else:
                 # Use the first notebook found
                 notebook_path_for_exec = str(workflow_notebooks[0])
-                print(f"[floability] No notebook specified, auto-detected: {notebook_path_for_exec}")
+                print(
+                    f"[floability] No notebook specified, auto-detected: {notebook_path_for_exec}"
+                )
         elif mode == "execute":
-            print("[floability] ERROR: No notebook found in workflow directory for execute mode")
+            print(
+                "[floability] ERROR: No notebook found in workflow directory for execute mode"
+            )
             cleanup_manager.cleanup()
             if lock_acquired:
                 release_instance_lock(Path(instance_root))
