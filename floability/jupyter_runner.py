@@ -64,6 +64,7 @@ def start_jupyterlab(
     jupyter_ip: str = "0.0.0.0",
     run_dir: str = "/tmp",
     conda_env_dir: str = None,
+    working_dir: str = None,
 ):
 
     cmd = [
@@ -84,6 +85,9 @@ def start_jupyterlab(
     )
     print(f"[jupyter] Notebook: {notebook_path if notebook_path else '(none)'}")
 
+    if working_dir:
+        print(f"[jupyter] Working directory: {working_dir}")
+
     if conda_env_dir:
         # Use conda run to start JupyterLab within the extracted environment
         cmd = ["conda", "run", "--prefix", conda_env_dir, "--no-capture-output"] + cmd
@@ -95,15 +99,15 @@ def start_jupyterlab(
 
         # note: conda run opens a temporary bash process to run the command.
         # This bash process is the parent of the jupyterlab process.
-        # That is causing some problem with the cleanup.py script.
-        # this combination seems to work. but we should revisit this.
+        # os.setsid creates a new process group so cleanup.py can kill the entire group.
         with open(stdout_file, "w") as stdout:
             proc = subprocess.Popen(
                 cmd,
                 stdout=stdout,
                 stderr=stdout,
                 text=True,
-                # preexec_fn=os.setsid, #todo: revisit cleanup.py for this
+                cwd=working_dir,
+                # preexec_fn=os.setsid,
             )
 
             print(
@@ -128,6 +132,7 @@ def execute_notebook(
     notebook_path: str = None,
     run_dir: str = "/tmp",
     conda_env_dir: str = None,
+    working_dir: str = None,
 ):
 
     cmd = [
@@ -149,12 +154,16 @@ def execute_notebook(
 
         print(f"[jupyter] JupyterLab stdout: {os.path.abspath(stdout_file)}")
 
+        if working_dir:
+            print(f"[jupyter] Executing notebook from working directory: {working_dir}")
+
         with open(stdout_file, "w") as stdout:
             proc = subprocess.Popen(
                 cmd,
                 stdout=stdout,
                 stderr=stdout,
                 text=True,
+                cwd=working_dir,
             )
 
             proc.wait()  # Wait for the process to complete

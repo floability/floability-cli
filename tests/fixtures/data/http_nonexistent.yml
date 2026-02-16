@@ -1,0 +1,16 @@
+schema_version: 1.0
+default_profile: nonexistent
+
+profiles:
+  nonexistent:
+    policy:
+      retry_attempts: 0
+      timeout: 10
+      size_tolerance_bytes: 0
+    
+    data:
+      - name: nonexistent_file
+        source_type: http
+        source: https://www.gutenberg.org/nonexistent/file12345.txt
+        expected_size: 1000
+        target_path: data/nonexistent.txt

@@ -1,0 +1,18 @@
+schema_version: 1.0
+default_profile: nd_data
+
+profiles:
+  nd_data:
+    policy:
+      retry_attempts: 0
+      timeout: 30
+      size_tolerance_bytes: 10
+    
+    data:
+      - name: diboson_zz_6
+        source_type: pelican
+        source: pelican://disc-head-002.crc.nd.edu:443/nd/disc2/apps/floability/examples/cms-physics-dv5/data/samples/diboson/zz/nano_mc2017_6.root
+        expected_size: 190634
+        content_type: application/octet-stream
+        checksum: sha256:4c976188f38ffbd755267acb9d5b431b9208c7376afa5a26f9a62412e2f33bb0
+        target_path: data/samples/diboson/zz/nano_mc2017_6.root

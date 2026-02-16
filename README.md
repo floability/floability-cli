@@ -129,6 +129,28 @@ channels:
 - numpy=2.2.4
 ```
 
+## Floability CLI Documentation
+
+The documentation source lives in the `docs/` directory and MkDocs configuration is at the repository root (`mkdocs.yml`). The required dependencies for building the documentation are listed in `docs/mkdocs.requirements.txt`.
+
+To browse the documentation in Markdown, start from [docs/index.md](docs/index.md).
+
+To build and serve the documentation locally with MkDocs:
+
+```bash
+# create and activate a virtualenv 
+python3 -m venv .venv
+source .venv/bin/activate 
+
+# upgrade pip and install the MkDocs dependencies from the repo
+pip install --upgrade pip
+pip install -r docs/mkdocs.requirements.txt   
+
+# serve locally (auto-reloads on changes)
+mkdocs serve
+```
+Then open the site at: http://127.0.0.1:8000/
+
 ## License
 
 This project is licensed under GNU GPL v2.0 — see [COPYING](COPYING).

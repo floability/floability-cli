@@ -1,0 +1,26 @@
+site_name: Floability Documentation
+site_description: Guides and reference for Floability
+site_author: Floability
+
+theme:
+  name: readthedocs
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started/index.md
+  - Concepts:
+      - Backpacks: concept/backpacks.md
+      - Audit & Environment Capture: concept/audit.md
+  - Deployment:
+      - Overview (Batch Systems): deployment/index.md
+      - ND CRC: deployment/nd_crc.md
+      - OSPool: deployment/ospool.md
+      - Purdue Anvil: deployment/anvil.md
+      - UT Stampede3: deployment/stampede3.md
+  - Reference:
+      - CLI Reference: reference/cli.md
+      - Data Specification & CLI: reference/data.md
+  - Examples:
+      - Overview: examples/index.md
+  - Guides:
+      - Troubleshooting: guides/troubleshooting.md

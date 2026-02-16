@@ -1,0 +1,88 @@
+schema_version: 1.0
+default_profile: example_profile
+
+# Examples of Pelican directory download specifications
+# Three ways to indicate a source is a directory:
+#   1. Explicit source_object_type field (recommended for clarity)
+#   2. Trailing slash in URL (convention-based)
+#   3. Auto-detection via metadata (automatic fallback)
+
+data_profiles:
+  # Example 1: Explicit source_object_type field (RECOMMENDED)
+  explicit_directory:
+    policy:
+      retry_attempts: 0
+      timeout: 30
+    data:
+      - name: data_dir_explicit
+        source_type: pelican
+        source: pelican://disc-head-002.crc.nd.edu:443/nd/disc2/apps/floability/examples/cms-physics-dv5/data
+        target_path: data
+        source_object_type: directory  # Explicitly mark as directory
+  
+  # Example 2: Trailing slash convention
+  trailing_slash:
+    policy:
+      retry_attempts: 0
+      timeout: 30
+    data:
+      - name: data_dir_slash
+        source_type: pelican
+        source: pelican://disc-head-002.crc.nd.edu:443/nd/disc2/apps/floability/examples/cms-physics-dv5/data/
+        target_path: data
+        # No source_object_type needed - trailing slash indicates directory
+  
+  # Example 3: Auto-detection (makes metadata call)
+  auto_detect:
+    policy:
+      retry_attempts: 0
+      timeout: 30
+    data:
+      - name: data_dir_auto
+        source_type: pelican
+        source: pelican://disc-head-002.crc.nd.edu:443/nd/disc2/apps/floability/examples/cms-physics-dv5/data
+        target_path: data
+        # No source_object_type, no trailing slash - will check metadata
+  
+  # Example 4: Single file (explicit)
+  explicit_file:
+    policy:
+      retry_attempts: 0
+      timeout: 30
+    data:
+      - name: single_file
+        source_type: pelican
+        source: pelican://server.example.org:443/path/to/file.root
+        target_path: data/file.root
+        source_object_type: file  # Explicitly mark as file
+  
+  # Example 5: Mixed - directories and files together
+  mixed_example:
+    policy:
+      retry_attempts: 0
+      timeout: 30
+    data:
+      - name: data_directory
+        source_type: pelican
+        source: pelican://server.example.org:443/datasets/raw/
+        target_path: data/raw
+        source_object_type: directory
+      
+      - name: metadata_file
+        source_type: pelican
+        source: pelican://server.example.org:443/datasets/metadata.json
+        target_path: data/metadata.json
+        source_object_type: file
+      
+      - name: results_dir
+        source_type: pelican
+        source: pelican://server.example.org:443/datasets/results/
+        target_path: data/results
+        # Trailing slash - detected as directory
+
+# Notes:
+# - source_object_type takes priority over all other detection methods
+# - Valid values: "file" or "directory" (case-insensitive)
+# - Omit source_object_type to use auto-detection
+# - Trailing slash (/) is convention for directories
+# - Auto-detection makes a metadata network call (slower but automatic)

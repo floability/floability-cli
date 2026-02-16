@@ -13,31 +13,35 @@ from floability.audit.generate_data_deps import main as generate_data_deps
 from floability.audit.log_data_deps import get_code_to_log_data_deps
 from jupyter_client.kernelspec import KernelSpecManager
 
+
 def update_notebook_kernel(notebook_path, kernel_name):
     # Load available kernels
     ksm = KernelSpecManager()
     kernels = ksm.find_kernel_specs()
 
     if kernel_name not in kernels:
-        raise ValueError(f"Kernel '{kernel_name}' not found. Available kernels: {list(kernels.keys())}")
+        raise ValueError(
+            f"Kernel '{kernel_name}' not found. Available kernels: {list(kernels.keys())}"
+        )
 
     # Load kernel spec info
     spec = ksm.get_kernel_spec(kernel_name)
-    
+
     # Load notebook
-    with open(notebook_path, 'r', encoding='utf-8') as f:
+    with open(notebook_path, "r", encoding="utf-8") as f:
         nb = nbformat.read(f, as_version=4)
 
     # Update metadata
     nb.metadata.kernelspec = {
         "name": kernel_name,
         "display_name": spec.display_name,
-        "language": spec.language
+        "language": spec.language,
     }
 
     # Save updated notebook
-    with open(notebook_path, 'w', encoding='utf-8') as f:
+    with open(notebook_path, "w", encoding="utf-8") as f:
         nbformat.write(nb, f)
+
 
 def add_code_to_notebook(notebook_path, code):
     """
@@ -142,12 +146,12 @@ def audit(notebook_path, kernel_name, manager_name, manager_port):
 
     if kernel_name:
         try:
-        # update notebook kernel
+            # update notebook kernel
             update_notebook_kernel(notebook_copy_path, kernel_name)
         except ValueError as e:
             print(f"Error updating notebook kernel: {kernel_name}")
             return
-    
+
     print("Starting the notebook with strace... ")
     p_manager = subprocess.run(
         [

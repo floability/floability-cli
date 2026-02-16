@@ -1,0 +1,8 @@
+default_profile: test
+
+profiles:
+  test:
+    data:
+      - name: small-data
+        source: s3://floability/coffea-sample-data/small_data.root
+        target_path: data/small_data.root

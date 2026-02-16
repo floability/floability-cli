@@ -9,7 +9,10 @@ from pathlib import Path
 SYSTEM_INFORMATION = None
 
 
-def create_unique_directory(base_dir=".", prefix="floability_run", max_attempts=10):
+def create_unique_directory(
+    base_dir=".", prefix="floability_instance", max_attempts=10
+):
+    base_dir = os.path.expanduser(base_dir)
     attempt = 0
 
     while attempt < max_attempts:
@@ -32,6 +35,30 @@ def create_unique_directory(base_dir=".", prefix="floability_run", max_attempts=
     raise RuntimeError(
         f"Failed to create a unique directory after {max_attempts} attempts."
     )
+
+
+def normalize_cli_base_dir(raw_base: str | None) -> Path:
+    """Normalize a CLI-provided base_dir value.
+
+    Rules:
+      - If `raw_base` is None, empty, or '.', default to `~/floability-base-dir`.
+      - Expand user (~) for provided values.
+      - Ensure the directory exists (create parents as needed).
+
+    Returns a resolved `Path` instance.
+    """
+    if raw_base is None or str(raw_base).strip() == "" or str(raw_base).strip() == ".":
+        base = Path.home() / "floability-base-dir"
+    else:
+        base = Path(os.path.expanduser(str(raw_base)))
+
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # Best-effort: if creation fails, just return the path object
+        pass
+
+    return base
 
 
 def get_local_ip():
@@ -62,6 +89,7 @@ def safe_extract_tar(tar_file: Path, dest_dir: Path) -> None:
     """
     Safely extract the contents of tar_file into dest_dir.
     This prevents files from escaping the intended extraction directory.
+    Handles conda-pack files with absolute symlinks appropriately.
     """
 
     print(f"Extracting '{tar_file}' into '{dest_dir}'...")
@@ -78,12 +106,29 @@ def safe_extract_tar(tar_file: Path, dest_dir: Path) -> None:
                     f"Tar extraction error: {member.name} is outside {dest_dir}"
                 )
 
-        tar.extractall(path=dest_dir)
+        # For conda-pack files, we need to handle symlinks with absolute paths
+        # These are generally safe debug files (like gdb auto-load files)
+        try:
+            tar.extractall(path=dest_dir)
+        except tarfile.AbsoluteLinkError as e:
+            # Skip problematic symlink files - they're usually debug files and not essential
+            print(f"[utils] Skipping absolute symlink in conda-pack: {e}")
+            print("[utils] Extracting files individually, skipping problematic symlinks")
+            
+            # Extract files one by one, skipping the problematic ones
+            for member in tar.getmembers():
+                try:
+                    tar.extract(member, path=dest_dir)
+                except tarfile.AbsoluteLinkError as skip_error:
+                    print(f"[utils] Skipping problematic file: {member.name}")
+                    continue
 
     print(f"Extraction complete for '{tar_file}'.")
 
 
-def update_env_vars_in_conda(env_dir: str, manager_name: str, manager_ports: str, additional_env_vars: str):
+def update_env_vars_in_conda(
+    env_dir: str, manager_name: str, manager_ports: str, additional_env_vars: str
+):
     """
     Adds/updates the VINE_MANAGER_NAME environment variable in the
     conda environment's activation script.
@@ -103,7 +148,9 @@ def update_env_vars_in_conda(env_dir: str, manager_name: str, manager_ports: str
                     key, value = pair.split("=")
                     f.write(f"export {key.strip()}={value.strip()}\n")
 
-                    print(f"[environment] Added {key.strip()}={value.strip()} to {env_vars_file}")
+                    print(
+                        f"[environment] Added {key.strip()}={value.strip()} to {env_vars_file}"
+                    )
 
     print(
         f"[environment] Updated environment variable VINE_MANAGER_NAME={manager_name} in {env_vars_file}"
