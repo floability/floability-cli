@@ -136,7 +136,7 @@ def register_instance(
     return short_name
 
 
-def touch_instance(ref: str) -> None:
+def refresh_instance_registry_entry(ref: str) -> None:
     path = resolve_instance(ref)
     if not path:
         return
@@ -207,6 +207,6 @@ __all__ = [
     "resolve_instance",
     "list_instances",
     "instance_status",
-    "touch_instance",
+    "refresh_instance_registry_entry",
     "prune_nonexistent_entries",
 ]

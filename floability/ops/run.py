@@ -29,7 +29,11 @@ from ..instance_lock_manager import (
     release_instance_lock,
     is_instance_running,
 )
-from ..instance_registry import resolve_instance, touch_instance, register_instance
+from ..instance_registry import (
+    refresh_instance_registry_entry,
+    resolve_instance,
+    register_instance,
+)
 from ..catalog import send_catalog_update
 from ..instance_metadata import finalize_instance_metadata, update_instance_metadata
 
@@ -53,7 +57,7 @@ def run_workflow(
             return
         args.instance = resolved
         using_existing_instance = True
-        touch_instance(args.instance)
+        refresh_instance_registry_entry(args.instance)
     else:
         using_existing_instance = False
     lock_acquired = False
@@ -85,19 +89,21 @@ def run_workflow(
             try:
                 cache_base_dir.mkdir(parents=True, exist_ok=True)
             except Exception:
+                print(f"[floability] Warning: Could not create specified data cache directory: {cache_base_dir}.")
                 pass
         else:
             cache_base_dir = (Path(args.base_dir) / "floability-data-cache").resolve()
             try:
                 cache_base_dir.mkdir(parents=True, exist_ok=True)
             except Exception:
+                print(f"[floability] Warning: Could not create default data cache directory: {cache_base_dir}.")
                 pass
         args.cache_base_dir = str(cache_base_dir)
 
         # Build instance prefix
         instance_prefix = "floability_instance"
         if getattr(args, "instance_prefix", None):
-            instance_prefix = f"floability_instance_{args.instance_prefix}"
+            instance_prefix = f"{args.instance_prefix}_fi"
 
         instance_paths = create_instance_structure(
             args.base_dir, prefix=instance_prefix
@@ -138,6 +144,10 @@ def run_workflow(
             "metrics": Path(instance_root) / "metrics",
             "metadata": Path(instance_root) / "metadata",
         }
+        
+       # change latest instacne symlink
+        create_latest_symlink(args.base_dir, instance_root)
+        
         # Metadata file may already exist
         metadata_file = instance_paths["metadata"] / "run.json"
         if not metadata_file.exists():
