@@ -140,6 +140,7 @@ def ensure_shared_env(
             print(
                 f"[environment] Removing stale shared env: {cache_info.shared_env_dir}"
             )
+            _make_dir_writable(str(cache_info.shared_env_dir))
             shutil.rmtree(cache_info.shared_env_dir, ignore_errors=True)
 
         timer = f"{env_type}_env_creation"
@@ -158,6 +159,9 @@ def ensure_shared_env(
             perf.measure_file_size(
                 str(cache_info.tar_path), f"{env_type}_environment_pack"
             )
+
+    print(f"[environment] Locking shared env as read-only: {cache_info.shared_env_dir}")
+    _make_dir_readonly(str(cache_info.shared_env_dir))
 
     return cache_info
 
@@ -423,6 +427,57 @@ def _compute_env_hash(env_yml: str) -> str:
 
     cleaned = "".join(hash_content.split())
     return hashlib.md5(cleaned.encode("utf-8")).hexdigest()
+
+
+def _make_dir_readonly(path: str) -> None:
+    """Recursively remove write permission from all files and directories.
+
+    After this call any attempt to write into the directory (e.g. an accidental
+    ``pip install`` against the shared base env) will raise PermissionError.
+    Call _make_dir_writable before rmtree to allow deletion.
+    """
+    for root, dirs, files in os.walk(path):
+        for name in dirs:
+            try:
+                p = os.path.join(root, name)
+                os.chmod(p, os.stat(p).st_mode & ~0o222)
+            except OSError:
+                pass
+        for name in files:
+            try:
+                p = os.path.join(root, name)
+                os.chmod(p, os.stat(p).st_mode & ~0o222)
+            except OSError:
+                pass
+    # Also lock the root directory itself
+    try:
+        os.chmod(path, os.stat(path).st_mode & ~0o222)
+    except OSError:
+        pass
+
+
+def _make_dir_writable(path: str) -> None:
+    """Recursively restore user write permission on all files and directories.
+
+    Required before rmtree on a read-only shared env dir.
+    """
+    for root, dirs, files in os.walk(path):
+        for name in dirs:
+            try:
+                p = os.path.join(root, name)
+                os.chmod(p, os.stat(p).st_mode | 0o200)
+            except OSError:
+                pass
+        for name in files:
+            try:
+                p = os.path.join(root, name)
+                os.chmod(p, os.stat(p).st_mode | 0o200)
+            except OSError:
+                pass
+    try:
+        os.chmod(path, os.stat(path).st_mode | 0o200)
+    except OSError:
+        pass
 
 
 def _fix_file_timestamps(env_path: str) -> None:

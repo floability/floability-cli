@@ -5,6 +5,7 @@ Run and execute operations for Floability CLI.
 import argparse
 import os
 import subprocess
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -474,7 +475,7 @@ def _setup_environment(
     _persist_env_metadata(
         ctx, env_dir, worker_tar, manager_tar, per_instance_env, env_spec
     )
-    instance_env = _build_instance_env(args, ctx)
+    instance_env = _build_instance_env(args, ctx, env_dir)
 
     _display_env_info(env_dir, instance_env)
 
@@ -811,44 +812,96 @@ def _persist_env_metadata(
         print(f"[floability] Warning: could not persist env metadata: {e}")
 
 
+def _get_env_python_version(prefix: str) -> str:
+    """
+    Query the target conda prefix for its Python version.
+    Returns string like '3.14'
+    """
+    result = subprocess.run(
+        [
+            "conda",
+            "run",
+            "--prefix",
+            str(prefix),
+            "python",
+            "-c",
+            "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
 def _build_instance_env(
     args: argparse.Namespace,
     ctx: InstanceContext,
+    env_dir: str,
 ) -> dict:
-    """Build the per-instance subprocess environment dict.
-
-    Combines the current process environment with:
-      - TaskVine manager identity (VINE_MANAGER_NAME, VINE_MANAGER_PORTS)
-      - PyUser overlay (PYTHONUSERBASE, PIP_USER=1) so workflows can
-        ``pip install`` packages into a per-instance directory without
-        mutating the shared (possibly immutable) base conda environment.
-      - Any user-supplied KEY=VALUE pairs from --env-vars.
-
-    This dict is passed as ``env=`` to every subprocess (JupyterLab,
-    notebook execution, Python script execution) so all three modes
-    see a consistent environment regardless of whether the shared or
-    per-instance conda env strategy is in use.
     """
+    Build the per-instance subprocess environment dict.
+
+    Ensures:
+      - TaskVine identity vars
+      - PyUser overlay (isolated pip --user installs)
+      - Explicit PYTHONPATH injection (Conda disables user-site auto loading)
+      - Proper PATH handling for pip-installed CLI tools
+      - Correct Python version detection from target conda prefix
+    """
+
     env = os.environ.copy()
 
-    # TaskVine manager identity — must be per-instance; cannot bake into shared env.
+    # -------------------------------------------------
+    # TaskVine identity (per-instance)
+    # -------------------------------------------------
     env["VINE_MANAGER_NAME"] = getattr(args, "manager_name", "") or ""
     env["VINE_MANAGER_PORTS"] = getattr(args, "manager_ports", "9123,9150")
 
-    # PyUser overlay: per-instance pip install directory keeps the base env immutable.
+    # -------------------------------------------------
+    # PyUser overlay
+    # -------------------------------------------------
     pyuser_dir = Path(ctx.root) / "pyuser"
     pyuser_dir.mkdir(exist_ok=True)
+
     env["PYTHONUSERBASE"] = str(pyuser_dir)
     env["PIP_USER"] = "1"
 
+    # Add pyuser/bin to PATH
+    pyuser_bin = str(pyuser_dir / "bin")
+    env["PATH"] = pyuser_bin + os.pathsep + env.get("PATH", "")
+
+    # -------------------------------------------------
+    # Detect correct Python version from target env
+    # -------------------------------------------------
+    # ctx.env_dir should point to the conda prefix being used
+    # (shared base, cloned env, etc.)
+    python_version = _get_env_python_version(env_dir)
+
+    pyuser_site = (
+        pyuser_dir
+        / "lib"
+        / f"python{python_version}"
+        / "site-packages"
+    )
+    pyuser_site.mkdir(parents=True, exist_ok=True)
+
+    # Explicit injection (Conda disables user-site auto loading)
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    if existing_pythonpath:
+        env["PYTHONPATH"] = str(pyuser_site) + os.pathsep + existing_pythonpath
+    else:
+        env["PYTHONPATH"] = str(pyuser_site)
+
+    # -------------------------------------------------
     # User-supplied --env-vars KEY=VALUE,...
+    # -------------------------------------------------
     for pair in (getattr(args, "env_vars", None) or "").split(","):
         if "=" in pair:
             k, v = pair.split("=", 1)
             env[k.strip()] = v.strip()
 
     return env
-
 
 def _display_env_info(env_dir: Optional[str], instance_env: dict) -> None:
     """Display information about the active environment.
@@ -867,7 +920,7 @@ def _display_env_info(env_dir: Optional[str], instance_env: dict) -> None:
         print("  Conda env          : (none — using system Python)")
         print(sep + "\n")
         return
-    
+
     snippet = (
         "import sys, os, platform\n"
         "print('Python Version:', platform.python_version())\n"
