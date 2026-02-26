@@ -23,7 +23,6 @@ Key options:
 - --notebook FILE: Notebook path (optional; auto-resolved from backpack)
 - --python-script FILE: Python script path (optional; can prefer over notebook)
 - --prefer-python: Prefer running the script when both notebook and script present
-- --prefer-instance: For a new backpack run, skip env setup and reuse local env
 - --manager-ports A,B: Port range for TaskVine manager (default 9123,9150)
 - --jupyter-port PORT: JupyterLab port (default 8888)
 - --base-dir DIR: Base directory for instance files (default '.')

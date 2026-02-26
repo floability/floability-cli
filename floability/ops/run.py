@@ -434,7 +434,7 @@ def _setup_environment(
     Returns:
         EnvironmentContext with environment paths.
     """
-    if not ctx.is_new or getattr(args, "prefer_instance", False):
+    if not ctx.is_new:
         env_candidate = ctx.root / "current_conda_env"
         env_dir = str(env_candidate) if env_candidate.exists() else None
         if env_dir:

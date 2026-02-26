@@ -125,11 +125,6 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
         "--python-script",
         help="Path to a Python (.py) file to execute (optional).",
     )
-    parser.add_argument(
-        "--prefer-instance",
-        action="store_true",
-        help="For a new backpack-based run, skip environment setup and reuse current local environment (advanced).",
-    )
 
     parser.add_argument(
         "--measure-performance",
