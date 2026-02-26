@@ -110,7 +110,7 @@ def run_workflow(
         _send_catalog_event(args, ctx, mode)
 
         # Step 6: Start workers
-        factory_proc = _start_workers(args, ctx, cleanup_manager)
+        factory_proc = _start_workers(args, ctx, env_ctx, cleanup_manager)
 
         # Step 7: Find notebook
         notebook_path = _find_notebook(args, ctx, mode)
@@ -516,6 +516,7 @@ def _send_catalog_event(
 def _start_workers(
     args: argparse.Namespace,
     ctx: InstanceContext,
+    env_ctx: EnvironmentContext,
     cleanup_manager: CleanupManager,
 ) -> Optional[Any]:
     """Start worker factory for the instance.
@@ -536,6 +537,9 @@ def _start_workers(
         batch_options=getattr(args, "batch_options", None),
         compute_spec=getattr(args, "compute_spec", None),
         debug_workers=getattr(args, "debug_workers", False),
+        use_manager_env_for_factory=getattr(args, "use_manager_env_for_factory", True),
+        env_dir=env_ctx.env_dir,
+        instance_env=env_ctx.instance_env,
     )
     if factory_proc:
         cleanup_manager.register_subprocess(factory_proc)
@@ -878,12 +882,7 @@ def _build_instance_env(
     # (shared base, cloned env, etc.)
     python_version = _get_env_python_version(env_dir)
 
-    pyuser_site = (
-        pyuser_dir
-        / "lib"
-        / f"python{python_version}"
-        / "site-packages"
-    )
+    pyuser_site = pyuser_dir / "lib" / f"python{python_version}" / "site-packages"
     pyuser_site.mkdir(parents=True, exist_ok=True)
 
     # Explicit injection (Conda disables user-site auto loading)
@@ -902,6 +901,7 @@ def _build_instance_env(
             env[k.strip()] = v.strip()
 
     return env
+
 
 def _display_env_info(env_dir: Optional[str], instance_env: dict) -> None:
     """Display information about the active environment.
