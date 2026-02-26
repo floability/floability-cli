@@ -70,11 +70,11 @@ class InstanceCommand(BaseCommand):
         )
         create_parser.add_argument(
             "--environment",
-            help="Path to environment.yml or environment.tar.gz (optional).",
+            help="Path to environment.yml (optional).",
         )
         create_parser.add_argument(
             "--worker-environment",
-            help="Path to worker-environment.yml or worker-environment.tar.gz (optional).",
+            help="Path to worker-environment.yml (optional).",
         )
         create_parser.add_argument(
             "--manager-name",

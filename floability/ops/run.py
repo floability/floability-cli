@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional, Any
 from ..cleanup import CleanupManager
 from ..performance_tracker import PerformanceTracker
-from ..environment_manager import setup_manager_and_worker_envs
+from ..environment_manager import setup_manager_and_worker_envs, ensure_shared_env
 from ..workers_manager import start_workers_for_instance
 from ..backpack_manager import (
     resolve_backpack_args,
@@ -64,6 +64,7 @@ class EnvironmentContext:
     env_dir: Optional[str] = None
     worker_pack: Optional[str] = None
     manager_pack: Optional[str] = None
+    instance_env: dict = field(default_factory=dict)
 
 
 # -----------------------------------------------------------------------------
@@ -139,7 +140,9 @@ def run_workflow(
 
 
 # todo: revist and make unified execution for any scripts
-def execute_python_script(script_path, run_dir, conda_env_dir=None, working_dir=None):
+def execute_python_script(
+    script_path, run_dir, conda_env_dir=None, working_dir=None, extra_env: dict = None
+):
     script_abs_path = os.path.abspath(script_path)
     script_name = os.path.basename(script_abs_path)
 
@@ -173,7 +176,12 @@ def execute_python_script(script_path, run_dir, conda_env_dir=None, working_dir=
             log.write(f"[floability] Running command: {cmd_str}\n")
             log.flush()
             result = subprocess.run(
-                cmd, stdout=log, stderr=subprocess.STDOUT, check=True, text=True
+                cmd,
+                env=extra_env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                check=True,
+                text=True,
             )
             print(
                 f"[floability] Python script execution completed with exit code {result.returncode}"
@@ -431,61 +439,50 @@ def _setup_environment(
 ) -> EnvironmentContext:
     """Setup manager and worker environments.
 
-    Returns:
-        EnvironmentContext with environment paths.
+    Existing instance path:
+      Reads per_instance_env + environment_spec from saved metadata to decide
+      whether to point at current_conda_env (per-instance) or the shared base.
+
+    New instance path:
+      Delegates to setup_manager_and_worker_envs with the per_instance_env flag,
+      then persists the decision to metadata so future re-runs can reconstruct it.
     """
     if not ctx.is_new:
-        env_candidate = ctx.root / "current_conda_env"
-        env_dir = str(env_candidate) if env_candidate.exists() else None
-        if env_dir:
-            print(f"[floability] Using existing environment: {env_dir}")
-        else:
-            print("[floability] No environment found; proceeding without conda env.")
-        return EnvironmentContext(env_dir=env_dir)
+        env_dir = _resolve_existing_instance_env(args, ctx)
+        instance_env = _build_instance_env(args, ctx)
+        return EnvironmentContext(env_dir=env_dir, instance_env=instance_env)
+
+    per_instance_env = getattr(args, "per_instance_env", False)
+    env_spec = getattr(args, "environment", None)
+
+    if not env_spec:
+        raise ValueError(
+            "No environment spec provided. "
+            "Use --environment to specify a path to environment.yml."
+        )
 
     print("[floability] environment setup (manager & worker)")
-    env_dir, worker_environment_pack, manager_environment_pack = (
-        setup_manager_and_worker_envs(
-            environment_spec=getattr(args, "environment", None),
-            worker_environment_spec=getattr(args, "worker_environment", None),
-            base_dir=args.base_dir,
-            instance_root=str(ctx.root),
-            manager_name=args.manager_name,
-            manager_ports=getattr(args, "manager_ports", "9123,9150"),
-            env_vars=getattr(args, "env_vars", None),
-            force=False,
-            perf=perf if perf.enabled else None,
-        )
+    env_dir, worker_tar, manager_tar = setup_manager_and_worker_envs(
+        environment_spec=env_spec,
+        worker_environment_spec=getattr(args, "worker_environment", None),
+        base_dir=args.base_dir,
+        instance_root=str(ctx.root),
+        per_instance_env=per_instance_env,
+        perf=perf if perf.enabled else None,
     )
 
-    # Persist environment pack info for workers fallback
-    try:
-        update_instance_metadata(
-            ctx.metadata_file,
-            {
-                **({"env_dir": str(env_dir)} if env_dir else {}),
-                **(
-                    {"worker_environment_pack": str(worker_environment_pack)}
-                    if worker_environment_pack
-                    else {}
-                ),
-                **(
-                    {"manager_environment_pack": str(manager_environment_pack)}
-                    if manager_environment_pack
-                    else {}
-                ),
-            },
-            merge=True,
-        )
-    except Exception:
-        pass
+    _persist_env_metadata(
+        ctx, env_dir, worker_tar, manager_tar, per_instance_env, env_spec
+    )
+    instance_env = _build_instance_env(args, ctx)
+
+    _display_env_info(env_dir, instance_env)
 
     return EnvironmentContext(
         env_dir=env_dir,
-        worker_pack=str(worker_environment_pack) if worker_environment_pack else None,
-        manager_pack=(
-            str(manager_environment_pack) if manager_environment_pack else None
-        ),
+        worker_pack=worker_tar,
+        manager_pack=manager_tar,
+        instance_env=instance_env,
     )
 
 
@@ -608,6 +605,7 @@ def _run_interactive(
         run_dir=str(ctx.paths["logs"]),
         conda_env_dir=env_ctx.env_dir,
         working_dir=str(ctx.workflow_dir),
+        extra_env=env_ctx.instance_env,
     )
     if jupyter_proc:
         cleanup_manager.register_subprocess(jupyter_proc)
@@ -653,6 +651,7 @@ def _execute_batch(
             run_dir=str(ctx.paths["logs"]),
             conda_env_dir=env_ctx.env_dir,
             working_dir=str(ctx.workflow_dir),
+            extra_env=env_ctx.instance_env,
         )
         execution_success = True
     elif notebook_path:
@@ -664,6 +663,7 @@ def _execute_batch(
             run_dir=str(ctx.paths["logs"]),
             conda_env_dir=env_ctx.env_dir,
             working_dir=str(ctx.workflow_dir),
+            extra_env=env_ctx.instance_env,
         )
         if perf.enabled:
             perf.end_timer(
@@ -716,6 +716,199 @@ def _finalize_run(
 
     if ctx.lock_acquired:
         release_instance_lock(ctx.root)
+
+
+def _resolve_existing_instance_env(
+    args: argparse.Namespace,
+    ctx: InstanceContext,
+) -> Optional[str]:
+    """Resolve the correct conda env dir for an existing (reused) instance.
+
+    Reads per_instance_env and environment_spec from the saved run.json so
+    the same env strategy that was used at creation time is applied on re-run.
+    """
+    import json
+
+    metadata: dict = {}
+    if ctx.metadata_file.exists():
+        try:
+            with open(ctx.metadata_file) as f:
+                metadata = json.load(f)
+        except Exception:
+            pass
+
+    per_instance_env: bool = metadata.get("per_instance_env", False)
+    env_spec: Optional[str] = metadata.get("environment_spec", None)
+
+    if per_instance_env:
+        env_dir = ctx.root / "current_conda_env"
+        if not env_dir.exists():
+            raise RuntimeError(
+                f"Per-instance env expected at {env_dir} but not found. "
+                "The environment directory may have been deleted."
+            )
+        print(f"[floability] Reusing per-instance environment: {env_dir}")
+        return str(env_dir)
+
+    # Shared env path: re-derive (or rebuild if cache was evicted).
+    if env_spec:
+        env_dir_str = _get_or_restore_shared_env(env_spec, args.base_dir)
+        if env_dir_str:
+            print(f"[floability] Using shared environment: {env_dir_str}")
+        else:
+            print(
+                "[floability] No shared environment found; proceeding without conda env."
+            )
+        return env_dir_str
+
+    print("[floability] No environment found; proceeding without conda env.")
+    return None
+
+
+def _get_or_restore_shared_env(env_spec: str, base_dir: str) -> Optional[str]:
+    """Return the shared extracted env dir for a YAML env spec, rebuilding if needed.
+
+    Calls ensure_shared_env so the cache is warm on return.
+    Returns None if the env dir cannot be determined.
+    """
+    # YAML: warm the cache (no-op if already valid, rebuilds if evicted).
+    cache_info = ensure_shared_env(
+        env_spec, base_dir, is_worker_env=False, force=False, perf=None
+    )
+    return str(cache_info.shared_env_dir)
+
+
+def _persist_env_metadata(
+    ctx: InstanceContext,
+    env_dir: Optional[str],
+    worker_tar: Optional[str],
+    manager_tar: Optional[str],
+    per_instance_env: bool,
+    env_spec: Optional[str],
+) -> None:
+    """Persist environment setup results to instance metadata.
+
+    Stores per_instance_env and environment_spec so that _resolve_existing_instance_env
+    can reconstruct the correct env path when an existing instance is reused.
+    """
+    try:
+        update_instance_metadata(
+            ctx.metadata_file,
+            {
+                **({"env_dir": str(env_dir)} if env_dir else {}),
+                **({"worker_environment_pack": str(worker_tar)} if worker_tar else {}),
+                **(
+                    {"manager_environment_pack": str(manager_tar)}
+                    if manager_tar
+                    else {}
+                ),
+                "per_instance_env": per_instance_env,
+                **({"environment_spec": str(env_spec)} if env_spec else {}),
+            },
+            merge=True,
+        )
+    except Exception as e:
+        print(f"[floability] Warning: could not persist env metadata: {e}")
+
+
+def _build_instance_env(
+    args: argparse.Namespace,
+    ctx: InstanceContext,
+) -> dict:
+    """Build the per-instance subprocess environment dict.
+
+    Combines the current process environment with:
+      - TaskVine manager identity (VINE_MANAGER_NAME, VINE_MANAGER_PORTS)
+      - PyUser overlay (PYTHONUSERBASE, PIP_USER=1) so workflows can
+        ``pip install`` packages into a per-instance directory without
+        mutating the shared (possibly immutable) base conda environment.
+      - Any user-supplied KEY=VALUE pairs from --env-vars.
+
+    This dict is passed as ``env=`` to every subprocess (JupyterLab,
+    notebook execution, Python script execution) so all three modes
+    see a consistent environment regardless of whether the shared or
+    per-instance conda env strategy is in use.
+    """
+    env = os.environ.copy()
+
+    # TaskVine manager identity — must be per-instance; cannot bake into shared env.
+    env["VINE_MANAGER_NAME"] = getattr(args, "manager_name", "") or ""
+    env["VINE_MANAGER_PORTS"] = getattr(args, "manager_ports", "9123,9150")
+
+    # PyUser overlay: per-instance pip install directory keeps the base env immutable.
+    pyuser_dir = Path(ctx.root) / "pyuser"
+    pyuser_dir.mkdir(exist_ok=True)
+    env["PYTHONUSERBASE"] = str(pyuser_dir)
+    env["PIP_USER"] = "1"
+
+    # User-supplied --env-vars KEY=VALUE,...
+    for pair in (getattr(args, "env_vars", None) or "").split(","):
+        if "=" in pair:
+            k, v = pair.split("=", 1)
+            env[k.strip()] = v.strip()
+
+    return env
+
+
+def _display_env_info(env_dir: Optional[str], instance_env: dict) -> None:
+    """Display information about the active environment.
+
+    Runs a short Python snippet inside the conda env (via conda run) to report
+    sys.prefix, sys.path, CONDA_PREFIX, and ndcctools version.  Also prints the
+    TaskVine manager identity from instance_env so it is easy to confirm which
+    manager the workflow will connect to.
+    """
+    sep = "=" * 60
+    print(f"\n{sep}")
+    print("[floability] Instance Environment Info")
+    print(sep)
+
+    if not env_dir:
+        print("  Conda env          : (none — using system Python)")
+        print(sep + "\n")
+        return
+    
+    snippet = (
+        "import sys, os, platform\n"
+        "print('Python Version:', platform.python_version())\n"
+        "print('Python executable:', sys.executable)\n"
+        "print('sys.prefix  :', sys.prefix)\n"
+        "print('CONDA_PREFIX:', os.environ.get('CONDA_PREFIX', '(not set)'))\n"
+        "print('VINE_MANAGER_NAME  :', os.environ.get('VINE_MANAGER_NAME', '(not set)'))\n"
+        "print('VINE_MANAGER_PORTS :', os.environ.get('VINE_MANAGER_PORTS', '(not set)'))\n"
+        "try:\n"
+        "    import ndcctools.taskvine as vine\n"
+        "    ver = getattr(vine, '__version__', None) or getattr(vine, 'version', '(unknown)')\n"
+        "except ImportError:\n"
+        "    ver = '(not installed)'\n"
+        "print('ndcctools   :', ver)\n"
+    )
+
+    try:
+        result = subprocess.run(
+            [
+                "conda",
+                "run",
+                "--prefix",
+                env_dir,
+                "--no-capture-output",
+                "python",
+                "-c",
+                snippet,
+            ],
+            env=instance_env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        for line in result.stdout.strip().splitlines():
+            print(f"  {line}")
+        if result.returncode != 0 and result.stderr:
+            print(f"  [warn] {result.stderr.strip().splitlines()[-1]}")
+    except Exception as e:
+        print(f"  [warn] Could not introspect conda env: {e}")
+
+    print(sep + "\n")
 
 
 def _cleanup_and_abort(

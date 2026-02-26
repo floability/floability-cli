@@ -65,6 +65,7 @@ def start_jupyterlab(
     run_dir: str = "/tmp",
     conda_env_dir: str = None,
     working_dir: str = None,
+    extra_env: dict = None,
 ):
 
     cmd = [
@@ -103,6 +104,7 @@ def start_jupyterlab(
         with open(stdout_file, "w") as stdout:
             proc = subprocess.Popen(
                 cmd,
+                env=extra_env,
                 stdout=stdout,
                 stderr=stdout,
                 text=True,
@@ -133,6 +135,7 @@ def execute_notebook(
     run_dir: str = "/tmp",
     conda_env_dir: str = None,
     working_dir: str = None,
+    extra_env: dict = None,
 ):
 
     cmd = [
@@ -160,6 +163,7 @@ def execute_notebook(
         with open(stdout_file, "w") as stdout:
             proc = subprocess.Popen(
                 cmd,
+                env=extra_env,
                 stdout=stdout,
                 stderr=stdout,
                 text=True,
