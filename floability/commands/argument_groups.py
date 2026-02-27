@@ -152,7 +152,7 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
 
     vf_group.add_argument(
         "--batch-type",
-        default="local",
+        default=None,
         choices=["local", "condor", "uge", "slurm"],
         help="Batch system for vine_factory (default=local).",
     )
@@ -160,14 +160,14 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
     vf_group.add_argument(
         "--workers",
         type=int,
-        default=5,
+        default=None,
         help="Maximum number of workers for vine_factory (default=5).",
     )
 
     vf_group.add_argument(
         "--cores-per-worker",
         type=int,
-        default=1,
+        default=None,
         help="Cores requested per worker (default=1).",
     )
 

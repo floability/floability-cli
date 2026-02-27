@@ -68,7 +68,8 @@ def start_workers_for_instance(
         )
 
     logs_dir = str(instance_path / "logs")
-
+    
+    # Normalize worker settings from all sources (defaults, metadata, compute spec, CLI)
     cfg = _normalize_compute_specs(cli_args, metadata, worker_pack)
 
     print(f"[workers] Starting {worker_provider} for instance: {instance_path}")
