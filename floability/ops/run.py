@@ -529,15 +529,10 @@ def _start_workers(
         return None
 
     print("[floability] worker factory startup")
+
     factory_proc = start_workers_for_instance(
         instance_path=ctx.root,
-        batch_type=getattr(args, "batch_type", None),
-        workers=getattr(args, "workers", None),
-        cores_per_worker=getattr(args, "cores_per_worker", None),
-        batch_options=getattr(args, "batch_options", None),
-        compute_spec=getattr(args, "compute_spec", None),
-        debug_workers=getattr(args, "debug_workers", False),
-        use_manager_env_for_factory=getattr(args, "use_manager_env_for_factory", True),
+        cli_args=args,
         env_dir=env_ctx.env_dir,
         instance_env=env_ctx.instance_env,
     )
