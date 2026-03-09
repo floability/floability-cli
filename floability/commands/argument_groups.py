@@ -26,11 +26,11 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--environment",
-        help="Path to environment.yml or environment.tar.gz (optional).",
+        help="Path to environment.yml (optional).",
     )
     parser.add_argument(
         "--worker-environment",
-        help="Path to worker-environment.yml or worker-environment.tar.gz (optional).",
+        help="Path to worker-environment.yml (optional).",
     )
 
     parser.add_argument("--notebook", help="Path to a .ipynb file (optional).")
@@ -125,11 +125,6 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
         "--python-script",
         help="Path to a Python (.py) file to execute (optional).",
     )
-    parser.add_argument(
-        "--prefer-instance",
-        action="store_true",
-        help="For a new backpack-based run, skip environment setup and reuse current local environment (advanced).",
-    )
 
     parser.add_argument(
         "--measure-performance",
@@ -142,6 +137,12 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
         required=False,
         help="Comma-separated list of KEY=VALUE pairs to set inside the conda environment.",
     )
+    
+    parser.add_argument(
+        "--per-instance-env",
+        action="store_true",
+        help="Use a separate conda environment for each instance (default: use shared environment).",
+    )
 
     # vine_factory specific arguments
     vf_group = parser.add_argument_group(
@@ -151,7 +152,7 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
 
     vf_group.add_argument(
         "--batch-type",
-        default="local",
+        default=None,
         choices=["local", "condor", "uge", "slurm"],
         help="Batch system for vine_factory (default=local).",
     )
@@ -159,14 +160,14 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
     vf_group.add_argument(
         "--workers",
         type=int,
-        default=5,
+        default=None,
         help="Maximum number of workers for vine_factory (default=5).",
     )
 
     vf_group.add_argument(
         "--cores-per-worker",
         type=int,
-        default=1,
+        default=None,
         help="Cores requested per worker (default=1).",
     )
 

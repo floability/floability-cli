@@ -111,7 +111,6 @@ Example `run.json`:
     "no_worker": "False",
     "prefer_python": "False",
     "python_script": null,
-    "prefer_instance": "False",
     "measure_performance": "True",
     "env_vars": null,
     "batch_type": "local",

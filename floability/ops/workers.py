@@ -31,12 +31,7 @@ def start_workers(args):
     try:
         proc = start_workers_for_instance(
             instance_path=instance_path,
-            batch_type=getattr(args, "batch_type", None),
-            workers=getattr(args, "workers", None),
-            cores_per_worker=getattr(args, "cores_per_worker", None),
-            batch_options=getattr(args, "batch_options", None),
-            compute_spec=getattr(args, "compute_spec", None),
-            debug_workers=getattr(args, "debug_workers", False),
+            cli_args=args,
         )
         if proc:
             print(

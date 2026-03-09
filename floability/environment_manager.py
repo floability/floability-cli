@@ -11,176 +11,297 @@ import textwrap
 import time
 from pathlib import Path
 from typing import Optional, Tuple
+from dataclasses import dataclass
 
 
-def fix_file_timestamps(env_path: str):
+# -----------------------------------------------------------------------------
+# Data Classes
+# -----------------------------------------------------------------------------
+
+
+@dataclass
+class EnvCacheInfo:
+    """Resolved paths for a cached conda environment."""
+
+    file_hash: str
+    shared_env_dir: Path  # .../flo_common_env/extracted_envs/env_<hash>/
+    tar_path: Path  # .../flo_common_env/tarballs/env_<hash>.tar.gz
+
+
+# -----------------------------------------------------------------------------
+# Public API
+# -----------------------------------------------------------------------------
+
+
+def setup_manager_and_worker_envs(
+    environment_spec: str,
+    worker_environment_spec: Optional[str],
+    base_dir: str,
+    instance_root: str,
+    per_instance_env: bool = False,
+    perf=None,
+) -> Tuple[str, str, str]:
+    """Set up manager and worker conda environments.
+
+    Manager environment:
+      Warms the shared env cache from the YAML spec (no-op if already valid).
+      per_instance_env=True  → extract tar into <instance_root>/current_conda_env.
+      per_instance_env=False → point env_dir at the shared extracted base.
+
+    Worker environment:
+      - worker_environment_spec provided → build a separate worker env.
+      - None → reuse the manager tarball.
+
+    Args:
+        environment_spec:        Path to manager environment.yml (required).
+        worker_environment_spec: Path to worker environment.yml, or None.
+        base_dir:                Base directory for floability cache files.
+        instance_root:           Instance root directory.
+        per_instance_env:        Extract a dedicated conda env per instance.
+        perf:                    Optional PerformanceTracker.
+
+    Returns:
+        (env_dir, worker_tar, manager_tar)
+          env_dir     — active manager conda env path (shared or per-instance).
+          worker_tar  — worker conda-pack tarball path.
+          manager_tar — manager conda-pack tarball path.
     """
-    Fix files with invalid timestamps (None mtime) that cause conda-pack to fail.
-    This can happen after post-install scripts create files.
-    """
-    current_time = time.time()
-    fixed_count = 0
-    
-    print(f"[environment] Checking and fixing file timestamps in {env_path}")
-    
-    for root, dirs, files in os.walk(env_path):
-        for file in files:
-            filepath = os.path.join(root, file)
-            try:
-                # Check if file has valid mtime
-                stat_info = os.stat(filepath)
-                if stat_info.st_mtime is None or stat_info.st_mtime == 0:
-                    # Fix invalid timestamp
-                    os.utime(filepath, (current_time, current_time))
-                    fixed_count += 1
-            except (OSError, IOError) as e:
-                # Handle cases where file might not be accessible
-                try:
-                    # Try to set a valid timestamp anyway
-                    os.utime(filepath, (current_time, current_time))
-                    fixed_count += 1
-                except (OSError, IOError):
-                    # If we still can't fix it, just continue
-                    print(f"[environment] Warning: Could not fix timestamp for {filepath}: {e}")
-                    continue
-    
-    if fixed_count > 0:
-        print(f"[environment] Fixed timestamps for {fixed_count} files")
 
-
-def create_conda_pack_from_yml(
-    env_yml: str,
-    force: bool = False,
-    output_file: str = None,
-    base_dir: str = "~/floability-base-dir",
-    run_dir: str = "/tmp",
-    manager_name: str = None,
-    manager_ports: str = "9123,9150",
-    is_worker_env: bool = False,
-) -> str:
-    # Expand ~ to home directory
     base_dir = os.path.expanduser(base_dir)
-    
-    # Prepare shared directories for env cache
+    instance_root = os.path.expanduser(instance_root)
+    environment_spec = os.path.expanduser(environment_spec)
+
+    # ── Manager environment ──────────────────────────────────────────────────
+    print("[floability] environment setup — warming cache from YAML spec.")
+    cache_info = ensure_shared_env(
+        environment_spec, base_dir, is_worker_env=False, perf=perf
+    )
+    manager_tar = str(cache_info.tar_path)
+
+    if per_instance_env:
+        print("[floability] per-instance-env: extracting dedicated environment.")
+        env_dir = extract_env_to_instance(manager_tar, instance_root, perf)
+    else:
+        env_dir = str(cache_info.shared_env_dir)
+        print(f"[floability] Using shared immutable environment: {env_dir}")
+
+    # ── Worker environment ───────────────────────────────────────────────────
+    if worker_environment_spec:
+        worker_environment_spec = os.path.expanduser(worker_environment_spec)
+        print("[floability] worker environment — warming cache from YAML spec.")
+        worker_cache = ensure_shared_env(
+            worker_environment_spec, base_dir, is_worker_env=True, perf=perf
+        )
+        worker_tar = str(worker_cache.tar_path)
+        print(
+            f"[floability] Worker environment differs from manager. Worker pack: {worker_tar}"
+        )
+    else:
+        worker_tar = manager_tar  # reuse manager pack
+
+    return env_dir, worker_tar, manager_tar
+
+
+def ensure_shared_env(
+    env_yml: str,
+    base_dir: str,
+    is_worker_env: bool = False,
+    force: bool = False,
+    perf=None,
+) -> EnvCacheInfo:
+    """Ensure the shared cached environment exists for a given YAML spec.
+
+    Decision logic (both checks are independent):
+      - need_create: force OR shared_env_dir is missing / has no bin/python
+      - need_pack:   force OR tar_path does not exist
+
+    If need_create, removes any stale shared_env_dir first, then calls
+    _create_conda_env.  If need_pack, calls _pack_conda_env.
+    Returns an EnvCacheInfo whose shared_env_dir and tar_path are guaranteed
+    to exist and be valid after this call.
+    """
+    env_yml = os.path.expanduser(env_yml)
+    cache_info = _resolve_env_cache_paths(env_yml, base_dir)
+
+    need_create = force or not _is_shared_env_valid(cache_info.shared_env_dir)
+    need_pack = force or not cache_info.tar_path.exists()
+
+    if not need_create and not need_pack:
+        print(
+            f"[environment] Cache hit — shared env: {cache_info.shared_env_dir}, "
+            f"tarball: {cache_info.tar_path}"
+        )
+        return cache_info
+
+    env_type = "worker" if is_worker_env else "manager"
+
+    if need_create:
+        if cache_info.shared_env_dir.exists():
+            print(
+                f"[environment] Removing stale shared env: {cache_info.shared_env_dir}"
+            )
+            _make_dir_writable(str(cache_info.shared_env_dir))
+            shutil.rmtree(cache_info.shared_env_dir, ignore_errors=True)
+
+        timer = f"{env_type}_env_creation"
+        if perf:
+            perf.start_timer(timer)
+        _create_conda_env(env_yml, str(cache_info.shared_env_dir), is_worker_env)
+        if perf:
+            perf.end_timer(timer, f"Time to create {env_type} conda environment")
+
+    if need_pack:
+        if perf:
+            perf.start_timer("pack_environment")
+        _pack_conda_env(str(cache_info.shared_env_dir), str(cache_info.tar_path))
+        if perf:
+            perf.end_timer("pack_environment", "Time to pack conda environment")
+            perf.measure_file_size(
+                str(cache_info.tar_path), f"{env_type}_environment_pack"
+            )
+
+    print(f"[environment] Locking shared env as read-only: {cache_info.shared_env_dir}")
+    _make_dir_readonly(str(cache_info.shared_env_dir))
+
+    return cache_info
+
+
+def extract_env_to_instance(
+    tar_path: str,
+    instance_root: str,
+    perf=None,
+) -> str:
+    """Extract a conda-pack tarball into <instance_root>/current_conda_env.
+
+    Runs conda-unpack to fix baked-in absolute paths after extraction.
+    Does NOT write any env vars into activation scripts — those are
+    injected at the process level via _build_instance_env in ops/run.py.
+
+    Returns the path to the extracted env directory.
+    Raises RuntimeError on failure.
+    """
+    from .utils import safe_extract_tar
+
+    env_dir = os.path.abspath(
+        os.path.join(os.path.expanduser(instance_root), "current_conda_env")
+    )
+    print(f"[floability] Extracting environment to: {env_dir}")
+
+    try:
+        if perf:
+            perf.start_timer("extract_environment")
+        os.makedirs(env_dir, exist_ok=True)
+        safe_extract_tar(Path(tar_path), Path(env_dir))
+        if perf:
+            perf.end_timer("extract_environment", "Time to extract conda environment")
+            perf.measure_file_size(env_dir, "extracted_environment")
+    except Exception as e:
+        raise RuntimeError(f"Error extracting environment: {e}")
+
+    try:
+        subprocess.run(
+            [
+                "conda",
+                "run",
+                "--prefix",
+                env_dir,
+                "--no-capture-output",
+                "conda-unpack",
+            ],
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Error running conda-unpack: {e}")
+
+    return env_dir
+
+
+# -----------------------------------------------------------------------------
+# Private Helpers — Level 1
+# (called directly by the public methods above)
+# -----------------------------------------------------------------------------
+
+
+def _resolve_env_cache_paths(env_yml: str, base_dir: str) -> EnvCacheInfo:
+    """Compute hash and resolve all standard cache directory paths for a YAML spec.
+
+    Creates the cache directory structure if it does not yet exist.
+    Does NOT create or validate the environment itself.
+    """
+    base_dir = os.path.expanduser(base_dir)
     common_env_dir = os.path.join(base_dir, "flo_common_env")
     extracted_envs_dir = os.path.join(common_env_dir, "extracted_envs")
     tarballs_dir = os.path.join(common_env_dir, "tarballs")
     os.makedirs(extracted_envs_dir, exist_ok=True)
     os.makedirs(tarballs_dir, exist_ok=True)
 
-    # Generate a unique filename based on the hash of the environment file content
-    # and post-install script content (if present)
-    with open(env_yml, "r") as f:
-        raw_content = f.read()
-    
-    # Load env data to check for post-install script
-    env_data = yaml.safe_load(raw_content)
-    post_install_script = env_data.get("post_install_script", None)
-    
-    # Include post-install script content in hash if present
-    hash_content = raw_content
-    if post_install_script:
-        script_dir = os.path.dirname(env_yml)
-        if not os.path.isabs(post_install_script):
-            post_install_script_path = os.path.join(script_dir, post_install_script)
-        else:
-            post_install_script_path = post_install_script
-            
-        if os.path.exists(post_install_script_path):
-            with open(post_install_script_path, "r") as f:
-                script_content = f.read()
-            hash_content += script_content
-        else:
-            print(f"[environment] Warning: Post-install script not found: {post_install_script_path}")
-    
-    cleaned_content = "".join(hash_content.split())
-    file_hash = hashlib.md5(cleaned_content.encode("utf-8")).hexdigest()
+    file_hash = _compute_env_hash(env_yml)
+    return EnvCacheInfo(
+        file_hash=file_hash,
+        shared_env_dir=Path(extracted_envs_dir) / f"env_{file_hash}",
+        tar_path=Path(tarballs_dir) / f"env_{file_hash}.tar.gz",
+    )
 
-    extracted_env_path = os.path.join(extracted_envs_dir, f"env_{file_hash}")
-    if output_file is None:
-        output_file = os.path.join(tarballs_dir, f"env_{file_hash}.tar.gz")
 
-    print(f"[environment] Output file: {output_file}")
+def _is_shared_env_valid(shared_env_dir: Path) -> bool:
+    """Return True if the shared extracted env directory looks healthy (has bin/python)."""
+    python_exe = shared_env_dir / "bin" / "python"
+    return shared_env_dir.is_dir() and python_exe.exists()
 
-    # If both extracted env and tarball exist and not forced, reuse
-    if os.path.exists(extracted_env_path) and os.path.exists(output_file) and not force:
-        print(
-            f"[environment] Using cached extracted env at '{extracted_env_path}' and tarball '{output_file}'."
-        )
-        return output_file
+
+def _create_conda_env(env_yml: str, env_path: str, is_worker_env: bool) -> None:
+    """Create a conda environment unconditionally from a YAML spec.
+
+    Injects required packages (jupyter+cloudpickle for manager,
+    python+cloudpickle for worker) and runs an optional post-install
+    script defined via the ``post_install_script`` key in the YAML.
+
+    Raises subprocess.CalledProcessError on failure.
+    """
 
     if is_worker_env:
         required_packages = ["python", "cloudpickle"]
-        print(
-            "[environment] Creating worker environment (no Jupyter or ndcctools required)"
-        )
+        print("[environment] Creating worker environment (python + cloudpickle)")
     else:
-        required_packages = ["jupyter",  "cloudpickle"]
-        # print("[environment] Creating manager environment with Jupyter and ndcctools")
+        required_packages = ["python", "jupyter", "cloudpickle"]
+        print("[environment] Creating manager environment (jupyter + cloudpickle)")
 
-    env_path = extracted_env_path
-    if os.path.exists(env_path) and force:
-        print(f"[environment] [force] Removing shared cached base env: {env_path}")
-        shutil.rmtree(env_path, ignore_errors=True)
-    os.makedirs(os.path.dirname(env_path), exist_ok=True)
+    with open(env_yml, "r") as f:
+        env_data = yaml.safe_load(f)
 
-    # Determine whether we need to (re)create and/or (re)pack
-    # Check if environment exists and is valid (has python executable and core packages)
-    env_is_valid = False
-    if os.path.exists(env_path):
-        # Check if the environment has a python executable
-        python_exe = os.path.join(env_path, "bin", "python")
-        if os.path.exists(python_exe):
-            # Additional validation - check if required packages are installed
-            env_is_valid = True
-        else:
-            print(f"[environment] Environment directory exists but is incomplete (no python executable)")
-    
-    need_create = not env_is_valid
-    need_pack = force or not os.path.exists(output_file)
-    
-    if need_create and os.path.exists(env_path):
-        print(f"[environment] Removing incomplete environment: {env_path}")
-        shutil.rmtree(env_path, ignore_errors=True)
+    if "dependencies" not in env_data:
+        env_data["dependencies"] = []
+    for pkg in required_packages:
+        if pkg not in env_data["dependencies"]:
+            env_data["dependencies"].append(pkg)
 
-    modified_yml = None
-    wrapper_script = None
-
-    try:
-        # Load and adjust env spec
-        with open(env_yml, "r") as f:
-            env_data = yaml.safe_load(f)
-
-        if "dependencies" not in env_data:
-            env_data["dependencies"] = []
-
-        for pkg in required_packages:
-            if pkg not in env_data["dependencies"]:
-                env_data["dependencies"].append(pkg)
-
-        # Do not inject manager-specific variables into the base env YAML.
-        # These will be applied per-instance (clone/extracted) or via process env.
-
-        # Check for post-installation script in the environment YAML
-        post_install_script = env_data.get("post_install_script", None)
-
-        if post_install_script:
-            script_dir = os.path.dirname(env_yml)
-            if not os.path.isabs(post_install_script):
-                post_install_script = os.path.join(script_dir, post_install_script)
-
+    if "ndcctools" not in env_data["dependencies"]:
+        # Note: we are not makiing it required, becasue sometimes we need custom instalation steps for ndcctools (e.g., from source)
+        # but we warn the user if it's not included, since it's required for TaskVine workflows and easy to forget.
         print(
-            f"[environment] Creating environment with the following packages: {env_data['dependencies']}"
+            "=" * 50,
+            "[environment] Warning: 'ndcctools' not found in dependencies. ",
+            "If your workflow uses TaskVine, you should include 'ndcctools' in your environment.yml",
+            "=" * 50,
         )
 
-        if post_install_script:
-            print(f"[environment] Post-installation script: {post_install_script}")
+    # Resolve post-install script before stripping the key from env_data
+    post_install_script = env_data.pop("post_install_script", None)
+    if post_install_script:
+        script_dir = os.path.dirname(env_yml)
+        post_install_script = (
+            post_install_script
+            if os.path.isabs(post_install_script)
+            else os.path.join(script_dir, post_install_script)
+        )
+        print(f"[environment] Post-installation script: {post_install_script}")
 
-        # Remove post_install_script from env_data before writing to modified YAML
-        if "post_install_script" in env_data:
-            del env_data["post_install_script"]
+    print(f"[environment] Packages: {env_data['dependencies']}")
+    print(f"[environment] Creating env at: {env_path}")
 
-        # Write modified YAML to a secure temporary file
+    modified_yml: Optional[str] = None
+    wrapper_script: Optional[str] = None
+    try:
         tmp = tempfile.NamedTemporaryFile(
             mode="w", suffix=".yml", prefix="floability_env_", delete=False
         )
@@ -191,10 +312,8 @@ def create_conda_pack_from_yml(
         finally:
             tmp.close()
 
-        # Create environment if needed
-        if need_create:
-            print(f"[environment] Creating env from '{env_yml}' into '{env_path}'...")
-            cmd_create = [
+        subprocess.run(
+            [
                 "conda",
                 "env",
                 "create",
@@ -202,345 +321,188 @@ def create_conda_pack_from_yml(
                 modified_yml,
                 "--prefix",
                 env_path,
-            ]
-            subprocess.run(cmd_create, check=True)
+            ],
+            check=True,
+        )
 
-            # Run an optional post-installation script inside the newly created environment
-            if post_install_script and os.path.exists(post_install_script):
-                wrapper_script = os.path.join(env_path, "_exec_post_install.sh")
-                script = textwrap.dedent(
-                    f"""\
-                    #!/bin/bash
-                    # Initialize Conda in Bash
-                    eval "$(conda shell.bash hook)"
+        # Optional post-install script
+        if post_install_script and os.path.exists(post_install_script):
+            wrapper_script = os.path.join(env_path, "_exec_post_install.sh")
+            script = textwrap.dedent(
+                f"""\
+                #!/bin/bash
+                # Initialize Conda in Bash
+                eval "$(conda shell.bash hook)"
 
-                    # Activate the environment
-                    conda activate {env_path}
+                # Activate the environment
+                conda activate {env_path}
 
-                    # Set CONDA_PREFIX
-                    export CONDA_PREFIX={env_path}
+                # Set CONDA_PREFIX
+                export CONDA_PREFIX={env_path}
 
-                    echo "[environment] Activated environment at $CONDA_PREFIX"
+                echo "[environment] Activated environment at $CONDA_PREFIX"
 
-                    # Execute the user-provided script
-                    bash {post_install_script}
+                # Execute the user-provided script
+                bash {post_install_script}
 
-                    # Exit with script's status
-                    exit $?
-                    """
+                # Exit with script's status
+                exit $?
+                """
+            )
+            with open(wrapper_script, "w") as wf:
+                wf.write(script)
+            os.chmod(wrapper_script, 0o755)
+            print(script)
+            result = subprocess.run(["bash", wrapper_script], check=False)
+            if result.returncode != 0:
+                print(
+                    f"[environment] Post-install script failed (code {result.returncode})"
                 )
-                with open(wrapper_script, "w") as wf:
-                    wf.write(script)
-                os.chmod(wrapper_script, 0o755)
-                print(script)
-                result = subprocess.run(["bash", wrapper_script], check=False)
-                if result.returncode != 0:
-                    print(
-                        f"[environment] Post-installation script failed with code {result.returncode}"
-                    )
-                    raise subprocess.CalledProcessError(
-                        result.returncode, wrapper_script
-                    )
-                else:
-                    print(
-                        f"[environment] Post-installation script executed successfully."
-                    )
+                raise subprocess.CalledProcessError(result.returncode, wrapper_script)
+            print("[environment] Post-install script executed successfully.")
 
-        # Pack environment if needed
-        if need_pack:
-            # Fix any files with invalid timestamps before packing
-            fix_file_timestamps(env_path)
-            
-            print(f"[environment] Packing environment into '{output_file}'...")
-            cmd_pack = ["conda-pack", "-p", env_path, "-o", output_file, "--force"]
-            subprocess.run(cmd_pack, check=True)
-            print(f"[environment] Environment successfully packed: {output_file}")
-
-    except subprocess.CalledProcessError as e:
-        print(f"[environment] Error creating or packing environment: {e}")
+    except subprocess.CalledProcessError:
         raise
     finally:
-        # Best-effort cleanup of the temporary modified YAML and wrapper
-        if modified_yml:
+        if modified_yml and os.path.exists(modified_yml):
             try:
-                if os.path.exists(modified_yml):
-                    os.remove(modified_yml)
+                os.remove(modified_yml)
             except Exception:
                 pass
-        if wrapper_script:
+        if wrapper_script and os.path.exists(wrapper_script):
             try:
-                if os.path.exists(wrapper_script):
-                    os.remove(wrapper_script)
+                os.remove(wrapper_script)
             except Exception:
                 pass
 
-    return output_file
 
+def _pack_conda_env(env_path: str, tar_path: str) -> None:
+    """Pack an existing conda environment into a tarball unconditionally.
 
-# Higher-level environment management functions
-
-
-def prepare_conda_environment(
-    environment_spec: str,
-    base_dir: str,
-    run_dir: str,
-    manager_name: str,
-    is_worker_env: bool = False,
-    force: bool = False,
-    perf=None,  # PerformanceTracker
-) -> str:
+    Fixes file timestamps first (conda-pack fails on files with mtime=0/None).
+    Raises subprocess.CalledProcessError on failure.
     """
-    Create or resolve a conda-pack environment file.
-
-    Args:
-        environment_spec: Path to environment.yml or .tar.gz file
-        base_dir: Base directory for floability files
-        run_dir: Run directory
-        manager_name: Manager name for the environment
-        is_worker_env: Whether this is a worker environment
-        force: Force recreation of environment
-        perf: Optional performance tracker
-
-    Returns:
-        Path to the conda-pack .tar.gz file
-    """
-    # Expand ~ in paths
-    base_dir = os.path.expanduser(base_dir)
-    environment_spec = os.path.expanduser(environment_spec)
-    
-    env_file_path = Path(environment_spec)
-    ext = env_file_path.suffix
-
-    # If already a packed environment, return it
-    if ext in [".tar", ".gz"] or str(environment_spec).endswith(".tar.gz"):
-        print(f"[floability] Using conda-pack from '{environment_spec}'")
-        return str(env_file_path.resolve())
-
-    # Create conda-pack from YAML
-    env_type = "worker" if is_worker_env else "manager"
-    print(f"[floability] Creating {env_type} conda-pack from '{environment_spec}'")
-
-    timer_name = f"{env_type}_env_creation"
-    if perf:
-        perf.start_timer(timer_name)
-
-    environment_pack = create_conda_pack_from_yml(
-        env_yml=environment_spec,
-        force=force,
-        base_dir=base_dir,
-        run_dir=run_dir,
-        manager_name=manager_name,
-        is_worker_env=is_worker_env,
+    _fix_file_timestamps(env_path)
+    print(f"[environment] Packing '{env_path}' → '{tar_path}'")
+    subprocess.run(
+        ["conda-pack", "-p", env_path, "-o", tar_path, "--force"],
+        check=True,
     )
-
-    if perf:
-        perf.end_timer(timer_name, f"Time to create {env_type} conda environment")
-        perf.measure_file_size(environment_pack, f"{env_type}_environment_pack")
-
-    return environment_pack
+    print(f"[environment] Packed: {tar_path}")
 
 
-def extract_conda_environment(
-    environment_pack: str,
-    extract_dir: str,
-    manager_name: str,
-    manager_ports: str = "9123,9150",
-    env_vars: Optional[str] = None,
-    perf=None,  # PerformanceTracker
-) -> str:
+# -----------------------------------------------------------------------------
+# Private Helpers — Level 2
+# (called by level-1 helpers above)
+# -----------------------------------------------------------------------------
+
+
+def _compute_env_hash(env_yml: str) -> str:
+    """Compute a content-based MD5 hash for an environment YAML file.
+
+    Includes the content of any referenced post_install_script so that
+    changes to the script also invalidate the cache.
     """
-    Extract a conda-pack environment and configure it.
+    with open(env_yml, "r") as f:
+        raw_content = f.read()
 
-    Args:
-        environment_pack: Path to the conda-pack .tar.gz file
-        extract_dir: Directory where environment should be extracted
-        manager_name: Manager name to set in environment
-        manager_ports: Manager ports to set in environment
-        env_vars: Additional environment variables to set
-        perf: Optional performance tracker
+    env_data = yaml.safe_load(raw_content)
+    hash_content = raw_content
 
-    Returns:
-        Path to the extracted environment directory
-    """
-    from .utils import safe_extract_tar, update_env_vars_in_conda
-
-    # Expand ~ and make extract_dir absolute to avoid working directory issues
-    extract_dir = os.path.expanduser(extract_dir)
-    env_dir = os.path.abspath(extract_dir)
-    print(f"[floability] Conda environment directory: {env_dir}")
-    # Fast path: if environment_pack looks like our cached tarball name env_<hash>.tar.gz,
-    # try cloning from the shared extracted env to the instance directory.
-    pack_name = os.path.basename(environment_pack)
-    cloned = False
-    prefer_clone = False #Todo: this is temp flag to test performance of cloning vs extraction
-    if prefer_clone and pack_name.startswith("env_") and pack_name.endswith(".tar.gz"):
-        file_hash = pack_name[len("env_") : -len(".tar.gz")]
-        # Derive common extracted path based on the tarball's parent structure
-        # Assume layout: .../flo_common_env/tarballs/env_<hash>.tar.gz
-        tarballs_dir = os.path.dirname(environment_pack)
-        common_env_dir = os.path.dirname(tarballs_dir)
-        extracted_envs_dir = os.path.join(common_env_dir, "extracted_envs")
-        candidate = os.path.join(extracted_envs_dir, f"env_{file_hash}")
-        if os.path.isdir(candidate):
-            try:
-                if perf:
-                    perf.start_timer("clone_environment")
-                print(
-                    f"[floability] Cloning cached env '{candidate}' -> '{env_dir}' ..."
-                )
-                subprocess.run(
-                    [
-                        "conda",
-                        "create",
-                        "--yes",
-                        "--prefix",
-                        env_dir,
-                        "--clone",
-                        candidate,
-                    ],
-                    check=True,
-                )
-                if perf:
-                    perf.end_timer(
-                        "clone_environment", "Time to clone conda environment"
-                    )
-                cloned = True
-            except subprocess.CalledProcessError as e:
-                print(
-                    f"[floability] Warning: conda clone failed, falling back to extraction: {e}"
-                )
-
-    if not cloned:
-        # Fallback: extract the tarball into env_dir
-        try:
-            if perf:
-                perf.start_timer("extract_environment")
-
-            # Ensure target directory exists only for extraction path
-            os.makedirs(env_dir, exist_ok=True)
-
-            safe_extract_tar(Path(environment_pack), Path(env_dir))
-
-            if perf:
-                perf.end_timer(
-                    "extract_environment", "Time to extract conda environment"
-                )
-                perf.measure_file_size(env_dir, "extracted_environment")
-        except Exception as e:
-            raise RuntimeError(f"Error extracting environment: {e}")
-        # Run conda-unpack to fix paths after extraction
-        try:
-            subprocess.run(
-                [
-                    "conda",
-                    "run",
-                    "--prefix",
-                    env_dir,
-                    "--no-capture-output",
-                    "conda-unpack",
-                ],
-                check=True,
+    post_install_script = env_data.get("post_install_script", None)
+    if post_install_script:
+        script_dir = os.path.dirname(env_yml)
+        script_path = (
+            post_install_script
+            if os.path.isabs(post_install_script)
+            else os.path.join(script_dir, post_install_script)
+        )
+        if os.path.exists(script_path):
+            with open(script_path, "r") as f:
+                hash_content += f.read()
+        else:
+            print(
+                f"[environment] Warning: Post-install script not found at {script_path}"
             )
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Error running conda-unpack: {e}")
 
-    # Update the manager name and other variables in the (cloned or extracted) environment
-    update_env_vars_in_conda(env_dir, manager_name, manager_ports, env_vars)
-
-    return env_dir
+    cleaned = "".join(hash_content.split())
+    return hashlib.md5(cleaned.encode("utf-8")).hexdigest()
 
 
-def setup_manager_and_worker_envs(
-    environment_spec: Optional[str],
-    worker_environment_spec: Optional[str],
-    base_dir: str,
-    instance_root: str,
-    manager_name: str,
-    manager_ports: str = "9123,9150",
-    env_vars: Optional[str] = None,
-    force: bool = False,
-    perf=None,  # PerformanceTracker
-) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def _make_dir_readonly(path: str) -> None:
+    """Recursively remove write permission from all files and directories.
+
+    After this call any attempt to write into the directory (e.g. an accidental
+    ``pip install`` against the shared base env) will raise PermissionError.
+    Call _make_dir_writable before rmtree to allow deletion.
     """
-    Set up both manager and worker conda environments.
+    for root, dirs, files in os.walk(path):
+        for name in dirs:
+            try:
+                p = os.path.join(root, name)
+                os.chmod(p, os.stat(p).st_mode & ~0o222)
+            except OSError:
+                pass
+        for name in files:
+            try:
+                p = os.path.join(root, name)
+                os.chmod(p, os.stat(p).st_mode & ~0o222)
+            except OSError:
+                pass
+    # Also lock the root directory itself
+    try:
+        os.chmod(path, os.stat(path).st_mode & ~0o222)
+    except OSError:
+        pass
 
-    Args:
-        environment_spec: Path to manager environment.yml or .tar.gz
-        worker_environment_spec: Path to worker environment.yml or .tar.gz
-        base_dir: Base directory for floability files
-        instance_root: Instance root directory
-        manager_name: Manager name
-        manager_ports: Manager ports
-        env_vars: Additional environment variables
-        force: Force recreation of environments
-        perf: Optional performance tracker
 
-    Returns:
-        Tuple of (env_dir, worker_environment_pack, manager_environment_pack)
-        - env_dir is None if no manager environment
-        - worker_environment_pack is None if no worker environment
-        - manager_environment_pack is None if no manager environment
+def _make_dir_writable(path: str) -> None:
+    """Recursively restore user write permission on all files and directories.
+
+    Required before rmtree on a read-only shared env dir.
     """
-    # Expand ~ in paths
-    base_dir = os.path.expanduser(base_dir)
-    instance_root = os.path.expanduser(instance_root)
-    if environment_spec:
-        environment_spec = os.path.expanduser(environment_spec)
-    if worker_environment_spec:
-        worker_environment_spec = os.path.expanduser(worker_environment_spec)
-    
-    env_dir = None
-    worker_environment_pack = None
-    manager_environment_pack = None
+    for root, dirs, files in os.walk(path):
+        for name in dirs:
+            try:
+                p = os.path.join(root, name)
+                os.chmod(p, os.stat(p).st_mode | 0o200)
+            except OSError:
+                pass
+        for name in files:
+            try:
+                p = os.path.join(root, name)
+                os.chmod(p, os.stat(p).st_mode | 0o200)
+            except OSError:
+                pass
+    try:
+        os.chmod(path, os.stat(path).st_mode | 0o200)
+    except OSError:
+        pass
 
-    # Setup manager environment
-    if environment_spec:
-        manager_environment_pack = prepare_conda_environment(
-            environment_spec=environment_spec,
-            base_dir=base_dir,
-            run_dir=instance_root,
-            manager_name=manager_name,
-            is_worker_env=False,
-            force=force,
-            perf=perf,
-        )
 
-        # Extract to instance root
-        extract_dir = os.path.join(instance_root, "current_conda_env")
-        env_dir = extract_conda_environment(
-            environment_pack=manager_environment_pack,
-            extract_dir=extract_dir,
-            manager_name=manager_name,
-            manager_ports=manager_ports,
-            env_vars=env_vars,
-            perf=perf,
-        )
-    else:
-        print("[floability] No environment file provided, skipping conda-pack.")
+def _fix_file_timestamps(env_path: str) -> None:
+    """Fix files with invalid timestamps that cause conda-pack to fail.
 
-    # Setup worker environment
-    if worker_environment_spec:
-        worker_environment_pack = prepare_conda_environment(
-            environment_spec=worker_environment_spec,
-            base_dir=base_dir,
-            run_dir=instance_root,
-            manager_name=manager_name,
-            is_worker_env=True,
-            force=force,
-            perf=perf,
-        )
-    else:
-        # Use manager environment for workers if no separate worker environment
-        if manager_environment_pack:
-            # Reuse the manager pack; avoid duplicate creation
-            worker_environment_pack = manager_environment_pack
-
-    if (
-        manager_environment_pack
-        and worker_environment_pack
-        and manager_environment_pack != worker_environment_pack
-    ):
-        print("[floability] Worker environment is different from main environment.")
-        print(f"[floability] Worker environment pack: {worker_environment_pack}")
-
-    return env_dir, worker_environment_pack, manager_environment_pack
+    conda-pack fails on files whose mtime is None or 0. This scans the
+    environment directory and resets any such timestamps to the current time.
+    """
+    current_time = time.time()
+    fixed_count = 0
+    for root, dirs, files in os.walk(env_path):
+        for file in files:
+            filepath = os.path.join(root, file)
+            try:
+                stat_info = os.stat(filepath)
+                if stat_info.st_mtime is None or stat_info.st_mtime == 0:
+                    os.utime(filepath, (current_time, current_time))
+                    fixed_count += 1
+            except (OSError, IOError) as e:
+                try:
+                    os.utime(filepath, (current_time, current_time))
+                    fixed_count += 1
+                except (OSError, IOError):
+                    print(
+                        f"[environment] Warning: Could not fix timestamp for {filepath}: {e}"
+                    )
+    if fixed_count > 0:
+        print(f"[environment] Fixed timestamps for {fixed_count} files")
