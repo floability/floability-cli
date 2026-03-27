@@ -18,6 +18,8 @@ If Conda is not installed or is outdated, install one of the lightweight distrib
 - [Miniforge Installation](https://github.com/conda-forge/miniforge) 
 - [Miniconda Installation](https://docs.conda.io/en/latest/miniconda.html)
 
+**Note:** We recommend **Miniforge**, a community-maintained Conda distribution that uses **conda-forge** as its default channel.
+
 ### Install Floability via Conda
 Floability is available on conda-forge. To install it, use the following command:
 
@@ -61,7 +63,7 @@ conda activate floability-env
 Install Floability in editable mode:
 
 ```bash
-pip install -e .    
+pip install .    
 ``` 
 
 
