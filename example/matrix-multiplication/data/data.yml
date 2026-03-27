@@ -1,0 +1,60 @@
+schema_version: 1.0
+default_profile: matrix_data
+
+profiles:
+  matrix_data:
+    policy:
+      retry_attempts: 3
+      timeout: 60
+      size_tolerance_bytes: 1024
+
+    data:
+      - name: matrix_dense_00
+        source_type: http
+        source: https://raw.githubusercontent.com/floability/backpack-test-data/refs/heads/main/matrix_200_200/matrix_dense_00.csv
+        target_path: data/matrices/matrix_dense_00.csv
+
+      - name: matrix_dense_01
+        source_type: http
+        source: https://raw.githubusercontent.com/floability/backpack-test-data/refs/heads/main/matrix_200_200/matrix_dense_01.csv
+        target_path: data/matrices/matrix_dense_01.csv
+
+      - name: matrix_dense_02
+        source_type: http
+        source: https://raw.githubusercontent.com/floability/backpack-test-data/refs/heads/main/matrix_200_200/matrix_dense_02.csv
+        target_path: data/matrices/matrix_dense_02.csv
+
+      - name: matrix_dense_03
+        source_type: http
+        source: https://raw.githubusercontent.com/floability/backpack-test-data/refs/heads/main/matrix_200_200/matrix_dense_03.csv
+        target_path: data/matrices/matrix_dense_03.csv
+
+      - name: matrix_dense_04
+        source_type: http
+        source: https://raw.githubusercontent.com/floability/backpack-test-data/refs/heads/main/matrix_200_200/matrix_dense_04.csv
+        target_path: data/matrices/matrix_dense_04.csv
+
+      - name: matrix_dense_05
+        source_type: http
+        source: https://raw.githubusercontent.com/floability/backpack-test-data/refs/heads/main/matrix_200_200/matrix_dense_05.csv
+        target_path: data/matrices/matrix_dense_05.csv
+
+      - name: matrix_dense_06
+        source_type: http
+        source: https://raw.githubusercontent.com/floability/backpack-test-data/refs/heads/main/matrix_200_200/matrix_dense_06.csv
+        target_path: data/matrices/matrix_dense_06.csv
+
+      - name: matrix_dense_07
+        source_type: http
+        source: https://raw.githubusercontent.com/floability/backpack-test-data/refs/heads/main/matrix_200_200/matrix_dense_07.csv
+        target_path: data/matrices/matrix_dense_07.csv
+
+      - name: matrix_dense_08
+        source_type: http
+        source: https://raw.githubusercontent.com/floability/backpack-test-data/refs/heads/main/matrix_200_200/matrix_dense_08.csv
+        target_path: data/matrices/matrix_dense_08.csv
+
+      - name: matrix_dense_09
+        source_type: http
+        source: https://raw.githubusercontent.com/floability/backpack-test-data/refs/heads/main/matrix_200_200/matrix_dense_09.csv
+        target_path: data/matrices/matrix_dense_09.csv

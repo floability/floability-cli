@@ -915,8 +915,8 @@ def _resolve_target_path(
       - backpack_root: base backpack path for resolving item-level relative target_prefix (if any)
       - target_prefix: explicit prefix Path to use for relative targets (required)
 
-    Behavior:
-      - Absolute target paths are returned as-is (resolved).
+        Behavior:
+            - Absolute target paths are returned as absolute paths without dereferencing symlinks.
       - Relative targets are placed under `target_prefix/target`.
       - Per-item target_prefix (if relative) is resolved against backpack_root.
     """
@@ -925,9 +925,9 @@ def _resolve_target_path(
         raise ValueError("Missing required 'target_location' in data item")
     target_p = Path(target_rel)
 
-    # Absolute -> return resolved absolute path
+    # Absolute -> normalize without dereferencing symlinks.
     if target_p.is_absolute():
-        return target_p.resolve()
+        return Path(os.path.abspath(os.path.expanduser(str(target_p))))
 
     # Check for per-item target_prefix override
     item_prefix = item.get("target_prefix")
@@ -935,13 +935,15 @@ def _resolve_target_path(
         prefix_p = Path(item_prefix)
         if not prefix_p.is_absolute():
             base = Path(backpack_root) if backpack_root else Path.cwd()
-            prefix_p = (base / prefix_p).resolve()
+            prefix_p = Path(os.path.abspath(str(base / prefix_p)))
+        else:
+            prefix_p = Path(os.path.abspath(os.path.expanduser(str(prefix_p))))
     else:
         # Use provided target_prefix
-        prefix_p = Path(target_prefix).resolve()
+        prefix_p = Path(os.path.abspath(str(target_prefix)))
 
     prefix_p.mkdir(parents=True, exist_ok=True)
-    return (prefix_p / target_p).resolve()
+    return Path(os.path.abspath(str(prefix_p / target_p)))
 
 
 def _copy_local_source_to_target(
@@ -1102,7 +1104,11 @@ def _fetch_single_item(
             if perf:
                 perf.start_timer(f"cache_materialize_{name}")
             if _materialize_from_cache(
-                cache_dir, target_path, mode=data_cache_mode, verbose=verbose
+                cache_dir,
+                target_path,
+                target_location=item.get("target_location") or item.get("target_path"),
+                mode=data_cache_mode,
+                verbose=verbose,
             ):
                 if perf:
                     perf.end_timer(f"cache_materialize_{name}", f"Cache materialization for '{name}'")
@@ -1352,7 +1358,12 @@ def _get_cache_dir(base_dir: Path, cache_key: str) -> Path:
     Returns:
         Path to cache directory: base_dir/floability-data-cache/{cache_key}/
     """
-    cache_root = base_dir / "floability-data-cache"
+    # Accept both base dirs and explicit cache roots ending in floability-data-cache.
+    cache_root = (
+        base_dir
+        if base_dir.name == "floability-data-cache"
+        else base_dir / "floability-data-cache"
+    )
     return cache_root / cache_key
 
 
@@ -1547,6 +1558,7 @@ def _build_cache_entry(
     # Store with full target_location path inside cached_data/
     # e.g., target_location="data/samples/file.root" -> cached_data/data/samples/file.root
     cache_file = cached_data_dir / target_location
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
 
     if verbose:
         print(f"[cache] Building cache entry: {cache_dir}")
@@ -1916,6 +1928,7 @@ def _lookup_cache_entry(
 def _materialize_from_cache(
     cache_dir: Path,
     target_path: Path,
+    target_location: Optional[str] = None,
     mode: str = "symlink",
     verbose: bool = False,
 ) -> bool:
@@ -1944,92 +1957,78 @@ def _materialize_from_cache(
             print(f"[cache] Cannot materialize: cached_data/ directory missing")
         return False
 
-    # Get all items in cached_data/
-    items = list(cached_data_dir.iterdir())
-    if len(items) == 0:
-        if verbose:
-            print(f"[cache] Cannot materialize: cached_data/ is empty")
-        return False
+    # Determine exact cached target for this item.
+    cached_target: Optional[Path] = None
+    if target_location:
+        cached_target = cached_data_dir / target_location
+        if not cached_target.exists():
+            if verbose:
+                print(
+                    f"[cache] Cannot materialize: cached target missing for '{target_location}'"
+                )
+            return False
+    else:
+        # Backward-compatible fallback: if no target_location is given, only accept
+        # single-item cached_data layouts.
+        items = list(cached_data_dir.iterdir())
+        if len(items) == 0:
+            if verbose:
+                print(f"[cache] Cannot materialize: cached_data/ is empty")
+            return False
+        if len(items) > 1:
+            if verbose:
+                print(
+                    "[cache] Cannot materialize without target_location: multiple top-level cached entries"
+                )
+            return False
+        cached_target = items[0]
 
-    # Simple approach: Get everything from cached_data/ (only top-level),
-    # and for each item create a symlink in the workflow directory.
-    #
-    # Example:
-    #   cached_data/data/samples/test/file.root
-    #   target_path: /workflow/data/samples/test
-    #   First item: "data"
-    #   Find "data" in target_path, everything before it is workflow root
-    
-    # Get the first top-level item name to find workflow root
-    first_item_name = items[0].name
-    
-    # Find workflow root by locating where first_item_name appears in target_path
-    # Walk up from target_path until we find the parent of where first_item_name should be
-    workflow_root = target_path
-    while workflow_root.name != first_item_name and workflow_root.parent != workflow_root:
-        workflow_root = workflow_root.parent
-    
-    # Now workflow_root.name == first_item_name, so go up one more to get the actual root
-    if workflow_root.name == first_item_name:
-        workflow_root = workflow_root.parent
-    
     if verbose:
-        print(f"[cache] First cached item: {first_item_name}")
-        print(f"[cache] Workflow root: {workflow_root}")
-        print(f"[cache] Materializing from {cached_data_dir}")
-        print(f"[cache] Materializing from {cached_data_dir}")
-    
-    # Now materialize each item from cached_data into workflow_root
+        print(f"[cache] Materializing from {cached_target}")
+        print(f"[cache] Target path: {target_path}")
+
     try:
-        for cached_item in items:
-            # Get relative path from cached_data
-            rel_path = cached_item.relative_to(cached_data_dir)
-            target_item = workflow_root / rel_path
-            
-            # Ensure parent directory exists
-            target_item.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Remove existing target if present
-            if target_item.exists() or target_item.is_symlink():
-                if target_item.is_dir() and not target_item.is_symlink():
-                    shutil.rmtree(target_item)
-                else:
-                    target_item.unlink()
-            
-            if mode == "symlink":
-                # Create symbolic link
-                target_item.symlink_to(cached_item.resolve())
+        # Ensure parent directory exists.
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Remove existing target if present.
+        if target_path.exists() or target_path.is_symlink():
+            if target_path.is_dir() and not target_path.is_symlink():
+                shutil.rmtree(target_path)
+            else:
+                target_path.unlink()
+
+        if mode == "symlink":
+            target_path.symlink_to(cached_target.resolve())
+            if verbose:
+                print(f"[cache] Symlinked {target_path} -> {cached_target.resolve()}")
+
+        elif mode == "hardlink":
+            # Hard links apply to files. For directories, fall back to copy.
+            if cached_target.is_file():
+                os.link(cached_target, target_path)
                 if verbose:
-                    print(f"[cache] Symlinked {target_item} -> {cached_item.resolve()}")
-            
-            elif mode == "hardlink":
-                # Hard link only works for files
-                if cached_item.is_file():
-                    os.link(cached_item, target_item)
-                    if verbose:
-                        print(f"[cache] Hard-linked {target_item} -> {cached_item}")
-                else:
-                    # For directories, recursively hardlink files or fall back to copy
-                    if verbose:
-                        print(f"[cache] Hard link for directory, copying instead")
-                    shutil.copytree(cached_item, target_item)
-            
-            elif mode == "copy":
-                # Copy file or directory
-                if cached_item.is_file():
-                    shutil.copy2(cached_item, target_item)
-                else:
-                    shutil.copytree(cached_item, target_item)
-                if verbose:
-                    print(f"[cache] Copied {cached_item} -> {target_item}")
-            
+                    print(f"[cache] Hard-linked {target_path} -> {cached_target}")
             else:
                 if verbose:
-                    print(f"[cache] Unknown mode: {mode}")
-                return False
-        
+                    print(f"[cache] Hard link for directory, copying instead")
+                shutil.copytree(cached_target, target_path)
+
+        elif mode == "copy":
+            if cached_target.is_file():
+                shutil.copy2(cached_target, target_path)
+            else:
+                shutil.copytree(cached_target, target_path)
+            if verbose:
+                print(f"[cache] Copied {cached_target} -> {target_path}")
+
+        else:
+            if verbose:
+                print(f"[cache] Unknown mode: {mode}")
+            return False
+
         return True
-    
+
     except Exception as e:
         if verbose:
             print(f"[cache] Error during materialization: {e}")
