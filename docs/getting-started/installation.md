@@ -13,7 +13,6 @@ Check your current version:
 conda --version
 ```
 
----
 
 ## Install from conda-forge
 ```bash
@@ -42,7 +41,6 @@ Install in editable mode:
 pip install -e .
 ```
 
----
 
 ## Verify
 ```bash
@@ -55,4 +53,4 @@ completed without errors.
 
 ---
 
-Next: [Run your first backpack](quickstart.md)
+Next: [Run your first backpack](run-first-backpack.md)

@@ -22,7 +22,7 @@ If the command is not found, make sure `floability-env` is active:
 conda activate floability-env
 ```
 
----
+
 
 ## Get the Example Backpacks
 
