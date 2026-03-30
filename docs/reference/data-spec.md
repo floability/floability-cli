@@ -1,24 +1,207 @@
 # Floability Data Reference
 
 ## TODO
-- [ ] Rename title and terminology to "Data Specification Reference" consistently.
-- [ ] Verify schema names and required keys with current parser behavior.
-- [ ] Add concise minimal and advanced examples.
-- [ ] Separate command usage from schema reference where needed.
 
 This page documents the Floability data spec (data.yml), the `floability data` command, and how profiles interact with `run` and `execute`.
-
 ## Quick contract
 
 
-- **Inputs**: a YAML data spec file (`data.yml`) with one or more profiles (`data_profiles`), each having a `data` list and optional `policy`.
+ # Data Specification Reference
 
-- **Outputs**: files staged into the workflow area (by default under `<backpack_root>/workflow/...`) and verification summaries on stdout.
+ This page documents the current `data.yml` format and runtime behavior used by Floability.
 
-- **Error modes**: missing sources, checksum/size mismatch, network failures, permission errors when writing targets.
+ ## Matrix Example and Impact
 
-- **Success criteria**: requested files exist at target and integrity checks pass (per `verification_type`).
+ Example from the matrix backpack:
 
+ ```yaml
+ schema_version: 1.0
+ default_profile: matrix_data
+
+ profiles:
+   matrix_data:
+     policy:
+       retry_attempts: 3
+       timeout: 60
+       size_tolerance_bytes: 1024
+     data:
+       - name: matrix_dense_00
+         source_type: http
+         source: https://raw.githubusercontent.com/floability/backpack-test-data/refs/heads/main/matrix_200_200/matrix_dense_00.csv
+         target_path: data/matrices/matrix_dense_00.csv
+ ```
+
+ Impact during run:
+
+ - Floability reads this spec and resolves the selected profile.
+ - Data is fetched/materialized into the run target (for `run`, this is the instance `workflow/` directory).
+ - The workflow reads local files from `workflow/data/...` instead of downloading data inside notebook code.
+
+ ## Top-Level Schema
+
+ Supported top-level keys:
+
+ - `schema_version` (optional, informational)
+ - `default_profile` (optional)
+ - `data_profiles` (preferred)
+ - `profiles` (legacy alias, still supported)
+
+ Profile selection order:
+
+ 1. CLI `--data-profile` (if provided)
+ 2. `default_profile` in spec
+ 3. first profile key in mapping
+
+ ## Profile Object
+
+ Each selected profile contains:
+
+ - `policy` (optional)
+ - `data` (required, non-empty list)
+
+ Supported `policy` keys:
+
+ - `retry_attempts` (default `0`)
+ - `timeout` (default `null`)
+ - `size_tolerance_bytes` (default `0`)
+ - `run_operation` (default `fetch`)
+ - `verification_type` (default `size_only`, also supports `strict`)
+
+ Notes:
+
+ - `run_operation` is used by Floability default data operation paths.
+ - `verification_type=strict` enforces checksum presence/match in verify mode.
+
+ ## Data Item Schema
+
+ Each item in `data` must include:
+
+ - either `source` or non-empty `sources`
+ - either `target_location` or legacy `target_path`
+
+ Supported item keys:
+
+ - `name`
+ - `source_type`
+ - `source`
+ - `sources`
+ - `target_location`
+ - `target_path` (legacy alias)
+ - `target_prefix`
+ - `expected_size`
+ - `checksum`
+ - `content_type`
+ - `source_object_type` (for directory/file disambiguation on S3 and Pelican)
+
+ ## Supported Source Types
+
+ Supported source types in current code paths:
+
+ - `http`
+ - `s3`
+ - `pelican`
+ - `backpack`
+ - `fs`
+ - `multi`
+
+ Inference behavior when `source_type` is omitted:
+
+ - `backpack://...` -> `backpack`
+ - `http://` or `https://` -> `http`
+ - `s3://...` -> `s3`
+ - `osdf://...` or `pelican://...` -> `pelican`
+ - otherwise -> `fs`
+
+ For `sources`, nested entries also get inferred source types.
+
+ ## Path Resolution Rules
+
+ - Relative `backpack` and `fs` sources resolve against `backpack_root`.
+ - Relative targets resolve against `target_root`.
+ - In `run`/`execute` flows, target root is the instance `workflow/` directory.
+ - `target_prefix` can override target staging base per item.
+
+ ## Modes and Commands
+
+ ### `floability data`
+
+ ```bash
+ floability data --mode check --data-spec <path-to-data.yml>
+ ```
+
+ Options:
+
+ - `--mode check|fetch|verify` (default `check`)
+ - `--data-spec`
+ - `--backpack`
+ - `--check-details`
+ - `--verbose`
+ - `--force-fetch`
+ - `--data-profile`
+ - `--data-cache-mode off|symlink|hardlink|copy` (default `off`)
+ - `--data-cache-dir`
+ - `--force-data-cache`
+ - `--fingerprint-mode meta|sample|strict` (default `meta`)
+ - `--base-dir`
+
+ ### `run` / `execute`
+
+ `floability run` and `floability execute` also consume data-spec options (`--data-spec`, `--data-profile`, cache flags).
+
+ In these flows, default data operation is taken from profile policy (`run_operation`), with fallback to `fetch`.
+
+ ## Caching Behavior
+
+ Cache controls:
+
+ - `--data-cache-mode`: `off`, `symlink`, `hardlink`, `copy`
+ - `--data-cache-dir`: explicit cache location
+ - `--force-data-cache`: rebuild cache entries
+
+ Default cache base when not overridden:
+
+ ```text
+ <base-dir>/floability-data-cache
+ ```
+
+ ## Validation Rules Enforced by Loader
+
+ The loader validates:
+
+ - profile exists and `data` list is non-empty
+ - every item has `source` or valid `sources`
+ - every item has `target_location` or `target_path`
+ - each `sources[]` entry defines `source`
+
+ ## Minimal Working Spec
+
+ ```yaml
+ data_profiles:
+   local_data:
+     data:
+       - source: backpack://data/sample.csv
+         target_location: data/sample.csv
+ ```
+
+ ## Multi-Source Fallback Example
+
+ ```yaml
+ data_profiles:
+   resilient:
+     data:
+       - name: file_a
+         sources:
+           - source: pelican://server/path/file_a.bin
+           - source: s3://my-bucket/file_a.bin
+           - source: backpack://data/file_a.bin
+         target_location: data/file_a.bin
+ ```
+
+ ## Related Pages
+
+ - [CLI Commands](cli.md)
+ - [Compute Specification](compute-spec.md)
+ - [Manage Data](../how-to/manage-data.md)
 
 ## How to create a basic data.yml
 
@@ -73,10 +256,6 @@ data_profiles:
       timeout: 60
       size_tolerance_bytes: 64
       run_operation: verify
-      verification_type: strict
-    data:
-      - name: sample_csv
-        sources:
           - source_type: pelican
             source: pelican://server.example.org:443/datasets/samples/sample.csv
           - source_type: backpack
@@ -103,18 +282,11 @@ The `data` command uses `--mode` to choose behavior:
 
 
 - `check`: metadata-only (existence, size if provided). No writes.
-
-- `fetch`: download/copy sources to targets.
-
 - `verify`: fetch as needed, then integrity-check (checksum/size) per policy.
 
 Examples:
 
 ```sh
-floability data --data-spec example/cms-physics-dv5/data/data.yml --mode check
-floability data --data-spec example/cms-physics-dv5/data/data.yml --mode fetch --data-profile backpack-data --verbose
-floability data --data-spec example/cms-physics-dv5/data/data.yml --mode verify --backpack . --force-fetch
-```
 
 ### All available options
 
@@ -127,58 +299,25 @@ floability data --data-spec example/cms-physics-dv5/data/data.yml --mode verify 
 
 - `--check-details` print per-item metadata details (check mode)
 
-- `--verbose` increase logging verbosity
-
 - `--force-fetch` overwrite targets if they exist
-
-- `--data-profile` override YAML `default_profile`
-
-- `--data-cache-mode` one of `off|symlink|hardlink|copy` (default varies by command)
-  - Controls whether cached data is used and how it is materialized into the instance.
 
 - `--force-data-cache` force rebuild of cache entries even if a valid cache exists
 
 - `--base-dir` set cache root (and run directories for run/instance flows); cache lives at `<base-dir>/flo_data_cache`
-
-### How `--data-spec` and `--backpack` are resolved
 
 
 - Both provided: used as given.
 
 - Only `--backpack`: spec inferred at `<backpack>/data/data.yml`.
 
-- Only `--data-spec`: if spec parent is `data`, backpack is its parent’s parent; otherwise backpack is the spec’s parent.
-
 ## YAML spec: top-level structure (human-readable)
-
-Top-level keys (schema 1.0):
-
-
-- `schema_version` optional (default `1.0`). Informational.
-
-- `default_profile` optional (defaults to first in `data_profiles`).
-
-- `data_profiles` required. Map of profile name → data profile.
-
-Profile schema:
 
 
 - `policy` optional
 
   - `retry_attempts` int ≥ 0 (default 0)
 
-  - `timeout` seconds (int ≥ 0)
-
-  - `size_tolerance_bytes` int ≥ 0 (default 0)
-
-  - `run_operation` `check|fetch|verify` (hint)
-
   - `verification_type` `strict|size_only` (default `size_only`)
-
-
-- `data` required — list of items
-
-Item schema:
 
 
 - `name` optional (string)
@@ -186,10 +325,6 @@ Item schema:
 - `source_type` optional; inferred from `source` if omitted (`backpack`, `fs`, `pelican`, `http`, `osdf`)
 
 - `source` required if `sources` not provided
-
-- `sources` optional list (fallbacks). Each may have `source_type` and must have `source`.
-
-- `target_location` required (string). Relative resolves under `<backpack_root>/workflow`.
 
 - `target_prefix` optional (string). Overrides default staging prefix.
 
@@ -200,18 +335,6 @@ Item schema:
 - `content_type` optional (string). Reserved.
 
 Example item (remote/pelican):
-
-```yaml
-- name: diboson_zz_6
-  source_type: pelican
-  source: pelican://disc-head-002.crc.nd.edu:443/nd/.../nano_mc2017_6.root
-  expected_size: 190634
-  checksum: sha256:4c976188f...
-  target_location: data/samples/diboson/zz/nano_mc2017_6.root
-```
-
-Notes on `source` forms:
-
 
 - `backpack`/`fs` use local paths. Backpack relative paths resolve against `--backpack`.
 
@@ -224,9 +347,6 @@ Notes on `source` forms:
 ```yaml
 # backpack
 - name: local_csv
-  source_type: backpack
-  source: data/local.csv
-  target_location: data/local.csv
 
 # fs
 - name: shared_parquet
@@ -238,10 +358,6 @@ Notes on `source` forms:
 - name: http_json
   source_type: http
   source: https://example.org/data/sample.json
-  expected_size: 2048
-  target_location: data/http/sample.json
-
-# pelican
 - name: pelican_root
   source_type: pelican
   source: pelican://server.example.org:443/nd/datasets/sample-1.root
@@ -269,9 +385,6 @@ An item may include multiple sources using `sources` (attempted in order):
   expected_size: 1000000
   checksum: sha256:...
   target_location: data/bigfile
-```
-
-## How data profile is used in `run` / `execute`
 
 `floability run` and `execute` accept `--data-spec`, `--backpack` (or `--backpack-root`) and `--data-profile`. If `--data-spec` is provided, a fetch commonly occurs early (guided by the profile policy).
 
