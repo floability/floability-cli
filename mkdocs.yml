@@ -44,11 +44,10 @@ nav:
   - Deployment:
       - Overview: deployment/index.md
       - Clusters:
+          - NDCRC: deployment/clusters/ndcrc.md
           - Stampede3: deployment/clusters/stampede3.md
-          - Frontera: deployment/clusters/frontera.md
-          - Bridges2: deployment/clusters/bridges2.md
-          - Expanse: deployment/clusters/expanse.md
           - Anvil: deployment/clusters/anvil.md
+          - LPC: deployment/clusters/lpc.md
   - Reference:
       - CLI Commands: reference/cli.md
       - Data Specification: reference/data-spec.md

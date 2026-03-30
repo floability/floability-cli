@@ -27,6 +27,7 @@ and compute that run the same way everywhere.
 - [ND CRC](deployment/clusters/ndcrc.md)
 - [Stampede3](deployment/clusters/stampede3.md)
 - [Anvil](deployment/clusters/anvil.md)
+- [LPC](deployment/clusters/lpc.md)
 
 ## Reference
 
