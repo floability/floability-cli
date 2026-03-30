@@ -36,9 +36,9 @@ conda env create -f environment.yml
 conda activate floability-env
 ```
 
-Install in editable mode:
+Install Floability:
 ```bash
-pip install -e .
+pip install .
 ```
 
 

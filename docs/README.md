@@ -1,13 +1,5 @@
 # Floability Documentation
 
-## TODO
-- [ ] Align this page with the new docs structure and naming.
-- [ ] Add a short contributor workflow section.
-- [ ] Add documentation style and review checklist.
-- [ ] Link to current navigation source in mkdocs.yml.
-
-This directory contains the documentation files for the Floability CLI project. These documentation can be viewed in github or can be built and served locally using MkDocs.
-
 To browse the documentation in Markdown, start from [index.md](index.md).
 
 ## Build and serve locally with MkDocs
