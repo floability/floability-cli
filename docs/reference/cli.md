@@ -1,5 +1,11 @@
 # Floability CLI Reference
 
+## TODO
+- [ ] Confirm command list and options against current CLI implementation.
+- [ ] Standardize option descriptions and defaults format.
+- [ ] Add cross-links from each command to related guides.
+- [ ] Split long sections if scanning becomes difficult.
+
 This page documents the Floability CLI commands and options in the current release.
 
 Top-level usage:

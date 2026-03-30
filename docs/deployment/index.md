@@ -1,5 +1,11 @@
 # Deployment
 
+## TODO
+- [ ] Replace this page with a redirect to run-on-clusters guide.
+- [ ] Remove stale links to non-existent site-specific pages.
+- [ ] Keep one concise compatibility matrix for schedulers.
+- [ ] Add migration note for users of old deployment docs.
+
 This page shows how to run Floability locally and on HPC clusters, and links to site-specific instructions.
 
 ---
@@ -25,7 +31,7 @@ floability workers status --instance <name-or-path>
 floability workers stop --instance <name-or-path>
 ```
 
-Learn more about worker architecture and configuration: [Concepts → Workers](../concept/workers.md).
+Learn more about worker architecture and configuration: [Core Concepts → Workers](../core-concepts/workers.md).
 ``` 
 
 

@@ -1,5 +1,11 @@
 # Floability Data Reference
 
+## TODO
+- [ ] Rename title and terminology to "Data Specification Reference" consistently.
+- [ ] Verify schema names and required keys with current parser behavior.
+- [ ] Add concise minimal and advanced examples.
+- [ ] Separate command usage from schema reference where needed.
+
 This page documents the Floability data spec (data.yml), the `floability data` command, and how profiles interact with `run` and `execute`.
 
 ## Quick contract

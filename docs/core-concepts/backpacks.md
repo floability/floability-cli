@@ -1,4 +1,11 @@
 # Floability Backpack
+
+## TODO
+- [ ] Tighten definition of backpack in 3-5 lines.
+- [ ] Add one canonical directory tree and remove duplicates.
+- [ ] Clarify backpack-to-instance handoff with one diagram reference.
+- [ ] Move operational details to how-to guides.
+
 A Floability "backpack" is a self-contained package that includes everything you need to run a Jupyter notebook at a large-scale computing facility. Think of it as your “all-in-one” kit—containing the notebook, required software, data, and compute specifications. (Everything you need for the day, including your lunch.) It contains four components:
 
 1. **Workflow** – the notebook or script
@@ -63,7 +70,7 @@ The data.yml file defines all datasets required by the workflow, including:
 - Target paths within the instance workflow directory
 - Multiple profiles for different data configurations (e.g., small test data vs full datasets)  
 
-For more details on the data specification format and options, see [Reference → Data Specification](../reference/data.md).
+For more details on the data specification format and options, see [Reference → Data Specification](../reference/data-spec.md).
 
 #### Example `data.yml`
 

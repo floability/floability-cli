@@ -1,5 +1,11 @@
 # Instance Registry
 
+## TODO
+- [ ] Verify registry path behavior across Linux and macOS.
+- [ ] Confirm schema fields and lifecycle updates.
+- [ ] Add migration and stale-entry cleanup behavior.
+- [ ] Add recovery steps for corrupted registry files.
+
 Floability maintains a global registry of instances so you can refer to them by short names instead of full paths.
 
 ## Location

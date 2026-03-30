@@ -1,5 +1,11 @@
 # Workers
 
+## TODO
+- [ ] Add concise architecture summary for manager and workers.
+- [ ] Keep only core worker lifecycle commands on this page.
+- [ ] Move scheduler-specific details to run-on-clusters guide.
+- [ ] Add clear log file and status output pointers.
+
 Floability uses a pool of TaskVine workers (launched by `vine_factory`) to execute distributed tasks for your notebook or script. The manager process (inside your instance) coordinates the work and communicates with these workers.
 
 ## What workers are

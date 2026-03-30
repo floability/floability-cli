@@ -1,26 +1,57 @@
-site_name: Floability Documentation
-site_description: Guides and reference for Floability
-site_author: Floability
+site_name: Floability CLI Documentation
 
 theme:
   name: readthedocs
+  features:
+    - navigation.tabs
+    - navigation.top
+    - navigation.instant
+    - toc.follow
+    - content.code.copy
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mike:
+      version_selector: true
+      canonical_version: latest
+
+extra:
+  version:
+    provider: mike
 
 nav:
   - Home: index.md
-  - Getting Started: getting-started/index.md
+  - Getting Started:
+      - Install: getting-started/installation.md
+      - Run your first backpack: getting-started/run-first-backpack.md
   - Concepts:
-      - Backpacks: concept/backpacks.md
-      - Audit & Environment Capture: concept/audit.md
+      - Backpacks: concepts/backpacks.md
+      - Instances: concepts/instances.md
+      - Workers: concepts/workers.md
+  - How-To Guides:
+      - Manage Data: how-to/manage-data.md
+      - Audit Notebooks: how-to/audit-notebooks.md
+      - Troubleshooting: how-to/troubleshooting.md
   - Deployment:
-      - Overview (Batch Systems): deployment/index.md
-      - ND CRC: deployment/nd_crc.md
-      - OSPool: deployment/ospool.md
-      - Purdue Anvil: deployment/anvil.md
-      - UT Stampede3: deployment/stampede3.md
+      - Overview: deployment/index.md
+      - Clusters:
+          - Stampede3: deployment/clusters/stampede3.md
+          - Frontera: deployment/clusters/frontera.md
+          - Bridges2: deployment/clusters/bridges2.md
+          - Expanse: deployment/clusters/expanse.md
+          - Anvil: deployment/clusters/anvil.md
   - Reference:
-      - CLI Reference: reference/cli.md
-      - Data Specification & CLI: reference/data.md
-  - Examples:
-      - Overview: examples/index.md
-  - Guides:
-      - Troubleshooting: guides/troubleshooting.md
+      - CLI Commands: reference/cli.md
+      - Data Specification: reference/data-spec.md
+      - Compute Specification: reference/compute-spec.md
+      - Instance Registry: reference/instance-registry.md
+  - Changelog: changelog.md

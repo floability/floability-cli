@@ -1,29 +1,46 @@
 # Floability Documentation
-Welcome to the documentation for Floability CLI — a toolkit for packaging and running reproducible notebook workflows using backpacks and reusable instances.
 
-Each backpack bundles your workflow code, software environment, data, and resource requirements, enabling portable execution across local machines and HPC clusters.
+Floability CLI helps you package and run reproducible notebook workflows
+using **backpacks** — self-contained bundles of workflow, software, data,
+and compute that run the same way everywhere.
 
-## Quick Start
-The easiest way to begin is to follow the [Getting Started Guide](getting-started/index.md).
-It walks you through installation, setup, and running your first backpack.
+## Start Here
 
-You can also explore the [Examples Repository](https://github.com/floability/floability-examples) to see sample backpacks in action.
+- [Install Floability](getting-started/installation.md)
+- [Run your first backpack](getting-started/run-first-backpack.md)
 
-## Documentation Overview
+## Core Concepts
 
-The documentation is organized into the following sections:
+- [Backpacks](concepts/backpacks.md) — the unit of a reproducible workflow
+- [Instances](concepts/instances.md) — where backpacks run
+- [Workers](concepts/workers.md) — how tasks are distributed across compute
 
-| Section | Description |
-|----------|-------------|
-| **Getting Started** | Installation steps and how to run your first backpack. |
-| **Concepts** | Core ideas — backpacks, instances, workers, environment caching, auditing, and reproducibility. |
-| **Deployment** | Instructions for running Floability on local systems and HPC clusters, with site-specific guides. |
-| **Reference** | Detailed CLI, data spec, and instance registry reference. |
-| **Examples** | Real workflows and practical demonstrations. |
-| **Guides** | Troubleshooting tips and additional usage notes. |
+## How-To Guides
 
+- [Manage Data](how-to/manage-data.md)
+- [Audit Notebooks](how-to/audit-notebooks.md)
+- [Troubleshooting](how-to/troubleshooting.md)
 
----
+## Deployment
 
-## Need Help?
-Open an issue on [GitHub](https://github.com/floability/floability-cli) or contribute to these docs!
+- [Overview](deployment/index.md) — batch systems, ports, worker configuration
+- [ND CRC](deployment/clusters/ndcrc.md)
+- [Stampede3](deployment/clusters/stampede3.md)
+- [Anvil](deployment/clusters/anvil.md)
+
+## Reference
+
+- [CLI Commands](reference/cli.md)
+- [Data Specification](reference/data-spec.md)
+- [Compute Specification](reference/compute-spec.md)
+- [Instance Registry](reference/instance-registry.md)
+
+## Examples
+
+- [Matrix multiplication](https://github.com/floability/floability-examples/tree/main/matrix-multiplication) — quickstart example
+- [All examples](https://github.com/floability/floability-examples)
+
+## Help
+
+- [Report a bug](https://github.com/floability/floability-cli/issues)
+- [Ask a question](https://github.com/floability/floability-cli/discussions)

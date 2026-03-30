@@ -1,5 +1,11 @@
 # S3 Support in Floability
 
+## TODO
+- [ ] Fold practical usage into manage-data how-to guide.
+- [ ] Keep API-level details in data specification reference.
+- [ ] Add authentication and credential troubleshooting notes.
+- [ ] Add deprecation note if this page is retired.
+
 Floability now provides first-class support for Amazon S3 data sources using native `s3://` URIs.
 
 ## Features
