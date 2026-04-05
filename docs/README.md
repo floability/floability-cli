@@ -1,7 +1,5 @@
 # Floability Documentation
 
-This directory contains the documentation files for the Floability CLI project. These documentation can be viewed in github or can be built and served locally using MkDocs.
-
 To browse the documentation in Markdown, start from [index.md](index.md).
 
 ## Build and serve locally with MkDocs

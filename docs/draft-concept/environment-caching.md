@@ -1,5 +1,11 @@
 # Environment caching and setup
 
+## TODO
+- [ ] Merge user-facing content into run guides.
+- [ ] Keep low-level cache internals in reference only.
+- [ ] Validate env cache paths and naming conventions.
+- [ ] Add deprecation note if this page is retired.
+
 Floability optimizes environment setup by caching extracted Conda environments and tarball packs in a shared location and preferring fast clone operations when possible.
 
 ## Shared cache layout

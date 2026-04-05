@@ -1,5 +1,11 @@
 # Data caching
 
+## TODO
+- [ ] Merge key content into manage-data how-to guide.
+- [ ] Keep only implementation details that belong in reference.
+- [ ] Remove duplicated cache terminology.
+- [ ] Add deprecation note if this page is retired.
+
 Floability can cache data artifacts to avoid repeated downloads or copies across runs. The cache is stored under a shared directory, and items are materialized into each instance using your preferred mode: symlink, hardlink, or copy.
 
 ## Where the cache lives
