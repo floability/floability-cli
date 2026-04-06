@@ -273,14 +273,13 @@ and they'll be available when your notebook runs.
 After creating your backpack, validate the structure:
 
 ```bash
-floability backpack validate --backpack my-first-analysis
+floability backpack validate my-first-analysis
 ```
 
 This checks:
 - ✓ Required directories exist (workflow, software, compute)
 - ✓ Workflow file is present (.ipynb, .py, or .sh)
-- ✓ All YAML files are valid
-- ✓ No missing dependencies
+- ✓ All YAML files are valid and parseable
 
 Output:
 ```
