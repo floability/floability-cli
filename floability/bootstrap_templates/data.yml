@@ -1,0 +1,9 @@
+schema_version: 1.0
+default_profile: default
+
+data_profiles:
+  default:
+    policy:
+      retry_attempts: 1
+      timeout: 30
+    data: []
