@@ -66,7 +66,7 @@ class BackpackCommand(BaseCommand):
         validate_parser.add_argument(
             "--strict",
             action="store_true",
-            help="Perform strict validation including run-readiness checks",
+            help="(Not yet implemented) Reserved for strict validation including run-readiness checks",
         )
 
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:

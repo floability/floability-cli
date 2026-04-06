@@ -14,6 +14,12 @@ setup(
     author_email="dthain@nd.edu",
     url="https://floability.github.io",
     packages=find_packages(),
+    package_data={
+        "floability": [
+            "bootstrap_templates/*.ipynb",
+            "bootstrap_templates/*.yml",
+        ],
+    },
     python_requires=">=3.8",
     install_requires=[
         "pyyaml",

@@ -5,10 +5,11 @@ Handles backpack initialization (from templates or custom workflows) and validat
 """
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
-from .backpack_bootstrap import (
+from floability.backpack_bootstrap import (
     resolve_backpack_target,
     init_from_template,
     init_from_workflow,
@@ -61,8 +62,9 @@ def init_backpack(args: argparse.Namespace) -> None:
             return
         else:
             print(
-                f"[floability] Warning: Overwriting existing backpack at {backpack_path}"
+                f"[floability] Removing existing backpack at {backpack_path}"
             )
+            shutil.rmtree(backpack_path)
 
     # Template mode
     if args.from_template:

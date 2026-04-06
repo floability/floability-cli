@@ -334,7 +334,9 @@ def validate_backpack(backpack_path: Path, strict: bool = False) -> Dict[str, An
 
     Args:
         backpack_path: Path to backpack directory
-        strict: If True, perform stricter checks (run-readiness)
+        strict: Reserved for future use. Currently has no effect. When implemented,
+                will perform stricter checks such as environment buildability,
+                TaskVine notebook validation, and compute spec reasonableness.
 
     Returns:
         Validation result dict with keys: valid, path, problems, workflow_file, has_data
