@@ -127,6 +127,8 @@ Choose based on your workflow:
   - Example: `plotly,altair`
 - **Option 4**: Default barebones (includes Python + TaskVine, you can edit later)
 
+If you skip all questions and press Enter, you get Option 4—a barebones environment that you can customize later by editing `software/environment.yml`.
+
 **2. Data configuration:**
 ```
 [floability] Data Configuration
@@ -207,6 +209,8 @@ manager_ports = os.environ.get('VINE_MANAGER_PORTS', '9123,9150')
 port_range = manager_ports.split(',')
 q = vine.Manager(port=int(port_range[0]))
 ```
+
+*Note: `VINE_MANAGER_NAME` and `VINE_MANAGER_PORTS` are set automatically by Floability when the backpack runs.*
 
 **Cells 3–4: Define a worker function**
 ```python

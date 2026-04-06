@@ -23,6 +23,7 @@ nav:
   - Home: index.md
   - Getting Started:
       - Install: getting-started/installation.md
+      - Create your first backpack: getting-started/create-first-backpack.md
       - Run your first backpack: getting-started/run-first-backpack.md
   - Concepts:
       - Backpacks: concepts/backpacks.md
