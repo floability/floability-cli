@@ -382,6 +382,7 @@ def _pack_conda_env(env_path: str, tar_path: str) -> None:
     Fixes file timestamps first (conda-pack fails on files with mtime=0/None).
     Raises subprocess.CalledProcessError on failure.
     """
+    _ensure_conda_history_file(env_path)
     _fix_file_timestamps(env_path)
     print(f"[environment] Packing '{env_path}' → '{tar_path}'")
     subprocess.run(
@@ -407,6 +408,14 @@ def _compute_env_hash(env_yml: str) -> str:
         raw_content = f.read()
 
     env_data = yaml.safe_load(raw_content)
+    
+    # for hashing purpose, we will set a common name for the environment,
+    # since the name does not affect the actual environment content 
+    # but can cause cache misses if different names are used for the same spec.
+    # This allows users to have different environment names in their 
+    # YAML files without causing unnecessary cache misses. 
+    env_data["name"] = "floability_env_for_hashing"
+    
     hash_content = raw_content
 
     post_install_script = env_data.get("post_install_script", None)
@@ -506,3 +515,20 @@ def _fix_file_timestamps(env_path: str) -> None:
                     )
     if fixed_count > 0:
         print(f"[environment] Fixed timestamps for {fixed_count} files")
+
+
+def _ensure_conda_history_file(env_path: str) -> None:
+    """Ensure conda-meta/history exists with a valid mtime before packing.
+
+    conda-pack uses the history file mtime when it stamps the generated
+    conda-unpack script. If the file is missing or has a zero timestamp, the
+    archive can fail with a tarfile ValueError on Python 3.13+.
+    """
+    history_file = Path(env_path) / "conda-meta" / "history"
+    history_file.parent.mkdir(parents=True, exist_ok=True)
+
+    if not history_file.exists():
+        history_file.touch()
+
+    current_time = time.time()
+    os.utime(history_file, (current_time, current_time))

@@ -1,9 +1,10 @@
 schema_version: 1.0
-default_profile: default
+default_profile: local_data
 
-data_profiles:
-  default:
+profiles:
+  local_data:
     policy:
-      retry_attempts: 1
+      retry_attempts: 0
       timeout: 30
+      size_tolerance_bytes: 10
     data: []
