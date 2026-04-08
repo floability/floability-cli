@@ -32,6 +32,8 @@ needed to run a reproducible workflow:
 The goal is to package all of these together so your workflow runs
 consistently everywhere — your laptop, a university cluster, or cloud.
 
+> Learn more about the backpack structure and contents in the [Backpacks Concept](../concepts/backpacks.md) guide.
+
 
 ## Creating a Backpack
 
