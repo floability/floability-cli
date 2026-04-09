@@ -40,8 +40,8 @@ consistently everywhere — your laptop, a university cluster, or cloud.
 There are three ways to create a backpack, depending on what you already have:
 
 1. **Manual creation**: Write the directory structure and files yourself
-2. **From an existing workflow** (most common): Automatically scaffold the backpack structure around your existing notebook or script
-3. **From a template**: Start from a pre-built example notebook when you don't have existing code yet
+2. **From a template**: Start from a pre-built example notebook when you don't have existing code yet
+3. **From an existing workflow**: Automatically scaffold the backpack structure around your existing notebook or script
 
 In every case you will need to review and adjust the generated files to match
 your actual computation, dependencies, and resource requirements.
@@ -76,10 +76,15 @@ name: my-analysis
 channels:
   - conda-forge
 dependencies:
-  - python
-  - numpy
-  - scipy
-  - ndcctools        # required for TaskVine
+  - python=3.13
+  - numpy=2.6.4
+  - ndcctools=7.16.4       # required for TaskVine
+```
+
+Make sure include proper versions if your workflow relies on specific versions of packages.
+
+```bash
+conda env export --from-history > software/environment.yml
 ```
 
 **`compute/compute.yml`** — describe the worker resources:
@@ -97,7 +102,104 @@ Optionally add a `data/data.yml` if your workflow reads input files.
 See [Data Specification](../reference/data-spec.md) for the format.
 
 
-### Option 2: From an Existing Workflow (Recommended if You Have Code)
+### Option 2: From a Template (Start from Scratch)
+
+Use a template when you **don't have existing code** and want a working
+starter notebook to edit. The template demonstrates the TaskVine distributed
+computing pattern, but you will need to replace the example logic with your
+own computation.
+
+#### Basic template:
+Use the basic `taskvine` template when you don’t need Floability to handle your data; instead, your code or workflow manager downloads and stages the data itself.
+
+```bash
+floability backpack init --name my-analysis --from-template taskvine
+```
+
+This creates:
+
+```
+my-analysis/
+├── compute/
+│   └── compute.yml
+├── software/
+│   └── environment.yml
+└── workflow/
+    └── my-analysis.ipynb
+```
+
+#### What the template provides
+
+The template notebook demonstrates the TaskVine distributed-computing pattern:
+
+**1. Manager setup** — Connects to the TaskVine manager (environment variables set automatically):
+```python
+import os
+import ndcctools.taskvine as vine
+
+manager_name = os.environ.get('VINE_MANAGER_NAME')
+manager_ports = os.environ.get('VINE_MANAGER_PORTS', '9123,9150')
+m = vine.Manager(port=int(manager_ports.split(',')[0]))
+```
+
+**2. Task definition** — Structure a worker function:
+```python
+def worker_function(value, sleep_time=1):
+    time.sleep(sleep_time)
+    return {'input': value, 'output': value * 2}
+```
+
+**3. Task submission** — Distribute tasks to workers:
+```python
+for i in range(20):
+    task = vine.PythonTask(worker_function, i, sleep_time=1)
+    m.submit(task)
+```
+
+**4. Result collection** — Gather results:
+```python
+results = []
+while not m.empty():
+    done = m.wait(5)
+    if done and done.successful():
+        results.append(done.output)
+```
+
+#### What you need to edit
+
+Replace the example `worker_function` and task submission logic with your actual computation. The template is a starting point to show how to structure your code for distributed execution with TaskVine. You will also need to adjust the `compute.yml` resource specifications and add any dependencies to `environment.yml` that your workflow requires.
+
+#### Template with data handling
+Use the `taskvine-data` template if you want an example that includes a `data.yml` which floability can use to stage files on instances before running the workflow. And the code in the notebook demonstrates how to declare files and add them as inputs to tasks.
+
+
+```bash
+floability backpack init --name my-analysis --from-template taskvine-data
+```
+
+This template includes file staging on workers:
+
+```python
+import glob
+
+DATA_DIR = "data/text_data"
+files = glob.glob(os.path.join(DATA_DIR, "*"))
+declared = {path: m.declare_file(path) for path in files}
+
+def worker_function(file_path):
+    import os
+    return {'file': file_path, 'size_bytes': os.path.getsize(file_path)}
+
+for file_path in files:
+    t = vine.PythonTask(worker_function, file_path)
+    t.add_input(declared[file_path], file_path)
+    m.submit(t)
+```
+
+This also creates a `data/data.yml` file where you specify input sources (S3, HTTP, local directory). See [Data Specification](../reference/data-spec.md) for configuration details.
+
+
+### Option 3: From an Existing Workflow
 
 If you already have a notebook or script, the `--from-workflow` flag
 scaffolds the full backpack structure around it automatically.
@@ -114,22 +216,23 @@ This prompts you through two quick questions:
 --------------------------------------------------
 Options:
   1. Path to existing environment.yml
-  2. Comma-separated conda packages (e.g., numpy,pandas)
-  3. Comma-separated pip packages (e.g., requests,pyyaml)
-  4. Skip (barebones: python + ndcctools)
+  2. Provide conda and/or pip packages
+  3. Skip (barebones: python + ndcctools)
 
-Select option (1-4, default 4):
+Select option (1-3, default 3):
 ```
 
 Choose based on your workflow:
 - **Option 1**: If you already have an `environment.yml` from another project
-- **Option 2**: For conda packages (recommended for most scientific work)
-  - Example: `numpy,scipy,pandas,scikit-learn`
-- **Option 3**: For pip packages (useful if dependencies aren't on conda-forge)
-  - Example: `plotly,altair`
-- **Option 4**: Default barebones (includes Python + TaskVine, you can edit later)
+- **Option 2**: For conda and/or pip packages (recommended for most scientific work)
+  - Conda example: `numpy,scipy,pandas,scikit-learn`
+  - Pip example: `plotly,altair`
+  - Mix both: provide comma-separated lists for each
+  - **Version pinning**: You can specify versions like `numpy=1.24.0` or `python=3.11`
+  - Note: `python` and `ndcctools` are always included; if you specify them with versions, your version takes precedence
+- **Option 3**: Default barebones (includes Python + TaskVine, you can edit later)
 
-If you skip all questions and press Enter, you get Option 4—a barebones environment that you can customize later by editing `software/environment.yml`.
+If you skip all questions and press Enter, you get Option 3—a barebones environment that you can customize later by editing `software/environment.yml`.
 
 **2. Data configuration:**
 ```
@@ -139,6 +242,8 @@ Create data.yml? (y/n, default n):
 ```
 
 Choose "y" if your workflow loads data files. You'll configure `data.yml` later.
+
+> **Note:** When `data.yml` is created, it starts as a template skeleton. You must complete it with your actual data sources before running the backpack.
 
 #### What you need to edit afterward
 
@@ -165,100 +270,9 @@ The command creates the backpack structure and copies your file into
     memory: 4096      # MB
     disk: 10000       # MB
   ```
-- **Notebook**: Wrap your computation in TaskVine tasks so it can distribute
-  work across workers (see the template example below for a pattern to follow)
+- **Notebook**: Wrap your computation in TaskVine tasks so it can distribute work across workers (see the template example above for a pattern to follow). You also need to copy any other files your notebook depends on into the `workflow/` directory so they are available when the backpack runs.
 
-
-### Option 3: From a Template (Start from Scratch)
-
-Use a template when you **don't have existing code** and want a working
-starter notebook to edit. The template demonstrates the TaskVine distributed
-computing pattern, but you will need to replace the example logic with your
-own computation.
-
-#### Basic template (no data handling):
-
-```bash
-floability backpack init --name my-analysis --from-template taskvine
-```
-
-This creates:
-
-```
-my-analysis/
-├── compute/
-│   └── compute.yml
-├── software/
-│   └── environment.yml
-└── workflow/
-    └── my-analysis.ipynb
-```
-
-#### What the template generates
-
-The notebook has 9 cells that walk through the full distributed-task pattern:
-
-**Cells 0–1: Markdown introduction and setup explanation**
-
-**Cell 2: Connect to the TaskVine manager**
-```python
-import os
-import ndcctools.taskvine as vine
-
-manager_name = os.environ.get('VINE_MANAGER_NAME')
-manager_ports = os.environ.get('VINE_MANAGER_PORTS', '9123,9150')
-
-port_range = manager_ports.split(',')
-q = vine.Manager(port=int(port_range[0]))
-```
-
-*Note: `VINE_MANAGER_NAME` and `VINE_MANAGER_PORTS` are set automatically by Floability when the backpack runs.*
-
-**Cells 3–4: Define a worker function**
-```python
-def worker_function(value, sleep_time=1):
-    """Replace this with your actual computation."""
-    return {'input': value, 'output': value * 2}
-```
-
-**Cells 5–6: Submit tasks**
-```python
-for i in range(1, 11):
-    t = vine.PythonTask(worker_function, i, sleep_time=1)
-    q.submit(t)
-```
-
-**Cells 7–8: Collect results**
-```python
-results = []
-total_submitted = q.submitted
-
-while len(results) < total_submitted:
-    t = q.wait(5)
-    if t:
-        results.append(t.output)
-```
-
-#### What you need to edit
-
-Replace `worker_function()` with your computation, update the task-generation
-loop to use your dataset, and add any result post-processing you need.
-
-**Tip:** Open the notebook in Jupyter to test locally before running on workers:
-```bash
-jupyter lab my-analysis/workflow/my-analysis.ipynb
-```
-
-#### Template with data handling:
-
-If your workflow reads input files, use the `taskvine-data` variant instead:
-
-```bash
-floability backpack init --name my-analysis --from-template taskvine-data
-```
-
-This adds a `data/data.yml` file where you specify input sources (S3, HTTP,
-local directory). See [Data Specification](../reference/data-spec.md).
+- **`data/data.yml`** (if created): Fill in your actual data sources and paths before running the backpack.
 
 
 ## Tips Before Creating a Backpack
@@ -279,14 +293,6 @@ Estimate what resources each task needs:
 - **Memory**: 2–8 GB per worker for typical analysis
 - **Workers**: Start with 2–4, scale up after a successful test run
 
-### Test your computation locally first
-Before packaging into a backpack, verify your notebook runs end-to-end:
-```bash
-jupyter lab your-notebook.ipynb
-python your-script.py
-```
-
-This catches code errors before you spend time on packaging and cluster setup.
 
 ### Plan file organization for complex workflows
 You can add helper scripts alongside the main notebook:
