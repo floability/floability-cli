@@ -389,6 +389,9 @@ def init_from_workflow(
         with open(data_path, "w") as f:
             yaml.safe_dump(data_dict, f, default_flow_style=False, sort_keys=False)
         print("[floability] Created data.yml (empty, ready for user input)")
+        print(
+            "[floability] Note: data.yml is a starter spec. Review and complete it before running."
+        )
 
     print(f"\n[floability] Backpack initialized from workflow file")
     print(f"[floability]   Location: {backpack_path}")
