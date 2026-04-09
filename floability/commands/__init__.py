@@ -15,6 +15,7 @@ from .instance import InstanceCommand
 from .data import DataCommand
 from .workers import WorkersCommand
 from .audit import AuditCommand
+from .backpack import BackpackCommand
 
 
 def get_all_commands():
@@ -26,6 +27,7 @@ def get_all_commands():
         DataCommand,
         WorkersCommand,
         AuditCommand,
+        BackpackCommand,
     ]
 
 
@@ -37,5 +39,6 @@ __all__ = [
     "DataCommand",
     "WorkersCommand",
     "AuditCommand",
+    "BackpackCommand",
     "get_all_commands",
 ]

@@ -48,9 +48,9 @@ def normalize_cli_base_dir(raw_base: str | None) -> Path:
     Returns a resolved `Path` instance.
     """
     if raw_base is None or str(raw_base).strip() == "" or str(raw_base).strip() == ".":
-        base = Path.home() / "floability-base-dir"
+        base = (Path.home() / "floability-base-dir").resolve()
     else:
-        base = Path(os.path.expanduser(str(raw_base)))
+        base = Path(os.path.expanduser(str(raw_base))).resolve()
 
     try:
         base.mkdir(parents=True, exist_ok=True)

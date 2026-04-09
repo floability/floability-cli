@@ -8,6 +8,7 @@ and compute that run the same way everywhere.
 
 - [Install Floability](getting-started/installation.md)
 - [Run your first backpack](getting-started/run-first-backpack.md)
+- [Create your first backpack](getting-started/create-first-backpack.md)
 
 ## Core Concepts
 

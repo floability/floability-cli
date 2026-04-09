@@ -23,3 +23,9 @@ profile = "black"
 [tool.black]
 line-length = 88
 target-version = ["py38"]
+
+[tool.setuptools.package-data]
+floability = [
+    "bootstrap_templates/*.ipynb",
+    "bootstrap_templates/*.yml",
+]

@@ -23,11 +23,13 @@ nav:
   - Home: index.md
   - Getting Started:
       - Install: getting-started/installation.md
+      - Create your first backpack: getting-started/create-first-backpack.md
       - Run your first backpack: getting-started/run-first-backpack.md
   - Concepts:
       - Backpacks: concepts/backpacks.md
       - Instances: concepts/instances.md
       - Workers: concepts/workers.md
+      - Audit: concepts/audit.md
   - How-To Guides:
       - Manage Data: how-to/manage-data.md
       - Audit Notebooks: how-to/audit-notebooks.md
