@@ -142,7 +142,7 @@ def personalize_environment_yml(env_dict: Dict[str, Any], backpack_name: str) ->
 
 def generate_backpack_data_files(data_root: Path, count: int = 10) -> List[Path]:
     """Generate sample text files used by the taskvine-data starter notebook."""
-    backpack_data_dir = data_root / "backpack_data"
+    backpack_data_dir = data_root / "text_data"
     backpack_data_dir.mkdir(parents=True, exist_ok=True)
 
     generated_paths: List[Path] = []
@@ -170,11 +170,10 @@ def build_taskvine_data_yml(generated_files: List[Path], backpack_path: Path) ->
         rel_path = file_path.relative_to(backpack_path).as_posix()
         file_bytes = file_path.read_bytes()
         checksum = hashlib.sha256(file_bytes).hexdigest()
-        expected_size = file_path.stat().st_size
 
         local_entries.append(
             {
-                "name": f"backpack_data_{idx:02d}",
+                "name": f"text_data_{idx:02d}",
                 "source_type": "backpack",
                 "source": rel_path,
                 "checksum": f"sha256:{checksum}",
@@ -263,7 +262,7 @@ def init_from_template(
     print(f"[floability]   Environment: environment.yml")
     print(f"[floability]   Compute: compute.yml")
     if has_data:
-        print(f"[floability]   Data: data.yml + 10 sample files in data/backpack_data/")
+        print(f"[floability]   Data: data.yml + 10 sample files in data/text_data/")
 
 
 def init_from_workflow(
@@ -307,12 +306,11 @@ def init_from_workflow(
     print("-" * 50)
     print("Options:")
     print("  1. Path to existing environment.yml")
-    print("  2. Comma-separated conda packages (e.g., numpy,pandas)")
-    print("  3. Comma-separated pip packages (e.g., requests,pyyaml)")
-    print("  4. Skip (barebones: python + ndcctools)")
+    print("  2. Provide conda and/or pip packages")
+    print("  3. Skip (barebones: python + ndcctools)")
     print()
 
-    choice = input("Select option (1-4, default 4): ").strip() or "4"
+    choice = input("Select option (1-3, default 3): ").strip() or "3"
 
     env_dict = None
 
@@ -326,28 +324,30 @@ def init_from_workflow(
             print(f"[floability] File not found, using barebones")
 
     elif choice == "2":
-        packages_str = input("Conda packages (comma-separated): ").strip()
-        if packages_str:
-            packages = [p.strip() for p in packages_str.split(",")]
-            env_dict = {
-                "name": backpack_name,
-                "channels": ["conda-forge"],
-                "dependencies": ["python"] + packages + ["ndcctools"],
-            }
-            print(f"[floability] Generated environment with {len(packages)} packages")
+        conda_str = input(
+            "Conda packages (comma-separated, optional; e.g., ndcctools,numpy=2.6.4): "
+        ).strip()
+        pip_str = input(
+            "Pip packages (comma-separated, optional; e.g., dask==2024.4.2,rich): "
+        ).strip()
+        conda_packages = [p.strip() for p in conda_str.split(",") if p.strip()]
+        pip_packages = [p.strip() for p in pip_str.split(",") if p.strip()]
 
-    elif choice == "3":
-        packages_str = input("Pip packages (comma-separated): ").strip()
-        if packages_str:
-            pip_packages = [p.strip() for p in packages_str.split(",")]
-            # Build conda environment with pip subsection
-            conda_deps = ["python", "ndcctools", "pip"]
+        if conda_packages or pip_packages:
+            conda_deps = ["python"] + conda_packages + ["ndcctools"]
+            if pip_packages:
+                conda_deps.append("pip")
+                conda_deps.append({"pip": pip_packages})
+
             env_dict = {
                 "name": backpack_name,
                 "channels": ["conda-forge"],
-                "dependencies": conda_deps + [{"pip": pip_packages}],
+                "dependencies": conda_deps,
             }
-            print(f"[floability] Generated environment with {len(pip_packages)} pip packages")
+            print(
+                f"[floability] Generated environment with {len(conda_packages)} conda packages "
+                f"and {len(pip_packages)} pip packages"
+            )
 
     # Default to barebones if no env_dict yet
     if not env_dict:
