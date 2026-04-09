@@ -408,9 +408,8 @@ def validate_backpack(backpack_path: Path, strict: bool = False) -> Dict[str, An
 
     Args:
         backpack_path: Path to backpack directory
-        strict: Reserved for future use. Currently has no effect. When implemented,
-                will perform stricter checks such as environment buildability,
-                TaskVine notebook validation, and compute spec reasonableness.
+        strict: When True, perform deeper validation such as workflow parsing
+            and data.yml spec validation (if present).
 
     Returns:
         Validation result dict with keys: valid, path, problems, workflow_file, has_data
@@ -429,6 +428,14 @@ def validate_backpack(backpack_path: Path, strict: bool = False) -> Dict[str, An
         result["problems"].append(f"Backpack directory not found: {backpack_path}")
         return result
 
+    # Validate backpack name
+    backpack_name = backpack_path.name
+    if not backpack_name or not backpack_name.replace("-", "").replace("_", "").isalnum():
+        result["valid"] = False
+        result["problems"].append(
+            f"Invalid backpack name: {backpack_name}. Use alphanumeric characters, hyphens, and underscores."
+        )
+
     # Check workflow/ directory
     workflow_dir = backpack_path / "workflow"
     if not workflow_dir.exists():
@@ -446,6 +453,19 @@ def validate_backpack(backpack_path: Path, strict: bool = False) -> Dict[str, An
         else:
             result["valid"] = False
             result["problems"].append("No workflow entrypoint (.ipynb, .py, or .sh) found in workflow/")
+
+        if strict and result["workflow_file"]:
+            workflow_path = workflow_dir / result["workflow_file"]
+            try:
+                if workflow_path.suffix == ".ipynb":
+                    with open(workflow_path) as f:
+                        json.load(f)
+                else:
+                    if workflow_path.stat().st_size == 0:
+                        raise ValueError("Workflow file is empty")
+            except Exception as e:
+                result["valid"] = False
+                result["problems"].append(f"Invalid workflow file: {workflow_path.name} ({e})")
 
     # Check software/environment.yml
     env_file = backpack_path / "software" / "environment.yml"
@@ -483,5 +503,46 @@ def validate_backpack(backpack_path: Path, strict: bool = False) -> Dict[str, An
         except Exception as e:
             result["valid"] = False
             result["problems"].append(f"Invalid YAML in data.yml: {e}")
+
+        try:
+            from .data.data_handler import load_and_validate_spec, check_data_from_spec
+
+            load_and_validate_spec(
+                data_spec=str(data_file),
+                backpack_root=backpack_path,
+                requested_profile=None,
+                verbose=False,
+                op_label="validate",
+            )
+        except ValueError as e:
+            result["valid"] = False
+            result["problems"].append(f"[data] {e}")
+        except Exception as e:
+            result["valid"] = False
+            result["problems"].append(f"[data] Failed to validate spec: {e}")
+
+        if strict and result["valid"]:
+            try:
+                sources_ok = check_data_from_spec(
+                    data_spec=str(data_file),
+                    backpack_root=backpack_path,
+                    show_details=False,
+                    verbose=False,
+                    data_profile=None,
+                    data_cache_mode="off",
+                    base_dir=None,
+                    cache_base_dir=None,
+                    target_root=None,
+                )
+                if not sources_ok:
+                    result["valid"] = False
+                    result["problems"].append(
+                        "[data] Source validation failed (see data:check output)"
+                    )
+            except Exception as e:
+                result["valid"] = False
+                result["problems"].append(
+                    f"[data] Failed to validate data sources: {e}"
+                )
 
     return result
