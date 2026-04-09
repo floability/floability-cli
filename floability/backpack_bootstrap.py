@@ -13,6 +13,7 @@ Templates are loaded from floability/bootstrap_templates/
 import json
 import hashlib
 import random
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -138,6 +139,11 @@ def personalize_environment_yml(env_dict: Dict[str, Any], backpack_name: str) ->
     """
     env_dict["name"] = backpack_name
     return env_dict
+
+
+def extract_conda_package_name(package_spec: str) -> str:
+    """Extract package name from a conda spec like `numpy=2.0` or `python>=3.11`."""
+    return re.split(r"[<>=!~\s]", package_spec.strip().lower(), maxsplit=1)[0]
 
 
 def generate_backpack_data_files(data_root: Path, count: int = 10) -> List[Path]:
@@ -330,11 +336,18 @@ def init_from_workflow(
         pip_str = input(
             "Pip packages (comma-separated, optional; e.g., dask==2024.4.2,rich): "
         ).strip()
-        conda_packages = [p.strip() for p in conda_str.split(",") if p.strip()]
+        raw_conda_packages = [p.strip() for p in conda_str.split(",") if p.strip()]
+        conda_packages = list(raw_conda_packages)
+        provided_package_names = {
+            extract_conda_package_name(spec) for spec in raw_conda_packages
+        }
+        for required_package in ["python", "ndcctools"]:
+            if required_package not in provided_package_names:
+                conda_packages.append(required_package)
         pip_packages = [p.strip() for p in pip_str.split(",") if p.strip()]
 
-        if conda_packages or pip_packages:
-            conda_deps = ["python"] + conda_packages + ["ndcctools"]
+        if raw_conda_packages or pip_packages:
+            conda_deps = conda_packages
             if pip_packages:
                 conda_deps.append("pip")
                 conda_deps.append({"pip": pip_packages})
