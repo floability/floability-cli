@@ -416,7 +416,7 @@ def _compute_env_hash(env_yml: str) -> str:
     # YAML files without causing unnecessary cache misses. 
     env_data["name"] = "floability_env_for_hashing"
     
-    hash_content = raw_content
+    hash_content = yaml.safe_dump(env_data, sort_keys=True)  # sort keys for consistent hashing
 
     post_install_script = env_data.get("post_install_script", None)
     if post_install_script:
