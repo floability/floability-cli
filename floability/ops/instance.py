@@ -18,7 +18,7 @@ from ..instance_manager import prepare_instance, get_registered_instances_status
 from ..environment_manager import setup_manager_and_worker_envs
 from ..instance_metadata import update_instance_metadata
 from ..utils import normalize_cli_base_dir
-from ..instance_registry import register_instance, resolve_instance
+from ..instance_registry import register_instance, resolve_instance, list_instances
 from ..instance_lock_manager import (
     release_instance_lock,
     is_instance_running,
@@ -222,8 +222,47 @@ def run_instance_command(args):
         )
     elif sub == "stop":
         stop_instance(args)
+    elif sub == "latest":
+        go_to_latest_instance(args)
     else:
         print(f"[floability] Unknown instance subcommand: {sub}")
+
+
+def go_to_latest_instance(args) -> None:
+    """Print the path of the latest Floability instance.
+
+    Resolution order:
+      1. latest_floability_instance symlink in base_dir
+      2. Most recently created entry in the instance registry
+
+    Prints only the resolved path to stdout so the caller can use it with:
+        cd $(floability instance go-to-latest)
+    """
+    from ..utils import normalize_cli_base_dir
+
+    base_dir = normalize_cli_base_dir(getattr(args, "base_dir", None))
+    symlink = base_dir / "latest_floability_instance"
+
+    if symlink.is_symlink() and Path(symlink.resolve()).is_dir():
+        print(str(symlink.resolve()))
+        return
+
+    # Fallback: most recently created registry entry
+    entries = list_instances()
+    if not entries:
+        print("[floability] No instances found.", file=__import__("sys").stderr)
+        raise SystemExit(1)
+
+    latest = max(
+        entries.items(),
+        key=lambda kv: kv[1].get("created_at", ""),
+    )
+    path = latest[1].get("path", "")
+    if not path or not Path(path).is_dir():
+        print("[floability] Latest instance path no longer exists.", file=__import__("sys").stderr)
+        raise SystemExit(1)
+
+    print(path)
 
 
 def _read_lock_pid(lock_file: Path) -> int:

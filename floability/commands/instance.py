@@ -124,6 +124,17 @@ class InstanceCommand(BaseCommand):
             help="Instance short name or path to the instance directory.",
         )
 
+        # instance latest sub-command
+        latest_parser = instance_subparsers.add_parser(
+            "latest",
+            help="Print the path of the latest instance (use with: cd $(floability instance latest))",
+        )
+        latest_parser.add_argument(
+            "--base-dir",
+            default=None,
+            help="Base directory to look for the latest symlink (default: ~/floability-base-dir).",
+        )
+
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
         """Execute instance command."""
         from ..ops.instance import run_instance_command
@@ -135,4 +146,6 @@ class InstanceCommand(BaseCommand):
             "floability instance create --backpack example/matrix-multiplication",
             "floability instance list --all-details",
             "floability instance stop my-instance",
+            "floability instance latest",
+            "cd $(floability instance latest)",
         ]
