@@ -16,21 +16,24 @@ Available commands:
 
 - `run`: interactive run mode (starts Jupyter)
 - `execute`: batch mode (no Jupyter UI)
-- `instance`: create/list/stop instances
+- `instance`: create/list/stop/inspect instances
 - `workers`: start/stop/status for workers
 - `data`: check/fetch/verify data specs
 - `audit`: dependency extraction from notebooks
+- `backpack`: initialize and manage backpacks
+- `tools`: cache and resource maintenance utilities
+
+---
 
 ## run
 
-Run a workflow in interactive mode.
-Typical usage:
+Run a workflow in interactive mode (starts JupyterLab).
 
 ```bash
 floability run --backpack <backpack-root>
 ```
 
-You can also run on an existing instance:
+Run on an existing instance instead of creating a new one:
 
 ```bash
 floability run --instance <instance-name-or-path>
@@ -38,54 +41,56 @@ floability run --instance <instance-name-or-path>
 
 ### Options
 
-Core execution options:
+**Core execution:**
 
-- `--backpack PATH`: backpack directory
-- `--instance PATH_OR_NAME`: existing instance (mutually exclusive with `--backpack`)
-- `--environment PATH`: manager environment spec. Required for new instances unless auto-resolved from backpack's `software/environment.yml`.
-- `--worker-environment PATH`: worker environment spec (optional; auto-resolved from backpack's `software/worker-environment.yml` if present)
-- `--notebook FILE`: notebook to run
-- `--python-script FILE`: python script to run
+- `--backpack PATH`: backpack directory (mutually exclusive with `--instance`)
+- `--instance PATH_OR_NAME`: existing instance to reuse (mutually exclusive with `--backpack`)
+- `--environment PATH`: manager environment spec. Required for new instances unless auto-resolved from the backpack's `software/environment.yml`.
+- `--worker-environment PATH`: worker environment spec (optional; auto-resolved from `software/worker-environment.yml` if present)
+- `--notebook FILE`: notebook to open in JupyterLab (optional; auto-detected from `workflow/`)
+- `--python-script FILE`: Python script to execute (optional; auto-detected from `workflow/`)
 - `--prefer-python`: use Python script instead of notebook when both exist in the backpack workflow. Without this flag, notebooks take priority.
 
-Run/session options:
+**Session:**
 
 - `--jupyter-port INT` (default: `8888`)
 - `--manager-ports A,B` (default: `9123,9150`)
-- `--manager-name NAME`
-- `--env-vars KEY=VALUE,...`
+- `--manager-name NAME`: TaskVine manager name (auto-generated if omitted)
+- `--env-vars KEY=VALUE,...`: environment variables to inject into the conda env
 
-Directory and instance options:
+**Directory and instance:**
 
-- `--base-dir DIR` (default behavior: normalized to `~/floability-base-dir` when omitted)
-- `--instance-prefix PREFIX`
-- `--backpack-root DIR` (default: `.`)
+- `--base-dir DIR` (default: `~/floability-base-dir`)
+- `--instance-prefix PREFIX`: prefix for the instance directory name
+- `--backpack-root DIR` (default: `.`): root path for resolving backpack-relative paths
 
-Data options:
+**Data:**
 
-- `--data-spec FILE`
-- `--data-profile NAME`
+- `--data-spec FILE`: path to `data.yml` (auto-resolved from backpack if omitted)
+- `--data-profile NAME`: override the default profile in the data spec
 - `--data-cache-mode off|symlink|hardlink|copy` (default: `symlink`)
-- `--data-cache-dir DIR`
-- `--force-data-cache`
+- `--data-cache-dir DIR`: override default `<base-dir>/floability-data-cache`
+- `--force-data-cache`: rebuild cache entries even if they already exist
 - `--fingerprint-mode meta|sample|strict` (default: `meta`)
-- `--continue-on-data-failure`
+- `--continue-on-data-failure`: proceed even if data operations fail
 
-Worker/factory options:
+**Workers/factory:**
 
-- `--no-worker`
-- `--batch-type local|condor|uge|slurm` (vine_factory default: `local` when omitted)
-- `--workers INT` (vine_factory default: `5` when omitted)
-- `--cores-per-worker INT` (vine_factory default: `1` when omitted)
-- `--batch-options STRING`
-- `--compute-spec FILE`
-- `--debug-workers`
+- `--no-worker`: skip starting the worker factory
+- `--batch-type local|condor|uge|slurm` (vine_factory default: `local`)
+- `--workers INT` (vine_factory default: `5`)
+- `--cores-per-worker INT` (vine_factory default: `1`)
+- `--batch-options STRING`: raw batch system options passed directly to vine_factory
+- `--compute-spec FILE`: path to `compute.yml` (auto-resolved from backpack if omitted)
+- `--debug-workers`: enable debug logging in workers
 
-Other options:
+**Other:**
 
-- `--measure-performance`
-- `--no-update-backpack`
-- `--per-instance-env`
+- `--measure-performance`: collect timing metrics and write a report to `metrics/`
+- `--no-update-backpack`: disable syncing executed notebook back to the backpack
+- `--per-instance-env`: extract a private conda env per instance instead of sharing a read-only base
+
+---
 
 ## execute
 
@@ -95,13 +100,20 @@ Run a workflow in batch mode (no interactive Jupyter session).
 floability execute --backpack <backpack-root>
 ```
 
-`execute` accepts the same options as `run` (same parser group).
+`execute` accepts the same options as `run`. The difference in behavior:
+- No JupyterLab is started
+- The notebook or script runs to completion, then exits
+- Outputs are synced back to the backpack on success
+
+---
 
 ## instance
 
 Manage instance lifecycle.
 
 ### instance create
+
+Create a Floability instance from a backpack without starting workers or Jupyter.
 
 ```bash
 floability instance create --backpack <backpack-root> [options]
@@ -110,16 +122,16 @@ floability instance create --backpack <backpack-root> [options]
 Options:
 
 - `--backpack PATH` (required)
-- `--name NAME`
-- `--base-dir DIR`
-- `--skip-data`
-- `--data-profile NAME`
+- `--name NAME`: short name to register for this instance (auto-generated if omitted)
+- `--base-dir DIR` (default: `~/floability-base-dir`)
+- `--skip-data`: skip data fetch during instance creation
+- `--data-profile NAME`: override the default profile in the data spec
 - `--data-cache-mode off|symlink|hardlink|copy` (default: `off`)
-- `--force-data-cache`
+- `--force-data-cache`: rebuild cache entries even if they already exist
 - `--fingerprint-mode meta|sample|strict` (default: `meta`)
-- `--environment PATH`
-- `--worker-environment PATH`
-- `--manager-name NAME`
+- `--environment PATH`: manager environment spec
+- `--worker-environment PATH`: worker environment spec
+- `--manager-name NAME`: TaskVine manager name (auto-generated if omitted)
 - `--manager-ports A,B` (default: `9123,9150`)
 - `--env-vars KEY=VALUE,...`
 - `--measure-performance`
@@ -132,10 +144,12 @@ floability instance list [--show-paths] [--all-details]
 
 Options:
 
-- `--show-paths`
-- `--all-details`
+- `--show-paths`: include full filesystem paths in output
+- `--all-details`: show extended metadata (created_at, last_seen, manager_name, tags)
 
 ### instance stop
+
+Stop a running instance (sends SIGINT/SIGTERM to the run process, stops workers, releases lock).
 
 ```bash
 floability instance stop <instance-name-or-path>
@@ -143,11 +157,26 @@ floability instance stop <instance-name-or-path>
 
 Arguments:
 
-- positional `instance`: short name or instance path
+- positional `instance`: short name or path to the instance directory
+
+### instance latest
+
+Print the path of the most recently created instance. Useful for shell navigation.
+
+```bash
+floability instance latest [--base-dir DIR]
+cd $(floability instance latest)
+```
+
+Options:
+
+- `--base-dir DIR` (default: `~/floability-base-dir`): where to look for the `latest_floability_instance` symlink
+
+---
 
 ## workers
 
-Manage worker factory for an instance.
+Manage the vine_factory worker pool for an instance.
 
 ### workers start
 
@@ -158,12 +187,12 @@ floability workers start --instance <instance-name-or-path> [options]
 Options:
 
 - `--instance PATH_OR_NAME` (required)
-- `--batch-type local|condor|uge|slurm` (vine_factory default: `local` when omitted)
-- `--workers INT` (vine_factory default: `5` when omitted)
-- `--cores-per-worker INT` (vine_factory default: `1` when omitted)
-- `--batch-options STRING`
-- `--compute-spec FILE`
-- `--debug-workers`
+- `--batch-type local|condor|uge|slurm` (vine_factory default: `local`)
+- `--workers INT` (vine_factory default: `5`)
+- `--cores-per-worker INT` (vine_factory default: `1`)
+- `--batch-options STRING`: raw options passed directly to vine_factory
+- `--compute-spec FILE`: path to `compute.yml`
+- `--debug-workers`: enable debug logging in workers
 
 ### workers stop
 
@@ -171,11 +200,21 @@ Options:
 floability workers stop --instance <instance-name-or-path>
 ```
 
+Options:
+
+- `--instance PATH_OR_NAME` (required)
+
 ### workers status
 
 ```bash
 floability workers status --instance <instance-name-or-path>
 ```
+
+Options:
+
+- `--instance PATH_OR_NAME` (required)
+
+---
 
 ## data
 
@@ -183,26 +222,29 @@ Run data operations directly against a data spec.
 
 ```bash
 floability data --mode check --data-spec <data.yml>
+floability data --mode fetch --data-spec <data.yml>
 ```
 
 Options:
 
 - `--mode check|fetch|verify` (default: `check`)
-- `--data-spec FILE`
-- `--backpack DIR`
-- `--check-details`
-- `--verbose`
-- `--force-fetch`
-- `--data-profile NAME`
+- `--data-spec FILE`: path to `data.yml`
+- `--backpack DIR`: backpack root for resolving `backpack://` and relative `fs` source paths
+- `--check-details`: print per-item metadata detail after the summary (check mode only)
+- `--verbose`: enable verbose logging
+- `--force-fetch`: re-fetch targets even if they already exist
+- `--data-profile NAME`: override the default profile in the data spec
 - `--data-cache-mode off|symlink|hardlink|copy` (default: `off`)
-- `--data-cache-dir DIR`
-- `--force-data-cache`
+- `--data-cache-dir DIR`: override default `<base-dir>/floability-data-cache`
+- `--force-data-cache`: rebuild cache entries even if they already exist
 - `--fingerprint-mode meta|sample|strict` (default: `meta`)
-- `--base-dir DIR`
+- `--base-dir DIR` (default: `~/floability-base-dir`)
+
+---
 
 ## audit
 
-Generate dependency information from a notebook.
+Generate environment and data dependency information from a notebook.
 
 ```bash
 floability audit --notebook <notebook.ipynb>
@@ -211,10 +253,123 @@ floability audit --notebook <notebook.ipynb>
 Options:
 
 - `--notebook FILE` (required)
-- `--kernel NAME`
+- `--kernel NAME`: Jupyter kernel to use when analyzing the notebook
 - `--manager-port PORT` (default: `9123`)
-- `--manager-name NAME`
-- `--cell-level`
+- `--manager-name NAME`: TaskVine manager name
+- `--cell-level`: generate dependencies at cell level instead of notebook level
+
+---
+
+## backpack
+
+Initialize and manage backpacks.
+
+### backpack init
+
+Bootstrap a new Floability backpack directory structure.
+
+```bash
+floability backpack init --name <name> --from-template taskvine
+floability backpack init --name <name> --from-workflow <notebook-or-script>
+```
+
+Options:
+
+- `--name NAME` (required): backpack name or path; the leaf directory becomes the backpack name
+- `--from-template taskvine|taskvine-data` (mutually exclusive with `--from-workflow`): bootstrap from a built-in template
+- `--from-workflow PATH` (mutually exclusive with `--from-template`): use an existing notebook (`.ipynb`) or Python script (`.py`) as the workflow entrypoint
+- `--force`: overwrite an existing backpack directory
+
+### backpack validate
+
+Check a backpack directory for structural correctness.
+
+```bash
+floability backpack validate [path]
+```
+
+Arguments:
+
+- `path` (optional, default: `.`): path to the backpack directory
+
+Options:
+
+- `--strict`: reserved for future run-readiness checks (not yet implemented)
+
+### backpack update-env
+
+Update a backpack's `environment.yml` from a completed instance's conda environment.
+
+```bash
+floability backpack update-env --from-instance <instance-name-or-path> [path]
+```
+
+Arguments:
+
+- `path` (optional, default: `.`): path to the backpack directory to update
+
+Options:
+
+- `--from-instance PATH_OR_NAME` (required): instance directory path or registered short name to export the environment from
+- `--versions-only`: only update version pins for packages already listed in `environment.yml`, rather than replacing the full dependency list
+
+---
+
+## tools
+
+Utility tools for managing Floability cache and instance data.
+
+### tools clean
+
+Delete cache directories and/or instance directories under a base directory. Prompts for confirmation before deleting unless `--yes` is given.
+
+**Default behavior** (no scope flag): removes data cache and env cache, leaves instances untouched.
+
+```bash
+floability tools clean [--base-dir DIR] [scope] [--yes] [--parallel]
+```
+
+Options:
+
+- `--base-dir DIR` (default: `~/floability-base-dir`): base directory containing Floability data
+- `--data-cache-dir DIR`: override default `<base-dir>/floability-data-cache`
+
+**Scope** (mutually exclusive; default is `--data-and-env`):
+
+| Flag | What is removed |
+|---|---|
+| `--data-only` | Data cache only (`floability-data-cache/`) |
+| `--env-only` | Conda env cache only (`flo_common_env/`) |
+| `--data-and-env` | Data cache + env cache (explicit default) |
+| `--instances-only` | Instance directories (`fi_*/`) and latest symlink |
+| `--all` | Everything: data cache, env cache, and instances |
+| `--keep-last` | Everything **except** the latest instance and the env/data cache entries it depends on |
+
+**Flags:**
+
+- `--yes`, `-y`: skip the confirmation prompt
+- `--parallel`: use `find | xargs rm` for faster deletion of large directories (e.g. conda envs). Requires `find`, `xargs`, and `rm` on `PATH`. Falls back to Python `shutil.rmtree` by default.
+
+**Examples:**
+
+```bash
+# Remove data and env cache (default)
+floability tools clean
+
+# Remove only the conda env cache
+floability tools clean --env-only
+
+# Remove everything except the latest instance
+floability tools clean --keep-last --yes
+
+# Remove all instances on a custom base dir
+floability tools clean --instances-only --base-dir /scratch/myuser
+
+# Remove everything, fast, no prompt
+floability tools clean --all --yes --parallel
+```
+
+---
 
 ## Related References
 
