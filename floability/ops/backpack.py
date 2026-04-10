@@ -14,6 +14,7 @@ from floability.backpack_bootstrap import (
     init_from_template,
     init_from_workflow,
     validate_backpack,
+    update_env_from_instance,
 )
 
 
@@ -31,6 +32,8 @@ def run_backpack_command(args: argparse.Namespace) -> None:
         init_backpack(args)
     elif sub == "validate":
         validate_backpack_cmd(args)
+    elif sub == "update-env":
+        update_env_backpack_cmd(args)
     else:
         print(f"[floability] Unknown backpack subcommand: {sub}")
 
@@ -91,6 +94,31 @@ def init_backpack(args: argparse.Namespace) -> None:
         except Exception as e:
             print(f"[floability] Error initializing from workflow: {e}")
             return
+
+
+def update_env_backpack_cmd(args: argparse.Namespace) -> None:
+    """
+    Update a backpack's software/environment.yml from a completed instance's conda environment.
+
+    Reads env_dir from the instance's metadata/run.json, exports the conda environment
+    (--no-builds), preserves backpack-specific fields (e.g. post_install_script) and
+    the existing env name, backs up the old file as old-environment.yml, then writes
+    the new environment.yml.
+
+    With --versions-only, only the versions of packages already listed in the backpack
+    environment.yml are updated rather than replacing the full dependency list.
+    """
+    backpack_path = Path(args.path).resolve()
+
+    try:
+        update_env_from_instance(
+            instance_ref=args.from_instance,
+            backpack_path=backpack_path,
+            versions_only=getattr(args, "versions_only", False),
+        )
+    except Exception as e:
+        print(f"[floability] Error updating environment: {e}")
+        sys.exit(1)
 
 
 def validate_backpack_cmd(args: argparse.Namespace) -> None:

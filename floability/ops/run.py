@@ -244,9 +244,19 @@ def _prepare_new_instance(args: argparse.Namespace, mode: str) -> InstanceContex
 
     _normalize_base_and_cache_directories(args)
 
-    instance_prefix = "floability_instance"
+    _backpack_arg = getattr(args, "backpack", None)
+    if _backpack_arg == ".":
+        backpack_name = Path.cwd().name
+    elif _backpack_arg:
+        backpack_name = Path(_backpack_arg).resolve().name
+    else:
+        backpack_name = None
     if getattr(args, "instance_prefix", None):
-        instance_prefix = f"{args.instance_prefix}_fi"
+        instance_prefix = args.instance_prefix
+    elif backpack_name:
+        instance_prefix = f"fi_{backpack_name}"
+    else:
+        instance_prefix = "fi"
 
     instance_paths = create_instance_structure(args.base_dir, prefix=instance_prefix)
     instance_root = Path(instance_paths["root"])

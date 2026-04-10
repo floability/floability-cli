@@ -15,6 +15,7 @@ import hashlib
 import random
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Tuple, Dict, List, Any, Optional
@@ -549,3 +550,237 @@ def validate_backpack(backpack_path: Path, strict: bool = False) -> Dict[str, An
                 )
 
     return result
+
+
+# ============================================================================
+# ENVIRONMENT UPDATE FROM INSTANCE
+# ============================================================================
+
+# Standard conda environment.yml keys — everything else in the backpack's
+# environment.yml is floability-specific and must be preserved as-is.
+_CONDA_ENV_KEYS = {"name", "channels", "dependencies", "prefix", "variables"}
+
+
+def _resolve_instance_path(instance_ref: str) -> Path:
+    """Resolve an instance reference (path or short name) to an absolute Path."""
+    from .instance_registry import resolve_instance
+
+    resolved = resolve_instance(instance_ref)
+    if not resolved:
+        raise ValueError(
+            f"Instance not found: '{instance_ref}'. "
+            "Provide a valid directory path or registered instance name."
+        )
+    path = Path(resolved)
+    if not path.is_dir():
+        raise ValueError(f"Instance directory does not exist: {path}")
+    return path
+
+
+def _read_env_dir_from_metadata(instance_path: Path) -> str:
+    """Read the conda env_dir from instance metadata/run.json."""
+    run_json = instance_path / "metadata" / "run.json"
+    if not run_json.exists():
+        raise ValueError(f"Instance metadata not found: {run_json}")
+
+    with open(run_json, "r") as f:
+        metadata = json.load(f)
+
+    env_dir = metadata.get("env_dir")
+    if not env_dir:
+        raise ValueError(
+            f"'env_dir' not found in {run_json}. "
+            "The instance may not have completed environment setup."
+        )
+    return env_dir
+
+
+def _export_conda_env(env_dir: str) -> Dict[str, Any]:
+    """Run `conda env export --no-builds --prefix <env_dir>` and return parsed YAML."""
+    print(f"[floability] Exporting conda environment from: {env_dir}")
+    result = subprocess.run(
+        ["conda", "env", "export", "--no-builds", "--prefix", env_dir],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"conda env export failed (exit {result.returncode}):\n{result.stderr.strip()}"
+        )
+    exported = yaml.safe_load(result.stdout) or {}
+    exported.pop("prefix", None)  # not portable
+    return exported
+
+
+def _has_concrete_version(dep: Any) -> bool:
+    """Return True if a conda dependency string has a concrete version pinned."""
+    if isinstance(dep, dict):
+        return True  # pip section dict — handled separately
+    return "=" in str(dep)
+
+
+def _filter_concrete_deps(dependencies: List[Any]) -> List[Any]:
+    """Keep only deps with concrete versions; apply the same filter to pip entries."""
+    filtered: List[Any] = []
+    for dep in dependencies:
+        if isinstance(dep, dict) and "pip" in dep:
+            pip_deps = [p for p in dep["pip"] if "==" in str(p)]
+            if pip_deps:
+                filtered.append({"pip": pip_deps})
+        elif _has_concrete_version(dep):
+            filtered.append(dep)
+    return filtered
+
+
+def _extra_floability_fields(env: Dict[str, Any]) -> Dict[str, Any]:
+    """Return any non-conda keys from the env dict (e.g. post_install_script)."""
+    return {k: v for k, v in env.items() if k not in _CONDA_ENV_KEYS}
+
+
+def _build_full_replacement(
+    exported: Dict[str, Any],
+    old_env: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build a full replacement env dict from the conda export.
+
+    - Name is always taken from the existing backpack environment.yml.
+    - Channels come from the export.
+    - Dependencies are filtered to concrete versions only.
+    - Floability-specific keys (e.g. post_install_script) are preserved from old_env.
+    """
+    new_env: Dict[str, Any] = {}
+
+    # Always use the user-provided name from the existing backpack env
+    new_env["name"] = old_env["name"]
+
+    new_env["channels"] = exported.get("channels", ["conda-forge"])
+    new_env["dependencies"] = _filter_concrete_deps(exported.get("dependencies", []))
+
+    # Preserve floability-specific keys
+    new_env.update(_extra_floability_fields(old_env))
+
+    return new_env
+
+
+def _build_versions_only(
+    exported: Dict[str, Any],
+    old_env: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Patch versions for packages already listed in the backpack environment.yml.
+
+    All other fields — including name and floability-specific keys — are left
+    exactly as the user wrote them. Only the version specs are updated based on
+    what is actually installed in the exported environment.
+    """
+    # Build lookup: lowercase package name -> full exported spec string
+    exported_conda: Dict[str, str] = {}
+    exported_pip: Dict[str, str] = {}
+    for dep in exported.get("dependencies", []):
+        if isinstance(dep, dict) and "pip" in dep:
+            for pip_dep in dep["pip"]:
+                pkg = re.split(r"[<>=!~\s]", str(pip_dep).strip(), maxsplit=1)[0].lower()
+                exported_pip[pkg] = str(pip_dep)
+        elif isinstance(dep, str):
+            pkg = re.split(r"[<>=!~\s]", dep.strip(), maxsplit=1)[0].lower()
+            exported_conda[pkg] = dep
+
+    # Start from a copy of the old env so all user fields (name, channels,
+    # post_install_script, etc.) are preserved unchanged.
+    new_env = {k: v for k, v in old_env.items() if k != "dependencies"}
+
+    updated_deps: List[Any] = []
+    for dep in old_env.get("dependencies", []):
+        if isinstance(dep, dict) and "pip" in dep:
+            updated_pip: List[str] = []
+            for pip_dep in dep["pip"]:
+                pkg = re.split(r"[<>=!~\s]", str(pip_dep).strip(), maxsplit=1)[0].lower()
+                if pkg in exported_pip:
+                    new_spec = exported_pip[pkg]
+                    if new_spec != str(pip_dep):
+                        print(f"[floability]   pip: {pip_dep} -> {new_spec}")
+                    updated_pip.append(new_spec)
+                else:
+                    updated_pip.append(pip_dep)
+            updated_deps.append({"pip": updated_pip})
+        elif isinstance(dep, str):
+            pkg = re.split(r"[<>=!~\s]", dep.strip(), maxsplit=1)[0].lower()
+            if pkg in exported_conda:
+                new_spec = exported_conda[pkg]
+                if new_spec != dep:
+                    print(f"[floability]   {dep} -> {new_spec}")
+                updated_deps.append(new_spec)
+            else:
+                updated_deps.append(dep)
+        else:
+            updated_deps.append(dep)
+
+    new_env["dependencies"] = updated_deps
+    return new_env
+
+
+def update_env_from_instance(
+    instance_ref: str,
+    backpack_path: Path,
+    versions_only: bool = False,
+) -> None:
+    """Update backpack software/environment.yml from a completed instance's conda env.
+
+    Steps:
+      1. Resolve instance_ref to an absolute path (directory or registry name).
+      2. Read env_dir from instance metadata/run.json.
+      3. Export the conda environment with --no-builds (strips prefix field).
+      4. Load the existing backpack environment.yml.
+      5. Build the new environment dict (full replacement or versions-only patch).
+      6. Save a backup as software/old-environment.yml.
+      7. Write the updated software/environment.yml.
+
+    Args:
+        instance_ref: Instance directory path or registered short name.
+        backpack_path: Path to the backpack directory.
+        versions_only: When True, only update versions of packages already listed
+                       in the backpack env; leave all other fields unchanged.
+    """
+    software_dir = backpack_path / "software"
+    env_yml_path = software_dir / "environment.yml"
+
+    if not env_yml_path.exists():
+        raise ValueError(
+            f"Backpack environment.yml not found: {env_yml_path}\n"
+            "Make sure you point to a valid backpack directory."
+        )
+
+    # Resolve instance and read env_dir
+    instance_path = _resolve_instance_path(instance_ref)
+    print(f"[floability] Using instance: {instance_path}")
+    env_dir = _read_env_dir_from_metadata(instance_path)
+    print(f"[floability] Conda environment: {env_dir}")
+
+    exported = _export_conda_env(env_dir)
+
+    with open(env_yml_path, "r") as f:
+        old_env = yaml.safe_load(f) or {}
+
+    if "name" not in old_env:
+        raise ValueError(
+            f"Existing environment.yml has no 'name' field: {env_yml_path}"
+        )
+
+    print(f"[floability] Env name (preserved): {old_env['name']}")
+
+    if versions_only:
+        print("[floability] Mode: versions-only (patching existing package versions)")
+        new_env = _build_versions_only(exported, old_env)
+    else:
+        print("[floability] Mode: full replacement (using exported dependency list)")
+        new_env = _build_full_replacement(exported, old_env)
+
+    # Backup before overwriting
+    backup_path = software_dir / "old-environment.yml"
+    shutil.copy2(env_yml_path, backup_path)
+    print(f"[floability] Saved backup: {backup_path}")
+
+    with open(env_yml_path, "w") as f:
+        yaml.safe_dump(new_env, f, default_flow_style=False, sort_keys=False)
+
+    mode_label = "versions patched" if versions_only else "full replacement"
+    print(f"[floability] Updated environment.yml ({mode_label}): {env_yml_path}")

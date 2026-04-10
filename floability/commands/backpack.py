@@ -69,6 +69,33 @@ class BackpackCommand(BaseCommand):
             help="(Not yet implemented) Reserved for strict validation including run-readiness checks",
         )
 
+        # backpack update-env sub-command
+        update_env_parser = backpack_subparsers.add_parser(
+            "update-env",
+            help="Update backpack environment.yml from a completed instance's conda environment",
+        )
+        update_env_parser.add_argument(
+            "--from-instance",
+            required=True,
+            metavar="PATH_OR_NAME",
+            help="Instance directory path or registered short name to export the environment from",
+        )
+        update_env_parser.add_argument(
+            "--versions-only",
+            action="store_true",
+            default=False,
+            help=(
+                "Only update versions of packages already listed in the backpack environment.yml "
+                "rather than replacing the full dependency list"
+            ),
+        )
+        update_env_parser.add_argument(
+            "path",
+            nargs="?",
+            default=".",
+            help="Path to backpack directory to update (default: current directory)",
+        )
+
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
         """Execute backpack command."""
         from ..ops.backpack import run_backpack_command
@@ -81,4 +108,7 @@ class BackpackCommand(BaseCommand):
             "floability backpack init --name my-workflow --from-template taskvine-data",
             "floability backpack init --name my-workflow --from-workflow ./my-notebook.ipynb",
             "floability backpack validate ./my-workflow",
+            "floability backpack update-env --from-instance fi_20260410_104122_618078",
+            "floability backpack update-env --from-instance /path/to/instance ./my-workflow",
+            "floability backpack update-env --from-instance fi_20260410_104122_618078 --versions-only",
         ]

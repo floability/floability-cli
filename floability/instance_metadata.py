@@ -60,7 +60,7 @@ def create_instance_metadata(
     Create comprehensive metadata dictionary for an execution instance.
 
     Args:
-        instance_dir: Path to floability_instance_* directory
+        instance_dir: Path to floability instance directory
         backpack_path: Path to source backpack (if any)
         cli_args: Dictionary of command-line arguments
         manager_name: TaskVine manager name

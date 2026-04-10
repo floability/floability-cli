@@ -28,7 +28,7 @@ directories plus metadata recording.
 
 
 def create_instance_structure(
-    base_dir: str, prefix: str = "floability_instance"
+    base_dir: str, prefix: str = "fi", backpack_name: Optional[str] = None
 ) -> Dict[str, Path]:
     """Create a unique instance directory with standard sub-directories."""
     base_dir = os.path.expanduser(base_dir)
@@ -144,10 +144,20 @@ def prepare_instance(args, mode: str = "instance") -> Dict[str, Path]:
         args.manager_name = f"floability-{uuid.uuid4()}"
 
     # Build instance prefix
-    instance_prefix = "floability_instance"
+    _backpack_arg = getattr(args, "backpack", None)
+    if _backpack_arg == ".":
+        backpack_name = Path.cwd().name
+    elif _backpack_arg:
+        backpack_name = Path(_backpack_arg).resolve().name
+    else:
+        backpack_name = None
     if getattr(args, "instance_prefix", None):
-        instance_prefix = f"floability_instance_{args.instance_prefix}"
-    
+        instance_prefix = args.instance_prefix
+    elif backpack_name:
+        instance_prefix = f"fi_{backpack_name}"
+    else:
+        instance_prefix = "fi"
+
     instance_paths = create_instance_structure(args.base_dir, prefix=instance_prefix)
     create_latest_symlink(args.base_dir, str(instance_paths["root"]))
 

@@ -10,7 +10,7 @@ SYSTEM_INFORMATION = None
 
 
 def create_unique_directory(
-    base_dir=".", prefix="floability_instance", max_attempts=10
+    base_dir=".", prefix="fi", max_attempts=10
 ):
     base_dir = os.path.expanduser(base_dir)
     attempt = 0
@@ -18,7 +18,7 @@ def create_unique_directory(
     while attempt < max_attempts:
         attempt += 1
         try:
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S%f")
             unique_dir = os.path.join(base_dir, f"{prefix}_{timestamp}")
             os.makedirs(unique_dir, exist_ok=False)
 
