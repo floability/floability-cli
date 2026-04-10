@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "floability"
-version = "0.2.0-dev"
+version = "0.2.0"
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
@@ -12,7 +12,12 @@ dependencies = [
   "requests",
   "tqdm",
   "nbformat",
+  "pelicanfs",
 ]
+
+[project.urls]
+Documentation = "https://floability.readthedocs.io/"
+Repository = "https://github.com/floability/floability-cli"
 
 [project.scripts]
 floability = "floability.cli:main"
