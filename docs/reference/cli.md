@@ -42,11 +42,11 @@ Core execution options:
 
 - `--backpack PATH`: backpack directory
 - `--instance PATH_OR_NAME`: existing instance (mutually exclusive with `--backpack`)
-- `--environment PATH`: manager environment spec
-- `--worker-environment PATH`: worker environment spec
+- `--environment PATH`: manager environment spec. Required for new instances unless auto-resolved from backpack's `software/environment.yml`.
+- `--worker-environment PATH`: worker environment spec (optional; auto-resolved from backpack's `software/worker-environment.yml` if present)
 - `--notebook FILE`: notebook to run
 - `--python-script FILE`: python script to run
-- `--prefer-python`: prefer script over notebook when both exist
+- `--prefer-python`: use Python script instead of notebook when both exist in the backpack workflow. Without this flag, notebooks take priority.
 
 Run/session options:
 
@@ -74,9 +74,9 @@ Data options:
 Worker/factory options:
 
 - `--no-worker`
-- `--batch-type local|condor|uge|slurm`
-- `--workers INT`
-- `--cores-per-worker INT`
+- `--batch-type local|condor|uge|slurm` (vine_factory default: `local` when omitted)
+- `--workers INT` (vine_factory default: `5` when omitted)
+- `--cores-per-worker INT` (vine_factory default: `1` when omitted)
 - `--batch-options STRING`
 - `--compute-spec FILE`
 - `--debug-workers`
@@ -158,9 +158,9 @@ floability workers start --instance <instance-name-or-path> [options]
 Options:
 
 - `--instance PATH_OR_NAME` (required)
-- `--batch-type local|condor|uge|slurm`
-- `--workers INT`
-- `--cores-per-worker INT`
+- `--batch-type local|condor|uge|slurm` (vine_factory default: `local` when omitted)
+- `--workers INT` (vine_factory default: `5` when omitted)
+- `--cores-per-worker INT` (vine_factory default: `1` when omitted)
 - `--batch-options STRING`
 - `--compute-spec FILE`
 - `--debug-workers`

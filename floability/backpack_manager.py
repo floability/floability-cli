@@ -172,35 +172,26 @@ def resolve_backpack_args(args) -> None:
         notebooks = list(workflow_dir.glob("*.ipynb"))
         scripts = list(workflow_dir.glob("*.py"))
 
-        # Prefer Python if only scripts are available; otherwise select notebook
-        if scripts:
-            chosen = None
-            if len(scripts) == 1:
-                chosen = scripts[0]
-            else:
-                # Try script matching backpack name
-                for s in scripts:
-                    if s.stem == backpack_dir.stem:
-                        chosen = s
-                        break
-                if chosen is None:
-                    chosen = scripts[0]
-            args.python_script = str(chosen)
-            print(
-                f"[floability] Using Python script from backpack: {args.python_script}"
-            )
+        prefer_python = getattr(args, "prefer_python", False)
+
+        def _pick_by_name(files: List[Path], stem: str) -> Path:
+            if len(files) == 1:
+                return files[0]
+            for f in files:
+                if f.stem == stem:
+                    return f
+            return files[0]
+
+        # Default: prefer notebook. With --prefer-python: prefer script.
+        if notebooks and not prefer_python:
+            args.notebook = str(_pick_by_name(notebooks, backpack_dir.stem))
+            print(f"[floability] Using notebook from backpack: {args.notebook}")
+        elif scripts:
+            args.python_script = str(_pick_by_name(scripts, backpack_dir.stem))
+            print(f"[floability] Using Python script from backpack: {args.python_script}")
         elif notebooks:
-            chosen = None
-            if len(notebooks) == 1:
-                chosen = notebooks[0]
-            else:
-                for nb in notebooks:
-                    if nb.stem == backpack_dir.stem:
-                        chosen = nb
-                        break
-                if chosen is None:
-                    chosen = notebooks[0]
-            args.notebook = str(chosen)
+            # --prefer-python set but no scripts found; fall back to notebook
+            args.notebook = str(_pick_by_name(notebooks, backpack_dir.stem))
             print(f"[floability] Using notebook from backpack: {args.notebook}")
 
     args.backpack_root = str(backpack_dir)

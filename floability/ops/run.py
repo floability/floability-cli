@@ -421,7 +421,7 @@ def _materialize_data(
         verbose=True,
         force=False,
         data_profile=getattr(args, "data_profile", None),
-        data_cache_mode=getattr(args, "data_cache_mode", "off"),
+        data_cache_mode=getattr(args, "data_cache_mode", "symlink"),
         force_data_cache=getattr(args, "force_data_cache", False),
         base_dir=Path(args.base_dir),
         cache_base_dir=Path(args.cache_base_dir),
@@ -469,7 +469,7 @@ def _setup_environment(
     """
     if not ctx.is_new:
         env_dir = _resolve_existing_instance_env(args, ctx)
-        instance_env = _build_instance_env(args, ctx)
+        instance_env = _build_instance_env(args, ctx, env_dir)
         return EnvironmentContext(env_dir=env_dir, instance_env=instance_env)
 
     per_instance_env = getattr(args, "per_instance_env", False)
@@ -688,6 +688,12 @@ def _execute_batch(
             perf.end_timer(
                 "notebook_execute_time", "Time to execute notebook in execute mode"
             )
+    else:
+        print(
+            "[floability] Error: nothing to execute — no notebook or Python script "
+            "found. Use --notebook, --python-script, or provide a backpack with a "
+            "workflow/ entrypoint."
+        )
 
     if execution_success:
         _sync_outputs_if_needed(args, ctx)
