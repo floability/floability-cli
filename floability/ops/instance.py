@@ -16,9 +16,9 @@ from ..performance_tracker import PerformanceTracker
 from ..backpack_manager import resolve_backpack_args, validate_backpack_structure
 from ..instance_manager import prepare_instance, get_registered_instances_status
 from ..environment_manager import setup_manager_and_worker_envs
-from ..instance_metadata import update_instance_metadata
+from ..instance_metadata import update_instance_metadata, add_data_cache_dirs
 from ..utils import normalize_cli_base_dir
-from ..instance_registry import register_instance, resolve_instance
+from ..instance_registry import register_instance, resolve_instance, list_instances, prune_nonexistent_entries
 from ..instance_lock_manager import (
     release_instance_lock,
     is_instance_running,
@@ -104,6 +104,7 @@ def create_instance(args):
         backpack_root_for_sources = args.backpack_root if getattr(args, "backpack_root", None) else None
         target_root = instance_paths["workflow"]
 
+        cache_dirs: list = []
         data_success = execute_default_data_operation(
             data_spec=args.data_spec,
             backpack_root=backpack_root_for_sources,
@@ -117,8 +118,15 @@ def create_instance(args):
             target_root=target_root,
             fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
             perf=perf,
+            _out_cache_dirs=cache_dirs,
         )
         perf.end_timer("data_operation", "Time to perform data operation")
+
+        if cache_dirs:
+            try:
+                add_data_cache_dirs(instance_paths["metadata"] / "run.json", cache_dirs)
+            except Exception as e:
+                print(f"[floability] Warning: could not record data cache dirs: {e}")
 
         if not data_success:
             print("\n[floability] WARNING: Data operation failed!")
@@ -147,21 +155,19 @@ def create_instance(args):
         perf=perf if perf_enabled else None,
     )
 
-    # Record worker environment pack in metadata
-    if worker_environment_pack or manager_environment_pack:
+    # Record environment paths in metadata
+    metadata_updates = {
+        **({"env_dir": str(env_dir)} if env_dir else {}),
+        **({"worker_environment_pack": str(worker_environment_pack)} if worker_environment_pack else {}),
+        **({"manager_environment_pack": str(manager_environment_pack)} if manager_environment_pack else {}),
+    }
+    if metadata_updates:
         metadata_file = instance_paths["metadata"] / "run.json"
         try:
-            update_instance_metadata(
-                metadata_file,
-                {
-                    **({"worker_environment_pack": str(worker_environment_pack)} if worker_environment_pack else {}),
-                    **({"manager_environment_pack": str(manager_environment_pack)} if manager_environment_pack else {}),
-                },
-                merge=True,
-            )
+            update_instance_metadata(metadata_file, metadata_updates, merge=True)
         except Exception as e:
             print(
-                f"[floability] Warning: Could not update metadata with worker env: {e}"
+                f"[floability] Warning: Could not update metadata with environment info: {e}"
             )
 
     # Finalize performance tracking
@@ -222,8 +228,51 @@ def run_instance_command(args):
         )
     elif sub == "stop":
         stop_instance(args)
+    elif sub == "latest":
+        go_to_latest_instance(args)
     else:
         print(f"[floability] Unknown instance subcommand: {sub}")
+
+
+def go_to_latest_instance(args) -> None:
+    """Print the path of the latest Floability instance.
+
+    Resolution order:
+      1. latest_floability_instance symlink in base_dir
+      2. Most recently created entry in the instance registry
+
+    Prints only the resolved path to stdout so the caller can use it with:
+        cd $(floability instance latest)
+    """
+    from ..utils import normalize_cli_base_dir
+
+    base_dir = normalize_cli_base_dir(getattr(args, "base_dir", None))
+    symlink = base_dir / "latest_floability_instance"
+
+    if symlink.is_symlink() and Path(symlink.resolve()).is_dir():
+        print(str(symlink.resolve()))
+        return
+
+    # Fallback: most recently created registry entry that still exists on disk
+    prune_nonexistent_entries()
+    entries = list_instances()
+    if not entries:
+        print("[floability] No instances found.", file=__import__("sys").stderr)
+        raise SystemExit(1)
+
+    candidates = sorted(
+        entries.values(),
+        key=lambda v: v.get("created_at", ""),
+        reverse=True,
+    )
+    for entry in candidates:
+        path = entry.get("path", "")
+        if path and Path(path).is_dir():
+            print(path)
+            return
+
+    print("[floability] No instance paths found on disk.", file=__import__("sys").stderr)
+    raise SystemExit(1)
 
 
 def _read_lock_pid(lock_file: Path) -> int:

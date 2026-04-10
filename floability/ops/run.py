@@ -38,7 +38,7 @@ from ..instance_registry import (
     register_instance,
 )
 from ..catalog import send_catalog_update
-from ..instance_metadata import finalize_instance_metadata, update_instance_metadata
+from ..instance_metadata import finalize_instance_metadata, update_instance_metadata, add_data_cache_dirs
 from ..data.data_handler import execute_default_data_operation
 
 # -----------------------------------------------------------------------------
@@ -244,9 +244,20 @@ def _prepare_new_instance(args: argparse.Namespace, mode: str) -> InstanceContex
 
     _normalize_base_and_cache_directories(args)
 
-    instance_prefix = "floability_instance"
+    _backpack_arg = getattr(args, "backpack", None)
+    if _backpack_arg == ".":
+        backpack_name = Path.cwd().name
+    elif _backpack_arg:
+        backpack_name = Path(_backpack_arg).resolve().name
+    else:
+        backpack_name = None
     if getattr(args, "instance_prefix", None):
-        instance_prefix = f"{args.instance_prefix}_fi"
+        raw_prefix = args.instance_prefix
+        instance_prefix = raw_prefix if raw_prefix.startswith("fi_") else f"fi_{raw_prefix}"
+    elif backpack_name:
+        instance_prefix = f"fi_{backpack_name}"
+    else:
+        instance_prefix = "fi"
 
     instance_paths = create_instance_structure(args.base_dir, prefix=instance_prefix)
     instance_root = Path(instance_paths["root"])
@@ -403,20 +414,28 @@ def _materialize_data(
         args.backpack_root if getattr(args, "backpack_root", None) else None
     )
 
+    cache_dirs: list = []
     success = execute_default_data_operation(
         data_spec=args.data_spec,
         backpack_root=backpack_root_for_sources,
         verbose=True,
         force=False,
         data_profile=getattr(args, "data_profile", None),
-        data_cache_mode=getattr(args, "data_cache_mode", "off"),
+        data_cache_mode=getattr(args, "data_cache_mode", "symlink"),
         force_data_cache=getattr(args, "force_data_cache", False),
         base_dir=Path(args.base_dir),
         cache_base_dir=Path(args.cache_base_dir),
         target_root=target_root,
         fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
         perf=perf if perf_enabled else None,
+        _out_cache_dirs=cache_dirs,
     )
+
+    if cache_dirs:
+        try:
+            add_data_cache_dirs(ctx.metadata_file, cache_dirs)
+        except Exception as e:
+            print(f"[floability] Warning: could not record data cache dirs: {e}")
 
     if perf_enabled:
         perf.end_timer(
@@ -450,7 +469,7 @@ def _setup_environment(
     """
     if not ctx.is_new:
         env_dir = _resolve_existing_instance_env(args, ctx)
-        instance_env = _build_instance_env(args, ctx)
+        instance_env = _build_instance_env(args, ctx, env_dir)
         return EnvironmentContext(env_dir=env_dir, instance_env=instance_env)
 
     per_instance_env = getattr(args, "per_instance_env", False)
@@ -669,6 +688,12 @@ def _execute_batch(
             perf.end_timer(
                 "notebook_execute_time", "Time to execute notebook in execute mode"
             )
+    else:
+        print(
+            "[floability] Error: nothing to execute — no notebook or Python script "
+            "found. Use --notebook, --python-script, or provide a backpack with a "
+            "workflow/ entrypoint."
+        )
 
     if execution_success:
         _sync_outputs_if_needed(args, ctx)

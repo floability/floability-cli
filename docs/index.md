@@ -16,8 +16,12 @@ and compute that run the same way everywhere.
 - [Instances](concepts/instances.md) — where backpacks run
 - [Workers](concepts/workers.md) — how tasks are distributed across compute
 
-## How-To Guides
+## Maintenance
 
+- [CLI Commands — tools](reference/cli.md#tools) — clean cache and instance directories
+
+## How-To Guides
+- [Update Environment](how-to/update-environment.md) — keep your environment.yml in sync with what’s actually installed
 - [Manage Data](how-to/manage-data.md)
 - [Audit Notebooks](how-to/audit-notebooks.md)
 - [Troubleshooting](how-to/troubleshooting.md)
@@ -32,7 +36,7 @@ and compute that run the same way everywhere.
 
 ## Reference
 
-- [CLI Commands](reference/cli.md)
+- [CLI Commands](reference/cli.md) — all commands and options
 - [Data Specification](reference/data-spec.md)
 - [Compute Specification](reference/compute-spec.md)
 - [Instance Registry](reference/instance-registry.md)

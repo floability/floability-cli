@@ -16,6 +16,7 @@ from .data import DataCommand
 from .workers import WorkersCommand
 from .audit import AuditCommand
 from .backpack import BackpackCommand
+from .tools import ToolsCommand
 
 
 def get_all_commands():
@@ -28,6 +29,7 @@ def get_all_commands():
         WorkersCommand,
         AuditCommand,
         BackpackCommand,
+        ToolsCommand,
     ]
 
 
@@ -40,5 +42,6 @@ __all__ = [
     "WorkersCommand",
     "AuditCommand",
     "BackpackCommand",
+    "ToolsCommand",
     "get_all_commands",
 ]

@@ -26,7 +26,7 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--environment",
-        help="Path to environment.yml (optional).",
+        help="Path to environment.yml. Required for new instances unless auto-resolved from backpack's software/environment.yml.",
     )
     parser.add_argument(
         "--worker-environment",
@@ -57,7 +57,7 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--instance-prefix",
         default=None,
-        help="Optional prefix to append to instance directory name (e.g., 'experiment1' creates floability_instance_experiment1_<timestamp>).",
+        help="Optional prefix for the instance directory name (always starts with 'fi_'; e.g., 'experiment1' creates fi_experiment1_<timestamp>).",
     )
     parser.add_argument(
         "--data-spec",
@@ -147,28 +147,28 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
     # vine_factory specific arguments
     vf_group = parser.add_argument_group(
         "vine_factory",
-        "Options for starting the vine_factor",
+        "Options for starting the vine_factory",
     )
 
     vf_group.add_argument(
         "--batch-type",
         default=None,
         choices=["local", "condor", "uge", "slurm"],
-        help="Batch system for vine_factory (default=local).",
+        help="Batch system for vine_factory. If omitted, vine_factory uses 'local'.",
     )
 
     vf_group.add_argument(
         "--workers",
         type=int,
         default=None,
-        help="Maximum number of workers for vine_factory (default=5).",
+        help="Maximum number of workers for vine_factory. If omitted, vine_factory uses 5.",
     )
 
     vf_group.add_argument(
         "--cores-per-worker",
         type=int,
         default=None,
-        help="Cores requested per worker (default=1).",
+        help="Cores requested per worker. If omitted, vine_factory uses 1.",
     )
 
     vf_group.add_argument(

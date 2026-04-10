@@ -85,8 +85,26 @@ See [Compute Specification](../reference/compute-spec.md).
 4. Add `compute/compute.yml` with sensible defaults.
 5. Test with `floability run --backpack <backpack-root>`.
 
+## Updating the Environment from a Run
+
+After running a backpack, the installed conda environment may resolve to different versions than what is written in `software/environment.yml`. Use `update-env` to export the actual versions from a completed instance back into the backpack:
+
+```bash
+# Replace the full dependency list with what was actually installed
+floability backpack update-env --from-instance <name-or-path>
+
+# Only update version strings for packages already listed in environment.yml
+floability backpack update-env --from-instance <name-or-path> --versions-only
+```
+
+The backpack's `name` field and any floability-specific keys (e.g. `post_install_script`) are always preserved. A backup of the previous file is saved as `software/old-environment.yml`.
+
+See [Update environment.yml from a Completed Instance](../how-to/update-environment.md) for a full walkthrough.
+
 ## Related Pages
 
 - [Run your first backpack](../getting-started/run-first-backpack.md)
+- [Create your first backpack](../getting-started/create-first-backpack.md)
+- [Update Environment](../how-to/update-environment.md)
 - [Instances](instances.md)
 - [Workers](workers.md)

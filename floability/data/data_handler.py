@@ -40,6 +40,7 @@ def execute_default_data_operation(
     target_root: Path | None = None,
     fingerprint_mode: str = "meta",
     perf: Optional[Any] = None,
+    _out_cache_dirs: Optional[List[str]] = None,
 ) -> bool:
     """Execute the default data operation as defined in the spec policy.
 
@@ -112,6 +113,7 @@ def execute_default_data_operation(
             target_root=target_root,
             fingerprint_mode=fingerprint_mode,
             perf=perf,
+            _out_cache_dirs=_out_cache_dirs,
         )
     elif default_op == "verify":
         return verify_data_from_spec(
@@ -237,6 +239,7 @@ def fetch_data_from_spec(
     target_root: Path | None = None,
     fingerprint_mode: str = "meta",
     perf: Optional[Any] = None,
+    _out_cache_dirs: Optional[List[str]] = None,
 ) -> bool:
     """Fetch (download/copy) all data items defined in the selected profile.
 
@@ -338,6 +341,7 @@ def fetch_data_from_spec(
             target_prefix=target_prefix,
             fingerprint_mode=fingerprint_mode,
             perf=perf,
+            _out_cache_dirs=_out_cache_dirs,
         )
         if perf:
             perf.end_timer(f"data_fetch_{item_name}", f"Time to fetch '{item_name}'")
@@ -989,6 +993,7 @@ def _fetch_single_item(
     target_prefix: Path | None = None,
     fingerprint_mode: str = "meta",
     perf: Optional[Any] = None,
+    _out_cache_dirs: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Fetch a single data item, optionally using cache.
 
@@ -1116,6 +1121,8 @@ def _fetch_single_item(
                     print(
                         f"[data:fetch] '{name}' materialized from cache -> {target_path}"
                     )
+                if _out_cache_dirs is not None:
+                    _out_cache_dirs.append(str(cache_dir))
                 return item
             else:
                 if perf:
