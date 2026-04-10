@@ -117,7 +117,7 @@ def create_instance_metadata(
             "spec_hash": compute_file_hash(data_spec),
             "profile": cli_args.get("data_profile"),
             "cache_mode": cli_args.get("data_cache_mode", "off"),
-            "cache_keys": [],  # Will be populated during data operations
+            "cache_dirs": [],  # Will be populated during data operations
         }
 
     # Execution context
@@ -211,13 +211,13 @@ def record_sync_manifest(
         json.dump(sync_manifest, f, indent=2)
 
 
-def add_data_cache_keys(metadata_path: Path, cache_keys: List[str]) -> None:
+def add_data_cache_dirs(metadata_path: Path, cache_dirs: List[str]) -> None:
     """
-    Add data cache keys to metadata.
+    Add data cache directory paths to metadata.
 
     Args:
         metadata_path: Path to run.json
-        cache_keys: List of cache keys used for data
+        cache_dirs: List of cache directory paths used during data fetch
     """
     if not metadata_path.exists():
         return
@@ -229,7 +229,9 @@ def add_data_cache_keys(metadata_path: Path, cache_keys: List[str]) -> None:
         if "data" not in metadata:
             metadata["data"] = {}
 
-        metadata["data"]["cache_keys"] = cache_keys
+        existing = metadata["data"].get("cache_dirs") or []
+        merged = list(dict.fromkeys(existing + cache_dirs))  # deduplicate, preserve order
+        metadata["data"]["cache_dirs"] = merged
 
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2, default=str)

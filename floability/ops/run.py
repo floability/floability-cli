@@ -38,7 +38,7 @@ from ..instance_registry import (
     register_instance,
 )
 from ..catalog import send_catalog_update
-from ..instance_metadata import finalize_instance_metadata, update_instance_metadata
+from ..instance_metadata import finalize_instance_metadata, update_instance_metadata, add_data_cache_dirs
 from ..data.data_handler import execute_default_data_operation
 
 # -----------------------------------------------------------------------------
@@ -413,6 +413,7 @@ def _materialize_data(
         args.backpack_root if getattr(args, "backpack_root", None) else None
     )
 
+    cache_dirs: list = []
     success = execute_default_data_operation(
         data_spec=args.data_spec,
         backpack_root=backpack_root_for_sources,
@@ -426,7 +427,14 @@ def _materialize_data(
         target_root=target_root,
         fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
         perf=perf if perf_enabled else None,
+        _out_cache_dirs=cache_dirs,
     )
+
+    if cache_dirs:
+        try:
+            add_data_cache_dirs(ctx.metadata_file, cache_dirs)
+        except Exception as e:
+            print(f"[floability] Warning: could not record data cache dirs: {e}")
 
     if perf_enabled:
         perf.end_timer(

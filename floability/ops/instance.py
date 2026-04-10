@@ -16,7 +16,7 @@ from ..performance_tracker import PerformanceTracker
 from ..backpack_manager import resolve_backpack_args, validate_backpack_structure
 from ..instance_manager import prepare_instance, get_registered_instances_status
 from ..environment_manager import setup_manager_and_worker_envs
-from ..instance_metadata import update_instance_metadata
+from ..instance_metadata import update_instance_metadata, add_data_cache_dirs
 from ..utils import normalize_cli_base_dir
 from ..instance_registry import register_instance, resolve_instance, list_instances, prune_nonexistent_entries
 from ..instance_lock_manager import (
@@ -104,6 +104,7 @@ def create_instance(args):
         backpack_root_for_sources = args.backpack_root if getattr(args, "backpack_root", None) else None
         target_root = instance_paths["workflow"]
 
+        cache_dirs: list = []
         data_success = execute_default_data_operation(
             data_spec=args.data_spec,
             backpack_root=backpack_root_for_sources,
@@ -117,8 +118,15 @@ def create_instance(args):
             target_root=target_root,
             fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
             perf=perf,
+            _out_cache_dirs=cache_dirs,
         )
         perf.end_timer("data_operation", "Time to perform data operation")
+
+        if cache_dirs:
+            try:
+                add_data_cache_dirs(instance_paths["metadata"] / "run.json", cache_dirs)
+            except Exception as e:
+                print(f"[floability] Warning: could not record data cache dirs: {e}")
 
         if not data_success:
             print("\n[floability] WARNING: Data operation failed!")
