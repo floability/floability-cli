@@ -252,7 +252,8 @@ def _prepare_new_instance(args: argparse.Namespace, mode: str) -> InstanceContex
     else:
         backpack_name = None
     if getattr(args, "instance_prefix", None):
-        instance_prefix = args.instance_prefix
+        raw_prefix = args.instance_prefix
+        instance_prefix = raw_prefix if raw_prefix.startswith("fi_") else f"fi_{raw_prefix}"
     elif backpack_name:
         instance_prefix = f"fi_{backpack_name}"
     else:

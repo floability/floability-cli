@@ -57,7 +57,7 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--instance-prefix",
         default=None,
-        help="Optional prefix to append to instance directory name (e.g., 'experiment1' creates floability_instance_experiment1_<timestamp>).",
+        help="Optional prefix for the instance directory name (always starts with 'fi_'; e.g., 'experiment1' creates fi_experiment1_<timestamp>).",
     )
     parser.add_argument(
         "--data-spec",
