@@ -17,7 +17,7 @@ and compute that run the same way everywhere.
 - [Workers](concepts/workers.md) — how tasks are distributed across compute
 
 ## How-To Guides
-
+- [Update Environment](how-to/update-environment.md) — keep your environment.yml in sync with what’s actually installed
 - [Manage Data](how-to/manage-data.md)
 - [Audit Notebooks](how-to/audit-notebooks.md)
 - [Troubleshooting](how-to/troubleshooting.md)

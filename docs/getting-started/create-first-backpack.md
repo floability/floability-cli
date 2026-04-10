@@ -339,6 +339,7 @@ If validation fails, read the errors carefully — they point to missing files o
 ## Next Steps
 
 1. **Run your backpack**: [Run Your First Backpack](run-first-backpack.md)
-2. **Understand backpack concepts**: [Backpacks](../concepts/backpacks.md)
-3. **Configure data**: [Data Specification](../reference/data-spec.md)
-4. **Deploy on clusters**: [Deployment Overview](../deployment/index.md)
+2. **Lock in concrete versions**: After a successful run, capture the exact installed versions back into `environment.yml` — [Update Environment](../how-to/update-environment.md)
+3. **Understand backpack concepts**: [Backpacks](../concepts/backpacks.md)
+4. **Configure data**: [Data Specification](../reference/data-spec.md)
+5. **Deploy on clusters**: [Deployment Overview](../deployment/index.md)

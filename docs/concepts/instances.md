@@ -65,6 +65,40 @@ floability instance stop <name-or-path>
 
 `instance stop` sends `SIGINT` first, then `SIGTERM` if needed, and performs worker shutdown as best effort.
 
+## Instance Naming
+
+Instance directories are named after the backpack they were created from:
+
+```
+fi_<backpack-name>_<timestamp>
+```
+
+For example, running with `--backpack cms-physics` produces:
+
+```
+fi_cms-physics_20260410104122618078
+```
+
+The timestamp is a compact UTC datetime with microseconds (`YYYYMMDDHHMMSSffffff`), making instances sortable and unique.
+
+If `--backpack .` is used, the name of the current directory is used as the backpack name.
+
+## Navigating to the Latest Instance
+
+To print the path of the most recently created instance:
+
+```bash
+floability instance latest
+```
+
+Use it directly in your shell to navigate there:
+
+```bash
+cd $(floability instance latest)
+```
+
+This resolves via the `latest_floability_instance` symlink in the base directory, falling back to the most recently registered instance in the registry.
+
 ## Directory Layout
 
 Each instance contains:
@@ -198,13 +232,17 @@ During execution, Floability may also write:
 # 1) Create once
 floability instance create --backpack <backpack-root>
 
-# 2) Discover short name
+# 2) Discover short name or navigate to latest
 floability instance list
+cd $(floability instance latest)
 
 # 3) Re-run later without rebuilding from scratch
 floability run --instance <short-name>
 
-# 4) Stop if needed
+# 4) Update backpack environment from what was installed
+floability backpack update-env --from-instance $(floability instance latest) ./my-backpack
+
+# 5) Stop if needed
 floability instance stop <short-name>
 ```
 
