@@ -18,7 +18,7 @@ from ..instance_manager import prepare_instance, get_registered_instances_status
 from ..environment_manager import setup_manager_and_worker_envs
 from ..instance_metadata import update_instance_metadata
 from ..utils import normalize_cli_base_dir
-from ..instance_registry import register_instance, resolve_instance, list_instances
+from ..instance_registry import register_instance, resolve_instance, list_instances, prune_nonexistent_entries
 from ..instance_lock_manager import (
     release_instance_lock,
     is_instance_running,
@@ -147,21 +147,19 @@ def create_instance(args):
         perf=perf if perf_enabled else None,
     )
 
-    # Record worker environment pack in metadata
-    if worker_environment_pack or manager_environment_pack:
+    # Record environment paths in metadata
+    metadata_updates = {
+        **({"env_dir": str(env_dir)} if env_dir else {}),
+        **({"worker_environment_pack": str(worker_environment_pack)} if worker_environment_pack else {}),
+        **({"manager_environment_pack": str(manager_environment_pack)} if manager_environment_pack else {}),
+    }
+    if metadata_updates:
         metadata_file = instance_paths["metadata"] / "run.json"
         try:
-            update_instance_metadata(
-                metadata_file,
-                {
-                    **({"worker_environment_pack": str(worker_environment_pack)} if worker_environment_pack else {}),
-                    **({"manager_environment_pack": str(manager_environment_pack)} if manager_environment_pack else {}),
-                },
-                merge=True,
-            )
+            update_instance_metadata(metadata_file, metadata_updates, merge=True)
         except Exception as e:
             print(
-                f"[floability] Warning: Could not update metadata with worker env: {e}"
+                f"[floability] Warning: Could not update metadata with environment info: {e}"
             )
 
     # Finalize performance tracking
@@ -236,7 +234,7 @@ def go_to_latest_instance(args) -> None:
       2. Most recently created entry in the instance registry
 
     Prints only the resolved path to stdout so the caller can use it with:
-        cd $(floability instance go-to-latest)
+        cd $(floability instance latest)
     """
     from ..utils import normalize_cli_base_dir
 
@@ -247,22 +245,26 @@ def go_to_latest_instance(args) -> None:
         print(str(symlink.resolve()))
         return
 
-    # Fallback: most recently created registry entry
+    # Fallback: most recently created registry entry that still exists on disk
+    prune_nonexistent_entries()
     entries = list_instances()
     if not entries:
         print("[floability] No instances found.", file=__import__("sys").stderr)
         raise SystemExit(1)
 
-    latest = max(
-        entries.items(),
-        key=lambda kv: kv[1].get("created_at", ""),
+    candidates = sorted(
+        entries.values(),
+        key=lambda v: v.get("created_at", ""),
+        reverse=True,
     )
-    path = latest[1].get("path", "")
-    if not path or not Path(path).is_dir():
-        print("[floability] Latest instance path no longer exists.", file=__import__("sys").stderr)
-        raise SystemExit(1)
+    for entry in candidates:
+        path = entry.get("path", "")
+        if path and Path(path).is_dir():
+            print(path)
+            return
 
-    print(path)
+    print("[floability] No instance paths found on disk.", file=__import__("sys").stderr)
+    raise SystemExit(1)
 
 
 def _read_lock_pid(lock_file: Path) -> int:

@@ -99,7 +99,7 @@ floability backpack update-env --from-instance <name-or-path> --versions-only
 
 The backpack's `name` field and any floability-specific keys (e.g. `post_install_script`) are always preserved. A backup of the previous file is saved as `software/old-environment.yml`.
 
-See [Update environment.yml from a Running Instance](../how-to/update-environment.md) for a full walkthrough.
+See [Update environment.yml from a Completed Instance](../how-to/update-environment.md) for a full walkthrough.
 
 ## Related Pages
 

@@ -1,4 +1,4 @@
-# Update environment.yml from a Running Instance
+# Update environment.yml from a Completed Instance
 
 After running a backpack, the conda environment that was actually built and used may differ from what is written in `software/environment.yml` — packages may have been resolved to different versions, transitive dependencies may have been pulled in, or you may have installed extra packages during an interactive session.
 

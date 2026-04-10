@@ -18,7 +18,7 @@ def create_unique_directory(
     while attempt < max_attempts:
         attempt += 1
         try:
-            timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S%f")
+            timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S%f")
             unique_dir = os.path.join(base_dir, f"{prefix}_{timestamp}")
             os.makedirs(unique_dir, exist_ok=False)
 
