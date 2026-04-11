@@ -45,4 +45,3 @@ nav:
       - Data Specification: reference/data-spec.md
       - Compute Specification: reference/compute-spec.md
       - Instance Registry: reference/instance-registry.md
-  - Changelog: changelog.md
