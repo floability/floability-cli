@@ -99,6 +99,28 @@ def load_template_notebook(variant: str) -> Dict[str, Any]:
         return json.load(f)
 
 
+def load_template_script(variant: str) -> str:
+    """
+    Load a starter Python script template.
+
+    Args:
+        variant: Template variant ('taskvine' or 'taskvine-data')
+
+    Returns:
+        Script source as a string
+
+    Raises:
+        ValueError: If template not found
+    """
+    template_dir = get_template_dir()
+    script_file = template_dir / f"{variant}.py"
+
+    if not script_file.exists():
+        raise ValueError(f"Script template not found: {variant}")
+
+    return script_file.read_text(encoding="utf-8")
+
+
 def load_template_yaml(filename: str) -> Dict[str, Any]:
     """
     Load a starter YAML template (environment, compute, data).
@@ -210,7 +232,10 @@ def build_taskvine_data_yml(generated_files: List[Path], backpack_path: Path) ->
 
 
 def init_from_template(
-    backpack_path: Path, backpack_name: str, template_variant: str
+    backpack_path: Path,
+    backpack_name: str,
+    template_variant: str,
+    use_script: bool = False,
 ) -> None:
     """
     Initialize a backpack from a template.
@@ -219,6 +244,10 @@ def init_from_template(
         backpack_path: Target directory path
         backpack_name: Name of the backpack
         template_variant: 'taskvine' or 'taskvine-data'
+        use_script: When True, create a Python script (.py) instead of a
+            Jupyter notebook (.ipynb).  The script is executed directly by
+            Floability in execute mode; stdout and stderr are tee'd to both
+            the terminal and logs/workflow.log inside the instance directory.
 
     Raises:
         ValueError: If template_variant is invalid
@@ -234,11 +263,16 @@ def init_from_template(
     (backpack_path / "software").mkdir(exist_ok=True)
     (backpack_path / "compute").mkdir(exist_ok=True)
 
-    # Load and write notebook
-    nb_dict = load_template_notebook(template_variant)
-    nb_path = backpack_path / "workflow" / f"{backpack_name}.ipynb"
-    with open(nb_path, "w") as f:
-        json.dump(nb_dict, f, indent=2)
+    # Load and write workflow entrypoint (notebook or script)
+    if use_script:
+        script_src = load_template_script(template_variant)
+        workflow_path = backpack_path / "workflow" / f"{backpack_name}.py"
+        workflow_path.write_text(script_src, encoding="utf-8")
+    else:
+        nb_dict = load_template_notebook(template_variant)
+        workflow_path = backpack_path / "workflow" / f"{backpack_name}.ipynb"
+        with open(workflow_path, "w") as f:
+            json.dump(nb_dict, f, indent=2)
 
     # Load, personalize, and write environment.yml
     env_dict = load_template_yaml("environment.yml")
@@ -263,9 +297,10 @@ def init_from_template(
         with open(data_path, "w") as f:
             yaml.safe_dump(data_dict, f, default_flow_style=False, sort_keys=False)
 
-    print(f"[floability] Backpack initialized from template: {template_variant}")
+    workflow_type = "script" if use_script else "notebook"
+    print(f"[floability] Backpack initialized from template: {template_variant} ({workflow_type})")
     print(f"[floability]   Location: {backpack_path}")
-    print(f"[floability]   Workflow: {nb_path.name}")
+    print(f"[floability]   Workflow: {workflow_path.name}")
     print(f"[floability]   Environment: environment.yml")
     print(f"[floability]   Compute: compute.yml")
     if has_data:

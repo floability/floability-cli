@@ -76,6 +76,7 @@ def init_backpack(args: argparse.Namespace) -> None:
                 backpack_path=backpack_path,
                 backpack_name=backpack_name,
                 template_variant=args.from_template,  # taskvine or taskvine-data
+                use_script=getattr(args, "script", False),
             )
             print_success_message(backpack_path)
         except Exception as e:

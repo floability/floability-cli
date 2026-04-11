@@ -48,6 +48,17 @@ class BackpackCommand(BaseCommand):
         )
 
         init_parser.add_argument(
+            "--script",
+            action="store_true",
+            default=False,
+            help=(
+                "Create a Python script (.py) workflow instead of a Jupyter notebook (.ipynb). "
+                "Only applies when using --from-template. "
+                "In execute mode the script's stdout/stderr are tee'd to both the terminal "
+                "and logs/workflow.log inside the instance directory."
+            ),
+        )
+        init_parser.add_argument(
             "--force",
             action="store_true",
             help="Overwrite existing backpack directory if it exists",
@@ -106,6 +117,8 @@ class BackpackCommand(BaseCommand):
         return [
             "floability backpack init --name my-workflow --from-template taskvine",
             "floability backpack init --name my-workflow --from-template taskvine-data",
+            "floability backpack init --name my-workflow --from-template taskvine --script",
+            "floability backpack init --name my-workflow --from-template taskvine-data --script",
             "floability backpack init --name my-workflow --from-workflow ./my-notebook.ipynb",
             "floability backpack validate ./my-workflow",
             "floability backpack update-env --from-instance fi_20260410_104122_618078",

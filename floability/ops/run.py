@@ -140,59 +140,82 @@ def run_workflow(
         raise
 
 
-# todo: revist and make unified execution for any scripts
 def execute_python_script(
     script_path, run_dir, conda_env_dir=None, working_dir=None, extra_env: dict = None
 ):
+    """Execute a Python script, streaming stdout/stderr to both the terminal and a log file.
+
+    Output routing
+    --------------
+    Script stdout and stderr are tee'd in real time to:
+      - The terminal (so TaskVine task-status lines and print() calls are visible live)
+      - logs/workflow.log inside the instance directory
+
+    This differs from notebook execution, where outputs are embedded in the .ipynb
+    cell outputs and nbconvert's own messages go to logs/jupyterlab.stdout.
+    """
     script_abs_path = os.path.abspath(script_path)
     script_name = os.path.basename(script_abs_path)
 
-    # Use provided working_dir or fall back to script's directory
     exec_dir = working_dir if working_dir else os.path.dirname(script_abs_path)
 
-    print(f"[floability] Changing directory to: {exec_dir}")
     print(f"[floability] Executing Python script: {script_name}")
-    log_file = os.path.join(run_dir, "python_execution.log")
-    print(f"[floability] Logging to: {log_file}")
-    with open(log_file, "w") as log:
-        original_dir = os.getcwd()
-        try:
-            os.chdir(exec_dir)
-            log.write(f"[floability] Changed working directory to: {exec_dir}\n")
-            cmd = []
-            if conda_env_dir:
-                cmd = [
-                    "conda",
-                    "run",
-                    "--prefix",
-                    conda_env_dir,
-                    "--no-capture-output",
-                    "python",
-                    script_name,
-                ]
-            else:
-                cmd = ["python", script_name]
-            cmd_str = " ".join(cmd)
-            print(f"[floability] Running command: {cmd_str}")
-            log.write(f"[floability] Running command: {cmd_str}\n")
+    print(f"[floability] Working directory: {exec_dir}")
+    log_file = os.path.join(run_dir, "workflow.log")
+    print(f"[floability] Output log: {log_file}")
+
+    if conda_env_dir:
+        cmd = [
+            "conda", "run",
+            "--prefix", conda_env_dir,
+            "--no-capture-output",
+            "python", "-u", script_name,
+        ]
+    else:
+        cmd = ["python", "-u", script_name]
+
+    print(f"[floability] Running: {' '.join(cmd)}")
+
+    original_dir = os.getcwd()
+    returncode = 1
+    try:
+        os.chdir(exec_dir)
+        with open(log_file, "w") as log:
+            log.write(f"[floability] script: {script_abs_path}\n")
+            log.write(f"[floability] command: {' '.join(cmd)}\n\n")
             log.flush()
-            result = subprocess.run(
+
+            proc = subprocess.Popen(
                 cmd,
                 env=extra_env,
-                stdout=log,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                check=True,
                 text=True,
             )
-            print(
-                f"[floability] Python script execution completed with exit code {result.returncode}"
-            )
-            print(f"[floability] Logs saved to {log_file}")
-        except subprocess.CalledProcessError as e:
-            print(f"[floability] Error executing Python script: {e}")
-            print(f"[floability] Check logs at {log_file}")
-        finally:
-            os.chdir(original_dir)
+
+            # Tee: write each line to both the log and the terminal live
+            for line in proc.stdout:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+                log.write(line)
+                log.flush()
+
+            proc.wait()
+            returncode = proc.returncode
+
+        if returncode == 0:
+            print(f"[floability] Script completed successfully (exit 0)")
+        else:
+            print(f"[floability] Script exited with code {returncode}")
+        print(f"[floability] Full output saved to: {log_file}")
+
+    except Exception as e:
+        print(f"[floability] Error executing Python script: {e}")
+        print(f"[floability] Check logs at {log_file}")
+    finally:
+        os.chdir(original_dir)
+
+    return returncode == 0
 
 
 # -----------------------------------------------------------------------------
@@ -599,10 +622,20 @@ def _find_notebook(
                 print(
                     f"[floability] No notebook specified, auto-detected: {notebook_path}"
                 )
-        elif mode == "execute":
-            raise RuntimeError(
-                "No notebook found in workflow directory for execute mode."
-            )
+        else:
+            # No notebook found — fall back to Python scripts
+            workflow_scripts = [
+                p for p in ctx.workflow_dir.rglob("*.py")
+                if "__pycache__" not in str(p)
+            ]
+            if workflow_scripts:
+                notebook_path = str(workflow_scripts[0])
+                print(f"[floability] No notebook found, auto-detected script: {notebook_path}")
+            elif mode == "execute":
+                raise RuntimeError(
+                    "No workflow entrypoint found in workflow directory for execute mode. "
+                    "Expected a .ipynb notebook or .py script."
+                )
 
     return notebook_path
 
@@ -618,8 +651,15 @@ def _run_interactive(
 ) -> None:
     """Run interactive mode with JupyterLab."""
     print("[floability] JupyterLab startup")
+    # JupyterLab can only open a notebook at startup; pass None for .py entrypoints
+    # so it launches in the workflow directory without trying to open the script.
+    nb_for_jupyter = notebook_path if notebook_path and notebook_path.endswith(".ipynb") else None
+    if notebook_path and not nb_for_jupyter:
+        print(f"[floability] Script entrypoint detected ({Path(notebook_path).name}); "
+              "JupyterLab will open in the workflow directory — run the script manually "
+              "or use execute mode (floability run --execute).")
     jupyter_proc = start_jupyterlab(
-        notebook_path=notebook_path,
+        notebook_path=nb_for_jupyter,
         port=getattr(args, "jupyter_port", 8888),
         run_dir=str(ctx.paths["logs"]),
         conda_env_dir=env_ctx.env_dir,
@@ -656,23 +696,39 @@ def _execute_batch(
     perf: PerformanceTracker,
     notebook_path: Optional[str],
 ) -> None:
-    """Execute batch mode (notebook or python script)."""
+    """Execute batch mode (notebook or python script).
+
+    Dispatch rules
+    --------------
+    1. notebook_path ends with .py  → execute_python_script (auto-detected script backpack)
+    2. --prefer-python + --python-script  → execute_python_script (legacy explicit flag)
+    3. notebook_path ends with .ipynb  → execute_notebook
+    """
     script_path = getattr(args, "python_script", None)
     if ctx.is_new and script_path:
         script_path = Path(script_path).name
 
     execution_success = False
 
-    if getattr(args, "prefer_python", False) and script_path:
+    # Auto-detected .py entrypoint from the workflow directory
+    if notebook_path and notebook_path.endswith(".py"):
+        print("[floability] Python script execution (auto-detected .py entrypoint)")
+        execution_success = execute_python_script(
+            script_path=notebook_path,
+            run_dir=str(ctx.paths["logs"]),
+            conda_env_dir=env_ctx.env_dir,
+            working_dir=str(ctx.workflow_dir),
+            extra_env=env_ctx.instance_env,
+        )
+    elif getattr(args, "prefer_python", False) and script_path:
         print("[floability] python script execution")
-        execute_python_script(
+        execution_success = execute_python_script(
             script_path=script_path,
             run_dir=str(ctx.paths["logs"]),
             conda_env_dir=env_ctx.env_dir,
             working_dir=str(ctx.workflow_dir),
             extra_env=env_ctx.instance_env,
         )
-        execution_success = True
     elif notebook_path:
         print("[floability] notebook execution")
         if perf.enabled:
