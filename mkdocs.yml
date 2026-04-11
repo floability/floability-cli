@@ -31,9 +31,7 @@ nav:
       - Workers: concepts/workers.md
       - Audit: concepts/audit.md
   - How-To Guides:
-      - Manage Data: how-to/manage-data.md
       - Update Environment: how-to/update-environment.md
-      - Audit Notebooks: how-to/audit-notebooks.md
       - Troubleshooting: how-to/troubleshooting.md
   - Deployment:
       - Overview: deployment/index.md
