@@ -39,6 +39,19 @@ def create_instance(args):
 
     The instance is ready to run but doesn't start workers or Jupyter.
     """
+    try:
+        _create_instance_impl(args)
+    except ValueError as e:
+        print(f"[floability] Error: {e}")
+    except RuntimeError as e:
+        print(f"[floability] Error: {e}")
+    except Exception as e:
+        print(f"[floability] Unexpected error: {e}")
+        raise
+
+
+def _create_instance_impl(args):
+    """Internal implementation for create_instance — raises on error."""
     # Resolve backpack arguments
     resolve_backpack_args(args)
     # Validate backpack structure with stricter workflow requirement for instance creation
@@ -46,13 +59,20 @@ def create_instance(args):
         validate_backpack_structure(args.backpack, require_workflow=True)
 
     if not args.backpack:
-        print("[floability] Error: --backpack is required for 'instance create'")
-        return
+        raise ValueError("--backpack is required for 'instance create'")
+
+    # Validate environment spec early — same pattern as run.py _setup_environment
+    env_spec = getattr(args, "environment", None)
+    if not env_spec:
+        raise ValueError(
+            "No environment spec provided. "
+            "Use --environment to specify a path to environment.yml."
+        )
 
     # Normalize base_dir and data cache dir
     raw_base = getattr(args, "base_dir", None) if hasattr(args, "base_dir") else None
     args.base_dir = str(normalize_cli_base_dir(raw_base))
-    
+
     # Determine data cache directory: allow CLI override, else use base_dir/floability-data-cache
     raw_cache_override = getattr(args, "data_cache_dir", None) if hasattr(args, "data_cache_dir") else None
     if raw_cache_override:
@@ -60,18 +80,19 @@ def create_instance(args):
         try:
             cache_base_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
-            pass
+            print(f"[floability] Warning: Could not create specified data cache directory: {cache_base_dir}.")
     else:
         cache_base_dir = (Path(args.base_dir) / "floability-data-cache").resolve()
         try:
             cache_base_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
-            pass
+            print(f"[floability] Warning: Could not create default data cache directory: {cache_base_dir}.")
     args.cache_base_dir = str(cache_base_dir)
 
     # Prepare instance structure & metadata via manager module
     instance_paths = prepare_instance(args, mode="instance")
     instance_root = str(instance_paths["root"])
+
     # Register instance short name
     try:
         short_name = register_instance(
@@ -99,8 +120,6 @@ def create_instance(args):
 
         from ..data.data_handler import execute_default_data_operation
 
-        # Materialize data into instance workflow
-        # backpack_root is used for resolving source paths only
         backpack_root_for_sources = args.backpack_root if getattr(args, "backpack_root", None) else None
         target_root = instance_paths["workflow"]
 
@@ -130,28 +149,21 @@ def create_instance(args):
 
         if not data_success:
             print("\n[floability] WARNING: Data operation failed!")
-            print("[floability] Instance created but data may be incomplete.")
+            if not getattr(args, "continue_on_data_failure", False):
+                raise RuntimeError("Data materialization failed. Use --continue-on-data-failure to proceed anyway.")
         else:
             print("[floability] Data operation completed successfully")
     elif skip_data:
         print("[floability] Skipping data operation (--skip-data enabled)")
 
     # Setup conda environments (manager + worker) via environment manager
+    per_instance_env = getattr(args, "per_instance_env", False)
     env_dir, worker_environment_pack, manager_environment_pack = setup_manager_and_worker_envs(
-        environment_spec=(
-            args.environment if getattr(args, "environment", None) else None
-        ),
-        worker_environment_spec=(
-            args.worker_environment
-            if getattr(args, "worker_environment", None)
-            else None
-        ),
+        environment_spec=env_spec,
+        worker_environment_spec=getattr(args, "worker_environment", None),
         base_dir=args.base_dir,
         instance_root=instance_root,
-        manager_name=args.manager_name,
-        manager_ports=getattr(args, "manager_ports", "9123,9150"),
-        env_vars=getattr(args, "env_vars", None),
-        force=False,
+        per_instance_env=per_instance_env,
         perf=perf if perf_enabled else None,
     )
 
@@ -166,9 +178,7 @@ def create_instance(args):
         try:
             update_instance_metadata(metadata_file, metadata_updates, merge=True)
         except Exception as e:
-            print(
-                f"[floability] Warning: Could not update metadata with environment info: {e}"
-            )
+            print(f"[floability] Warning: Could not update metadata with environment info: {e}")
 
     # Finalize performance tracking
     if perf_enabled:

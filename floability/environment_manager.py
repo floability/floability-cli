@@ -69,6 +69,11 @@ def setup_manager_and_worker_envs(
 
     base_dir = os.path.expanduser(base_dir)
     instance_root = os.path.expanduser(instance_root)
+    if not environment_spec:
+        raise ValueError(
+            "environment_spec is required. "
+            "Provide a path to an environment.yml via --environment."
+        )
     environment_spec = os.path.expanduser(environment_spec)
 
     # ── Manager environment ──────────────────────────────────────────────────

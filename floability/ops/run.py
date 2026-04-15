@@ -80,10 +80,15 @@ def run_workflow(
     or by reusing an existing instance (via --instance).
     """
     try:
-        # Step 1: Determine instance source (new from backpack vs existing)
+        # Step 1: Normalize base_dir before anything else — both new and existing
+        # instance paths need it (e.g. create_latest_symlink).
+        raw_base = getattr(args, "base_dir", None) if hasattr(args, "base_dir") else None
+        args.base_dir = str(normalize_cli_base_dir(raw_base))
+
+        # Step 2: Determine instance source (new from backpack vs existing)
         new_instance_required = _is_new_instance_required(args)
 
-        # Step 2: Prepare instance (new or existing)
+        # Step 3: Prepare instance (new or existing)
         if new_instance_required:
             ctx = _prepare_new_instance(args, mode)
         else:
@@ -909,6 +914,14 @@ def _resolve_existing_instance_env(
             )
         return env_dir_str
 
+    # Fall back to the env_dir persisted directly in metadata (e.g. when the
+    # original run was created without --environment but env_dir was still
+    # recorded by _persist_env_metadata).
+    saved_env_dir: Optional[str] = metadata.get("env_dir", None)
+    if saved_env_dir and Path(saved_env_dir).exists():
+        print(f"[floability] Using saved environment: {saved_env_dir}")
+        return saved_env_dir
+
     print("[floability] No environment found; proceeding without conda env.")
     return None
 
@@ -1023,7 +1036,11 @@ def _build_instance_env(
     # -------------------------------------------------
     # ctx.env_dir should point to the conda prefix being used
     # (shared base, cloned env, etc.)
-    python_version = _get_env_python_version(env_dir)
+    if env_dir is not None:
+        python_version = _get_env_python_version(env_dir)
+    else:
+        import sys
+        python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
 
     pyuser_site = pyuser_dir / "lib" / f"python{python_version}" / "site-packages"
     pyuser_site.mkdir(parents=True, exist_ok=True)
