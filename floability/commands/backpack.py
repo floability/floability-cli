@@ -92,12 +92,22 @@ class BackpackCommand(BaseCommand):
             help="Instance directory path or registered short name to export the environment from",
         )
         update_env_parser.add_argument(
-            "--versions-only",
+            "--full",
             action="store_true",
             default=False,
             help=(
-                "Only update versions of packages already listed in the backpack environment.yml "
-                "rather than replacing the full dependency list"
+                "Replace the full dependency list in environment.yml with everything "
+                "installed in the instance's conda environment, instead of only patching "
+                "versions of packages already listed"
+            ),
+        )
+        update_env_parser.add_argument(
+            "--export-lock-file",
+            action="store_true",
+            default=False,
+            help=(
+                "Also generate a conda lock file via conda-lock and write it to "
+                "software/conda-lock-linux-64.yml (linux-64 only)"
             ),
         )
         update_env_parser.add_argument(
@@ -123,5 +133,6 @@ class BackpackCommand(BaseCommand):
             "floability backpack validate ./my-workflow",
             "floability backpack update-env --from-instance fi_20260410_104122_618078",
             "floability backpack update-env --from-instance /path/to/instance ./my-workflow",
-            "floability backpack update-env --from-instance fi_20260410_104122_618078 --versions-only",
+            "floability backpack update-env --from-instance fi_20260410_104122_618078 --full",
+            "floability backpack update-env --from-instance fi_20260410_104122_618078 --export-lock-file",
         ]

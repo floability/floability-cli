@@ -12,11 +12,13 @@ Templates are loaded from floability/bootstrap_templates/
 
 import json
 import hashlib
+import platform as _platform
 import random
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Tuple, Dict, List, Any, Optional
 
@@ -753,10 +755,76 @@ def _build_versions_only(
     return new_env
 
 
+def _write_conda_lock(env_dir: str, software_dir: Path) -> None:
+    """Generate software/conda-lock-linux-64.yml via conda-lock.
+
+    Exports the instance's conda environment to a temporary environment.yml,
+    runs ``conda-lock -f <tmp.yml> -p linux-64`` with cwd=software_dir, then
+    renames the default ``conda-lock.yml`` output to ``conda-lock-linux-64.yml``.
+
+    Only supported on linux-64. Raises RuntimeError on platform mismatch or if
+    conda-lock is not installed.
+    """
+    system = _platform.system().lower()
+    machine = _platform.machine().lower()
+    if system != "linux" or machine not in ("x86_64", "amd64"):
+        raise RuntimeError(
+            f"--export-lock-file is only supported on linux-64 "
+            f"(current platform: {system}-{machine})"
+        )
+
+    # Export the full environment from the instance (no-builds)
+    result = subprocess.run(
+        ["conda", "env", "export", "--no-builds", "--prefix", env_dir],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"conda env export failed (exit {result.returncode}):\n{result.stderr.strip()}"
+        )
+
+    # Strip non-portable prefix line before passing to conda-lock
+    lines = [ln for ln in result.stdout.splitlines() if not ln.startswith("prefix:")]
+    env_yaml = "\n".join(lines) + "\n"
+
+    tmp_path: Optional[Path] = software_dir / "environment.yml"
+    try:
+        # with tempfile.NamedTemporaryFile(
+        #     mode="w", suffix=".yml", delete=False, dir=software_dir
+        # ) as tmp:
+        #     tmp.write(env_yaml)
+        #     tmp_path = Path(tmp.name)
+            
+        print(f"[floability] Temporary environment file: {tmp_path}")
+
+        lock_result = subprocess.run(
+            ["conda-lock", "-f", str(tmp_path), "-p", "linux-64"],
+            capture_output=True,
+            text=True,
+            cwd=str(software_dir),
+        )
+        if lock_result.returncode != 0:
+            raise RuntimeError(
+                f"conda-lock failed (exit {lock_result.returncode}):\n"
+                f"{lock_result.stderr.strip()}"
+            )
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+
+    # Rename the default output to include the target architecture
+    default_output = software_dir / "conda-lock.yml"
+    target_output = software_dir / "conda-lock-linux-64.yml"
+    if default_output.exists():
+        default_output.rename(target_output)
+
+
 def update_env_from_instance(
     instance_ref: str,
     backpack_path: Path,
-    versions_only: bool = False,
+    full: bool = False,
+    export_lock_file: bool = False,
 ) -> None:
     """Update backpack software/environment.yml from a completed instance's conda env.
 
@@ -765,15 +833,19 @@ def update_env_from_instance(
       2. Read env_dir from instance metadata/run.json.
       3. Export the conda environment with --no-builds (strips prefix field).
       4. Load the existing backpack environment.yml.
-      5. Build the new environment dict (full replacement or versions-only patch).
+      5. Build the new environment dict (version patch or full replacement).
       6. Save a backup as software/old-environment.yml.
       7. Write the updated software/environment.yml.
+      8. If export_lock_file, write software/conda-lock-linux-64.yml via conda-lock.
 
     Args:
         instance_ref: Instance directory path or registered short name.
         backpack_path: Path to the backpack directory.
-        versions_only: When True, only update versions of packages already listed
-                       in the backpack env; leave all other fields unchanged.
+        full: When True, replace the full dependency list with everything installed
+              in the instance environment. Default patches only the versions of
+              packages already listed in the backpack environment.yml.
+        export_lock_file: When True, also write software/conda-lock-linux-64.yml
+                          using conda-lock (linux-64 only).
     """
     software_dir = backpack_path / "software"
     env_yml_path = software_dir / "environment.yml"
@@ -802,12 +874,12 @@ def update_env_from_instance(
 
     print(f"[floability] Env name (preserved): {old_env['name']}")
 
-    if versions_only:
-        print("[floability] Mode: versions-only (patching existing package versions)")
-        new_env = _build_versions_only(exported, old_env)
-    else:
+    if full:
         print("[floability] Mode: full replacement (using exported dependency list)")
         new_env = _build_full_replacement(exported, old_env)
+    else:
+        print("[floability] Mode: version patch (updating versions of listed packages)")
+        new_env = _build_versions_only(exported, old_env)
 
     # Backup before overwriting
     backup_path = software_dir / "old-environment.yml"
@@ -817,5 +889,10 @@ def update_env_from_instance(
     with open(env_yml_path, "w") as f:
         yaml.safe_dump(new_env, f, default_flow_style=False, sort_keys=False)
 
-    mode_label = "versions patched" if versions_only else "full replacement"
+    mode_label = "full replacement" if full else "versions patched"
     print(f"[floability] Updated environment.yml ({mode_label}): {env_yml_path}")
+
+    if export_lock_file:
+        print("[floability] Generating conda lock file (linux-64)...")
+        _write_conda_lock(env_dir, software_dir)
+        print(f"[floability] Wrote conda lock file: {software_dir / 'conda-lock-linux-64.yml'}")
