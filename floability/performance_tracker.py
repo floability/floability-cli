@@ -5,6 +5,18 @@ from pathlib import Path
 from datetime import datetime
 
 
+class NullPerf:
+    """No-op performance tracker. Used as a sentinel when no perf object is provided.
+    Eliminates 'if perf:' guards at every call site.
+    """
+
+    def start_timer(self, *args, **kwargs):
+        pass
+
+    def end_timer(self, *args, **kwargs):
+        pass
+
+
 class PerformanceTracker:
     def __init__(self, output_dir, enabled=True):
         self.metrics = {}

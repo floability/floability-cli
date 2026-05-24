@@ -22,8 +22,10 @@ from .s3_file_utils import (
     s3_list_objects,
     s3_directory_download,
     is_s3_directory,
+    s3_source_metadata,
 )
 from .fs_file_utils import fs_file_metadata, fs_file_copy
+from floability.performance_tracker import NullPerf as _NullPerf
 
 
 # --------------------------- Public API ---------------------------
@@ -39,6 +41,7 @@ def execute_default_data_operation(
     cache_base_dir: Path | None = None,
     target_root: Path | None = None,
     fingerprint_mode: str = "meta",
+    cache_lookup_mode: str = "strict",
     perf: Optional[Any] = None,
     _out_cache_dirs: Optional[List[str]] = None,
 ) -> bool:
@@ -112,6 +115,7 @@ def execute_default_data_operation(
             cache_base_dir=cache_base_dir,
             target_root=target_root,
             fingerprint_mode=fingerprint_mode,
+            cache_lookup_mode=cache_lookup_mode,
             perf=perf,
             _out_cache_dirs=_out_cache_dirs,
         )
@@ -128,6 +132,7 @@ def execute_default_data_operation(
             cache_base_dir=cache_base_dir,
             target_root=target_root,
             fingerprint_mode=fingerprint_mode,
+            cache_lookup_mode=cache_lookup_mode,
         )
     else:
         print(f"[data] Unknown default operation '{default_op}' specified in policy.")
@@ -238,6 +243,7 @@ def fetch_data_from_spec(
     cache_base_dir: Path | None = None,
     target_root: Path | None = None,
     fingerprint_mode: str = "meta",
+    cache_lookup_mode: str = "strict",
     perf: Optional[Any] = None,
     _out_cache_dirs: Optional[List[str]] = None,
 ) -> bool:
@@ -277,6 +283,7 @@ def fetch_data_from_spec(
         else:
             backpack_root = spec_path.parent
     backpack_root = Path(backpack_root).resolve()
+    perf = perf or _NullPerf()
 
     try:
         profile_name, profile = load_and_validate_spec(
@@ -316,10 +323,8 @@ def fetch_data_from_spec(
     # Determine target_prefix for materializing data
     if target_root:
         target_prefix = Path(target_root).resolve()
-    elif backpack_root:
-        target_prefix = (Path(backpack_root) / "workflow").resolve()
     else:
-        target_prefix = Path.cwd() / "workflow"
+        target_prefix = (Path.cwd() / "workflow").resolve()
 
     total = len(normalized_items)
     failed_items = []
@@ -328,8 +333,7 @@ def fetch_data_from_spec(
         item_name = item.get("name", "<unnamed>")
         if verbose:
             print(f"[data:fetch] Fetching {idx}/{total}: {item_name} (force={force})")
-        if perf:
-            perf.start_timer(f"data_fetch_{item_name}")
+        perf.start_timer(f"data_fetch_{item_name}")
         result = _fetch_single_item(
             item,
             backpack_root,
@@ -343,13 +347,10 @@ def fetch_data_from_spec(
             perf=perf,
             _out_cache_dirs=_out_cache_dirs,
         )
-        if perf:
-            perf.end_timer(f"data_fetch_{item_name}", f"Time to fetch '{item_name}'")
+        perf.end_timer(f"data_fetch_{item_name}", f"Time to fetch '{item_name}'")
 
         # Check if fetch was successful (returns source on success, None on failure or skip)
-        target_path = _resolve_target_path(
-            item, backpack_root, target_prefix=target_prefix
-        )
+        target_path = _resolve_target_path(item, target_prefix=target_prefix)
 
         # Verify the file actually exists after fetch attempt
         if not target_path.exists():
@@ -385,6 +386,7 @@ def verify_data_from_spec(
     cache_base_dir: Path | None = None,
     target_root: Path | None = None,
     fingerprint_mode: str = "meta",
+    cache_lookup_mode: str = "strict",
 ) -> bool:
     """Verify data items: ensure present (download/copy if needed) then validate integrity.
 
@@ -463,8 +465,6 @@ def verify_data_from_spec(
     # Determine target_prefix for materializing data
     if target_root:
         target_prefix = Path(target_root).resolve()
-    elif backpack_root:
-        target_prefix = (Path(backpack_root) / "workflow").resolve()
     else:
         target_prefix = (Path.cwd() / "workflow").resolve()
 
@@ -485,11 +485,10 @@ def verify_data_from_spec(
             cache_base_dir=cache_base_dir,
             target_prefix=target_prefix,
             fingerprint_mode=fingerprint_mode,
+            cache_lookup_mode=cache_lookup_mode,
         )
         # Evaluate integrity on local target
-        target_path = _resolve_target_path(
-            item, backpack_root, target_prefix=target_prefix
-        )
+        target_path = _resolve_target_path(item, target_prefix=target_prefix)
         local_exists = target_path.exists()
         is_dir = target_path.is_dir() if local_exists else False
 
@@ -831,29 +830,28 @@ def _check_single_item(
             size_ok = diff <= tolerance
             size_note = f"diff={diff}" if diff else "exact"
 
-    # Check cache status if cache mode is enabled
+    # Check cache status if cache mode is enabled.
+    # Uses local-mode lookup (spec_key scan only) — no remote metadata fetch for check.
     cache_exists = None
     cache_valid = None
     cache_key = None
     if data_cache_mode != "off" and cache_base_dir:
         try:
             artifact_spec = _create_artifact_spec(item, backpack_root)
-            cache_key = _compute_cache_key(artifact_spec)
-            cache_dir = _get_cache_dir(cache_base_dir, cache_key)
+            spec_key = _compute_spec_key(artifact_spec)
+            cache_key = spec_key  # for display
 
-            cache_exists = cache_dir.exists() and (cache_dir / ".meta.json").exists()
-            if cache_exists:
-                # Check if cache is valid (no lock, metadata matches)
-                lock_file = cache_dir / ".verify.lock"
-                if lock_file.exists():
-                    cache_valid = False  # Building in progress
-                else:
-                    cache_meta = _lookup_cache_entry(
-                        cache_dir, artifact_spec, verbose=False
-                    )
-                    cache_valid = cache_meta is not None
-            else:
-                cache_valid = False
+            hit = _find_cache_hit(
+                cache_base_dir,
+                spec_key,
+                source_key=None,
+                artifact_spec=artifact_spec,
+                backpack_root=backpack_root,
+                cache_lookup_mode="local",
+                verbose=False,
+            )
+            cache_exists = hit is not None
+            cache_valid = hit is not None
         except Exception as e:
             if verbose:
                 print(f"[data:check] Error checking cache for '{name}': {e}")
@@ -909,45 +907,31 @@ def _metadata_for_source(item: Dict[str, Any], backpack_root: Path) -> Dict[str,
 
 
 # --------------------------- Fetch Logic ---------------------------
-def _resolve_target_path(
-    item: Dict[str, Any], backpack_root: Path, target_prefix: Path
-) -> Path:
+def _resolve_target_path(item: Dict[str, Any], target_prefix: Path) -> Path:
     """Resolve final target path for an item.
 
     Parameters:
       - item: data item dict (may contain target_path/target_location/name)
-      - backpack_root: base backpack path for resolving item-level relative target_prefix (if any)
       - target_prefix: explicit prefix Path to use for relative targets (required)
 
-        Behavior:
-            - Absolute target paths are returned as absolute paths without dereferencing symlinks.
+    Behavior:
+      - Absolute target paths are returned as absolute paths without dereferencing symlinks.
       - Relative targets are placed under `target_prefix/target`.
-      - Per-item target_prefix (if relative) is resolved against backpack_root.
     """
-    target_rel = item.get("target_location") or item.get("target_path")
-    if not target_rel:
+
+    target_path_from_spec = item.get("target_location") or item.get("target_path")
+    if not target_path_from_spec:
         raise ValueError("Missing required 'target_location' in data item")
-    target_p = Path(target_rel)
 
-    # Absolute -> normalize without dereferencing symlinks.
-    if target_p.is_absolute():
-        return Path(os.path.abspath(os.path.expanduser(str(target_p))))
+    target_path = Path(target_path_from_spec)
 
-    # Check for per-item target_prefix override
-    item_prefix = item.get("target_prefix")
-    if item_prefix:
-        prefix_p = Path(item_prefix)
-        if not prefix_p.is_absolute():
-            base = Path(backpack_root) if backpack_root else Path.cwd()
-            prefix_p = Path(os.path.abspath(str(base / prefix_p)))
-        else:
-            prefix_p = Path(os.path.abspath(os.path.expanduser(str(prefix_p))))
-    else:
-        # Use provided target_prefix
-        prefix_p = Path(os.path.abspath(str(target_prefix)))
+    # Absolute targets always win and ignore target_prefix.
+    if target_path.is_absolute():
+        return Path(os.path.abspath(os.path.expanduser(str(target_path))))
 
+    prefix_p = Path(os.path.abspath(os.path.expanduser(str(target_prefix))))
     prefix_p.mkdir(parents=True, exist_ok=True)
-    return Path(os.path.abspath(str(prefix_p / target_p)))
+    return Path(os.path.abspath(str(prefix_p / target_path)))
 
 
 def _copy_local_source_to_target(
@@ -982,6 +966,407 @@ def _copy_local_source_to_target(
     return True
 
 
+def _prepare_fetch_target(
+    item: Dict[str, Any],
+    target_prefix: Path,
+    force: bool,
+    verbose: bool,
+) -> Path:
+    name = item.get("name", "<unnamed>")
+    target_path = _resolve_target_path(item, target_prefix=target_prefix)
+    if verbose:
+        print(f"[data:fetch] Target resolved for '{name}': {target_path}")
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if target_path.exists() and not force:
+        if verbose:
+            print(
+                f"[data:fetch] Skipping '{name}' because target already exists: {target_path}"
+            )
+        return target_path
+
+    if target_path.exists() and force:
+        if verbose:
+            print(f"[data:fetch] Removing existing target for '{name}': {target_path}")
+        if target_path.is_dir() and not target_path.is_symlink():
+            shutil.rmtree(target_path)
+        else:
+            target_path.unlink()
+
+    if verbose:
+        print(f"[data:fetch] Ready target for '{name}': {target_path}")
+    return target_path
+
+
+def _prepare_cache_context(
+    item: Dict[str, Any],
+    backpack_root: Path,
+    cache_lookup_mode: str = "strict",
+    perf: Optional[Any] = None,
+    verbose: bool = False,
+) -> Dict[str, Any]:
+    """Compute artifact spec and spec_key. For strict mode with remote sources,
+    also fetch source metadata and compute source_key upfront.
+
+    Returns dict with: artifact_spec, spec_key, source_key (None if deferred),
+    source_meta (None if deferred).
+    """
+    perf = perf or _NullPerf()
+    name = item.get("name", "<unnamed>")
+    artifact_spec = _create_artifact_spec(item, backpack_root)
+    spec_key = _compute_spec_key(artifact_spec)
+
+    source_key: Optional[str] = None
+    source_meta: Optional[Dict[str, Any]] = None
+
+    # For strict mode: fetch remote metadata now to determine source_key.
+    # For local mode: defer to build time (avoid network cost on cache hit).
+    if str(cache_lookup_mode or "strict").strip().lower() == "strict":
+        source_meta = _fetch_source_metadata_for_item(
+            item, name=name, perf=perf, verbose=verbose
+        )
+
+        perf.start_timer(f"source_key_compute_{name}")
+        source_key = _compute_source_key(source_meta, item.get("source_type", ""))
+        perf.end_timer(
+            f"source_key_compute_{name}",
+            f"Source key computation for cache context of '{name}'",
+        )
+
+    if verbose:
+        print(
+            f"[cache] Context for '{name}': spec_key={spec_key[:16]}... source_key={source_key[:16] + '...' if source_key and len(source_key) > 16 else source_key}"
+        )
+
+    return {
+        "artifact_spec": artifact_spec,
+        "spec_key": spec_key,
+        "source_key": source_key,
+        "source_meta": source_meta,
+    }
+
+
+def _validate_cache_dir(
+    candidate: Path,
+    artifact_spec: Dict[str, Any],
+    backpack_root: Optional[Path],
+    perf=None,
+    verbose: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Validate a single cache directory. Returns metadata on success, None on any failure.
+
+    Step 1: directory exists and no build is in progress.
+    Step 2: build is complete — metadata and cached_data/ both present.
+    Step 3: for local sources (fs/backpack), confirm source file hasn't changed.
+    """
+    # Step 1
+    if not candidate.exists() or (candidate / ".verify.lock").exists():
+        return None
+
+    # Step 2
+    meta = _read_cache_metadata(candidate)
+    if not meta or not (candidate / "cached_data").exists():
+        return None
+
+    # Step 3 — only applies to local sources; remote sources encode version in source_key.
+    if artifact_spec.get("source_type") not in ("fs", "backpack") or not backpack_root:
+        return meta
+
+    cached_fp = meta.get("source_fingerprint")
+    if not cached_fp:
+        if verbose:
+            print(f"[cache] Miss: no fingerprint stored in {candidate}")
+        return None
+
+    source_path = Path(artifact_spec.get("source", ""))
+    if not source_path.is_absolute():
+        source_path = (backpack_root / source_path).resolve()
+    if not source_path.exists():
+        if verbose:
+            print(f"[cache] Miss: local source gone: {source_path}")
+        return None
+
+    perf = perf or _NullPerf()
+    try:
+        from .fingerprint import compute_fingerprint
+
+        perf.start_timer(f"fingerprint_compute_{source_path.name}")
+        current = compute_fingerprint(str(source_path), mode="meta", verbose=False)
+        perf.end_timer(
+            f"fingerprint_compute_{source_path.name}",
+            f"Fingerprint validation for {source_path.name}",
+        )
+        if current.get("fingerprint") != cached_fp:
+            if verbose:
+                print(f"[cache] Miss: local source fingerprint changed")
+            return None
+    except Exception as e:
+        if verbose:
+            print(f"[cache] Warning: fingerprint check failed: {e}")
+
+    return meta
+
+
+def _find_cache_hit(
+    cache_base_dir: Path,
+    spec_key: str,
+    source_key: Optional[str],
+    artifact_spec: Dict[str, Any],
+    backpack_root: Path,
+    cache_lookup_mode: str,
+    perf: Optional[Any] = None,
+    verbose: bool = False,
+) -> Optional[Tuple[Path, Dict[str, Any]]]:
+    """Find a valid cache entry. Returns (cache_dir, meta) on hit, None on miss.
+
+    strict: exact match on spec_key/source_key/ — source content must be unchanged.
+    local:  scan spec_key/*/ and accept the first valid entry (any source version).
+    """
+    lookup_mode = str(cache_lookup_mode or "strict").strip().lower()
+
+    if lookup_mode == "strict":
+        if source_key is None:
+            if verbose:
+                print(
+                    f"[cache] Strict miss: source_key not available (metadata fetch failed)"
+                )
+            return None
+        cache_dir = _get_cache_dir(cache_base_dir, spec_key, source_key)
+        meta = _validate_cache_dir(
+            cache_dir, artifact_spec, backpack_root, perf, verbose
+        )
+        if verbose:
+            print(f"[cache] Strict {'hit' if meta else 'miss'}: {cache_dir}")
+        return (cache_dir, meta) if meta else None
+
+    # local mode: scan spec_key/*/ and take the first valid entry.
+    artifact_dir = _get_cache_dir_parent(cache_base_dir, spec_key)
+    if not artifact_dir.exists():
+        if verbose:
+            print(f"[cache] Local miss: {artifact_dir} not found")
+        return None
+    for subdir in sorted(artifact_dir.iterdir()):
+        if not subdir.is_dir():
+            continue
+        meta = _validate_cache_dir(subdir, artifact_spec, backpack_root, perf, verbose)
+        if meta:
+            if verbose:
+                print(f"[cache] Local hit: {subdir}")
+            return (subdir, meta)
+    if verbose:
+        print(f"[cache] Local miss: no valid entry under {artifact_dir}")
+    return None
+
+
+def _get_or_build_cache_entry(
+    item: Dict[str, Any],
+    backpack_root: Path,
+    cache_base_dir: Path,
+    cache_ctx: Dict[str, Any],
+    data_cache_mode: str,
+    force_data_cache: bool,
+    cache_lookup_mode: str,
+    perf: Optional[Any] = None,
+    verbose: bool = False,
+) -> Optional[Tuple[Path, Dict[str, Any]]]:
+    """Return (cache_dir, meta) from cache hit or after building a new entry.
+
+    On a miss in local mode, fetches source metadata now (deferred from context
+    preparation) to determine the source_key for the new cache directory.
+    """
+    perf = perf or _NullPerf()
+    name = item.get("name", "<unnamed>")
+    artifact_spec = cache_ctx["artifact_spec"]
+    spec_key = cache_ctx["spec_key"]
+    source_key = cache_ctx["source_key"]
+    source_meta = cache_ctx["source_meta"]
+
+    if not data_cache_mode or data_cache_mode == "off":
+        return None
+
+    lookup_result: Optional[Tuple[Path, Dict[str, Any]]] = None
+    if not force_data_cache:
+        perf.start_timer(f"cache_hit_search_{name}")
+        lookup_result = _find_cache_hit(
+            cache_base_dir,
+            spec_key,
+            source_key,
+            artifact_spec=artifact_spec,
+            backpack_root=backpack_root,
+            cache_lookup_mode=cache_lookup_mode,
+            perf=perf,
+            verbose=verbose,
+        )
+        perf.end_timer(f"cache_hit_search_{name}", f"Cache hit search for '{name}'")
+
+    if lookup_result is not None:
+        if verbose:
+            print(f"[data:fetch] Cache hit for '{name}'")
+        return lookup_result
+
+    if verbose:
+        print(f"[data:fetch] Cache miss for '{name}' — building new entry")
+
+    # Resolve source_key for build (may be None when local lookup mode was used).
+    build_source_key = source_key
+    build_source_meta = source_meta
+    if build_source_key is None:
+        build_source_meta = _fetch_source_metadata_for_item(
+            item, name=name, perf=perf, verbose=verbose
+        )
+        build_source_key = _compute_source_key(
+            build_source_meta, item.get("source_type", "")
+        )
+
+    cache_dir = _get_cache_dir(cache_base_dir, spec_key, build_source_key)
+
+    if not _acquire_cache_lock(cache_dir, timeout=300):
+        if verbose:
+            print(f"[data:fetch] Cache lock timeout for '{name}': {cache_dir}")
+        return None
+
+    try:
+        perf.start_timer(f"cache_build_{name}")
+        built = _build_cache_entry(
+            item,
+            cache_dir,
+            backpack_root,
+            artifact_spec=artifact_spec,
+            source_key=build_source_key,
+            source_meta=build_source_meta,
+            verbose=verbose,
+            perf=perf,
+        )
+        perf.end_timer(
+            f"cache_build_{name}",
+            f"Cache build for '{name}'" if built else f"Cache build failed for '{name}'",
+        )
+        if not built:
+            return None
+
+        meta = _read_cache_metadata(cache_dir)
+        if meta is None:
+            return None
+
+        if verbose:
+            print(f"[data:fetch] Cache entry built for '{name}': {cache_dir}")
+        return (cache_dir, meta)
+    finally:
+        _release_cache_lock(cache_dir)
+
+
+def _materialize_cache_entry_to_target(
+    item: Dict[str, Any],
+    cache_dir: Path,
+    target_path: Path,
+    data_cache_mode: str,
+    perf: Optional[Any] = None,
+    verbose: bool = False,
+) -> bool:
+    perf = perf or _NullPerf()
+    name = item.get("name", "<unnamed>")
+    target_location = item.get("target_location") or item.get("target_path")
+
+    if verbose:
+        print(
+            f"[data:fetch] Materializing cached item for '{name}' using mode={data_cache_mode}"
+        )
+
+    perf.start_timer(f"cache_materialize_{name}")
+    ok = _materialize_from_cache(
+        cache_dir,
+        target_path,
+        target_location=target_location,
+        mode=data_cache_mode,
+        verbose=verbose,
+    )
+    perf.end_timer(
+        f"cache_materialize_{name}",
+        f"Cache materialization for '{name}'" if ok else f"Cache materialization failed for '{name}'",
+    )
+
+    if verbose:
+        if ok:
+            print(
+                f"[data:fetch] Cache materialization succeeded for '{name}': {target_path}"
+            )
+        else:
+            print(
+                f"[data:fetch] Cache materialization failed for '{name}': {target_path}"
+            )
+
+    return ok
+
+
+def _fetch_direct_to_target(
+    item: Dict[str, Any],
+    target_path: Path,
+    backpack_root: Path,
+    force: bool,
+    perf=None,
+    verbose: bool = False,
+) -> bool:
+    perf = perf or _NullPerf()
+    name = item.get("name", "<unnamed>")
+    stype = item.get("source_type")
+
+    if verbose:
+        print(f"[data:fetch] Direct fetch path for '{name}' (source_type={stype})")
+
+    if stype == "multi":
+        sources = item.get("sources", [])
+        if verbose:
+            print(
+                f"[data:fetch] Trying {len(sources)} source(s) for multi item '{name}'"
+            )
+
+        for index, src_entry in enumerate(sources, start=1):
+            if verbose:
+                print(
+                    f"[data:fetch] Multi source {index}/{len(sources)} for '{name}': type={src_entry.get('source_type')} source={src_entry.get('source')}"
+                )
+            if _attempt_fetch_source(
+                src_entry,
+                target_path,
+                backpack_root,
+                verbose=verbose,
+                force=force,
+            ):
+                if verbose:
+                    print(
+                        f"[data:fetch] Multi source {index}/{len(sources)} succeeded for '{name}' -> {target_path}"
+                    )
+                return True
+
+        if verbose:
+            print(f"[data:fetch] All multi sources failed for '{name}'")
+        return False
+
+    if verbose:
+        print(
+            f"[data:fetch] Fetching single source for '{name}': source_type={stype} source={item.get('source')} -> {target_path}"
+        )
+
+    perf.start_timer(f"direct_fetch_{name}")
+    ok = _attempt_fetch_source(
+        item,
+        target_path,
+        backpack_root,
+        verbose=verbose,
+        force=force,
+    )
+    perf.end_timer(f"direct_fetch_{name}", f"Direct fetch for '{name}'")
+
+    if verbose:
+        if ok:
+            print(f"[data:fetch] Direct fetch succeeded for '{name}' -> {target_path}")
+        else:
+            print(f"[data:fetch] Direct fetch failed for '{name}'")
+
+    return ok
+
+
 def _fetch_single_item(
     item: Dict[str, Any],
     backpack_root: Path,
@@ -991,178 +1376,93 @@ def _fetch_single_item(
     force_data_cache: bool = False,
     cache_base_dir: Path | None = None,
     target_prefix: Path | None = None,
-    fingerprint_mode: str = "meta",
+    fingerprint_mode: str = "meta",  # TODO: remove — only "meta" mode remains
+    cache_lookup_mode: str = "strict",
     perf: Optional[Any] = None,
     _out_cache_dirs: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Fetch a single data item, optionally using cache.
-
-    Args:
-        item: Normalized data item from spec
-        backpack_root: Base directory for resolving backpack:// and fs source paths
-        verbose: Print detailed progress messages
-        force: Force re-download even if target exists
-        data_cache_mode: Cache mode: 'off', 'symlink', 'hardlink', 'copy'
-        force_data_cache: Force rebuild of cache entries
-        cache_base_dir: Floability base directory for cache storage
-        target_prefix: Target directory prefix for materialization (required)
-        fingerprint_mode: Fingerprint mode for filesystem sources: 'meta', 'sample', or 'strict'
-
-    Returns:
-        Data item dict on success, None on failure
-    """
+    """Fetch a single data item, optionally using cache. Returns the item if fetch was successful, None otherwise."""
+    perf = perf or _NullPerf()
     name = item.get("name", "<unnamed>")
-    stype = item.get("source_type")
-    
+
     if not target_prefix:
         raise ValueError("target_prefix is required for _fetch_single_item")
-    
-    target_path = _resolve_target_path(
-        item, backpack_root, target_prefix=target_prefix
-    )
-    target_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Check if target already exists
+    if verbose:
+        print(f"[data:fetch] Starting fetch for '{name}'")
+
+    target_path = _prepare_fetch_target(
+        item,
+        target_prefix,
+        force=force,
+        verbose=verbose,
+    )
+
     if target_path.exists() and not force:
         if verbose:
             print(
-                f"[data:fetch] Skipping '{name}' target exists: {target_path} (use --force to overwrite)"
+                f"[data:fetch] Fetch skipped for '{name}' because target already exists: {target_path}"
             )
         return None
-    elif target_path.exists() and force:
-        if verbose:
-            print(f"[data:fetch] Removing existing target for '{name}': {target_path}")
-        if target_path.is_dir() and not target_path.is_symlink():
-            shutil.rmtree(target_path)
-        else:
-            target_path.unlink()
 
-    # Use cache if enabled
-    if data_cache_mode != "off" and cache_base_dir:
-        if verbose:
-            print(f"[data:fetch] Using cache mode: {data_cache_mode}")
+    if data_cache_mode != "off" and cache_base_dir is not None:
+        perf.start_timer(f"total_lookup_{name}")
 
-        # Create artifact spec and compute cache key
-        if perf:
-            perf.start_timer(f"cache_key_compute_{name}")
-        artifact_spec = _create_artifact_spec(item, backpack_root)
-        cache_key = _compute_cache_key(artifact_spec)
-        if perf:
-            perf.end_timer(f"cache_key_compute_{name}", f"Cache key computation for '{name}'")
-        cache_dir = _get_cache_dir(cache_base_dir, cache_key)
+        cache_ctx = _prepare_cache_context(
+            item,
+            backpack_root,
+            cache_lookup_mode=cache_lookup_mode,
+            perf=perf,
+            verbose=verbose,
+        )
 
-        if verbose:
-            print(f"[data:fetch] Cache key: {cache_key[:16]}...")
-            print(f"[data:fetch] Cache dir: {cache_dir}")
+        cache_result = _get_or_build_cache_entry(
+            item,
+            backpack_root,
+            Path(cache_base_dir),
+            cache_ctx=cache_ctx,
+            data_cache_mode=data_cache_mode,
+            force_data_cache=force_data_cache,
+            cache_lookup_mode=cache_lookup_mode,
+            perf=perf,
+            verbose=verbose,
+        )
 
-        # Try to lookup existing cache entry
-        cache_meta = None
-        if not force_data_cache:
-            if perf:
-                perf.start_timer(f"cache_lookup_{name}")
-            cache_meta = _lookup_cache_entry(
-                cache_dir, artifact_spec, verbose=verbose,
-                fingerprint_mode=fingerprint_mode, backpack_root=backpack_root, perf=perf
-            )
-            if perf:
-                perf.end_timer(f"cache_lookup_{name}", f"Cache lookup for '{name}'")
+        perf.end_timer(f"total_lookup_{name}", f"Total cache lookup for '{name}'")
 
-        # Build cache if not found or forced
-        if cache_meta is None:
-            if verbose:
-                print(f"[data:fetch] Building cache entry...")
-
-            # Acquire lock
-            if not _acquire_cache_lock(cache_dir, timeout=300):
-                print(
-                    f"[data:fetch] ERROR: Timeout waiting for cache lock: {cache_dir}"
-                )
-                # Fall back to direct fetch
-                if verbose:
-                    print(f"[data:fetch] Falling back to direct fetch without cache")
-            else:
-                try:
-                    # Build cache entry
-                    if perf:
-                        perf.start_timer(f"cache_build_{name}")
-                    if _build_cache_entry(
-                        item, cache_dir, backpack_root, verbose=verbose, fingerprint_mode=fingerprint_mode, perf=perf
-                    ):
-                        if perf:
-                            perf.end_timer(f"cache_build_{name}", f"Cache build for '{name}'")
-                        cache_meta = _read_cache_metadata(cache_dir)
-                    else:
-                        if perf:
-                            perf.end_timer(f"cache_build_{name}", f"Cache build failed for '{name}'")
-                        print(f"[data:fetch] ERROR: Failed to build cache entry")
-                        # Fall back to direct fetch
-                        if verbose:
-                            print(
-                                f"[data:fetch] Falling back to direct fetch without cache"
-                            )
-                finally:
-                    # Always release lock
-                    _release_cache_lock(cache_dir)
-
-        # Materialize from cache if we have a valid entry
-        if cache_meta is not None:
-            if perf:
-                perf.start_timer(f"cache_materialize_{name}")
-            if _materialize_from_cache(
+        if cache_result is not None:
+            cache_dir, _cache_meta = cache_result
+            if _materialize_cache_entry_to_target(
+                item,
                 cache_dir,
                 target_path,
-                target_location=item.get("target_location") or item.get("target_path"),
-                mode=data_cache_mode,
+                data_cache_mode=data_cache_mode,
+                perf=perf,
                 verbose=verbose,
             ):
-                if perf:
-                    perf.end_timer(f"cache_materialize_{name}", f"Cache materialization for '{name}'")
-                if verbose:
-                    print(
-                        f"[data:fetch] '{name}' materialized from cache -> {target_path}"
-                    )
                 if _out_cache_dirs is not None:
                     _out_cache_dirs.append(str(cache_dir))
-                return item
-            else:
-                if perf:
-                    perf.end_timer(f"cache_materialize_{name}", f"Cache materialization failed for '{name}'")
-                print(f"[data:fetch] ERROR: Failed to materialize from cache")
-                # Fall through to direct fetch
-
-    # Direct fetch (no cache or cache failed)
-    if stype == "multi":
-        for src_entry in item.get("sources", []):
-            s_norm = src_entry
-            if verbose:
-                print(
-                    f"[data:fetch] Trying multi source for '{name}': type={s_norm.get('source_type')} source={s_norm.get('source')}"
-                )
-            if _attempt_fetch_source(
-                s_norm, target_path, backpack_root, verbose=verbose, force=force
-            ):
                 if verbose:
-                    print(
-                        f"[data:fetch] '{name}' fetched via multi source type={s_norm.get('source_type')} -> {target_path}"
-                    )
-                return s_norm
-        if verbose:
-            print(f"[data:fetch] FAILED multi sources for '{name}'")
-        return None
+                    print(f"[data:fetch] Finished cached fetch for '{name}'")
+                return item
 
-    if verbose:
-        print(
-            f"[data:fetch] Fetching '{name}' source_type={stype} source={item.get('source')} -> {target_path}"
-        )
-    if _attempt_fetch_source(
-        item, target_path, backpack_root, verbose=verbose, force=force
+            if verbose:
+                print(f"[data:fetch] Cache materialization failed for '{name}', falling back to direct fetch")
+
+    if _fetch_direct_to_target(
+        item,
+        target_path,
+        backpack_root,
+        force=force,
+        perf=perf,
+        verbose=verbose,
     ):
         if verbose:
-            print(f"[data:fetch] '{name}' fetched -> {target_path}")
+            print(f"[data:fetch] Finished direct fetch for '{name}'")
         return item
-    else:
-        if verbose:
-            print(f"[data:fetch] FAILED '{name}'")
+
+    if verbose:
+        print(f"[data:fetch] FAILED '{name}'")
     return None
 
 
@@ -1189,7 +1489,7 @@ def _attempt_fetch_source(
             # Determine if source is a directory
             # Priority: 1) Explicit source_object_type field, 2) URL trailing slash, 3) Metadata check
             source_obj_type = item.get("source_object_type", "").lower()
-            
+
             is_dir = False
             if source_obj_type == "directory":
                 is_dir = True
@@ -1197,8 +1497,8 @@ def _attempt_fetch_source(
                 is_dir = False
             else:
                 # Auto-detect: trailing slash or metadata check
-                is_dir = src.endswith('/') or is_s3_directory(src)
-            
+                is_dir = src.endswith("/") or is_s3_directory(src)
+
             if is_dir:
                 # Directory download - target_path is the destination directory
                 if verbose:
@@ -1212,7 +1512,9 @@ def _attempt_fetch_source(
             else:
                 # Single file download
                 if verbose:
-                    print(f"[data:fetch] S3 file download: {src} -> {target_path.parent}/{target_path.name}")
+                    print(
+                        f"[data:fetch] S3 file download: {src} -> {target_path.parent}/{target_path.name}"
+                    )
                 s3_file_download(
                     src,
                     dest_dir=str(target_path.parent),
@@ -1224,7 +1526,7 @@ def _attempt_fetch_source(
             # Determine if source is a directory
             # Priority: 1) Explicit source_object_type field, 2) URL trailing slash, 3) Metadata check
             source_obj_type = item.get("source_object_type", "").lower()
-            
+
             is_dir = False
             if source_obj_type == "directory":
                 is_dir = True
@@ -1232,12 +1534,14 @@ def _attempt_fetch_source(
                 is_dir = False
             else:
                 # Auto-detect: trailing slash or metadata check
-                is_dir = src.endswith('/') or is_pelican_directory(src)
-            
+                is_dir = src.endswith("/") or is_pelican_directory(src)
+
             if is_dir:
                 # Directory download - target_path is the destination directory
                 if verbose:
-                    print(f"[data:fetch] Pelican directory download: {src} -> {target_path}")
+                    print(
+                        f"[data:fetch] Pelican directory download: {src} -> {target_path}"
+                    )
                 pelican_directory_download(
                     src,
                     dest_dir=str(target_path),
@@ -1247,7 +1551,9 @@ def _attempt_fetch_source(
             else:
                 # Single file download
                 if verbose:
-                    print(f"[data:fetch] Pelican file download: {src} -> {target_path.parent}/{target_path.name}")
+                    print(
+                        f"[data:fetch] Pelican file download: {src} -> {target_path.parent}/{target_path.name}"
+                    )
                 pelican_file_download(
                     src,
                     dest_dir=str(target_path.parent),
@@ -1337,41 +1643,135 @@ def _create_artifact_spec(item: Dict[str, Any], backpack_root: Path) -> Dict[str
     return artifact
 
 
-def _compute_cache_key(artifact_spec: Dict[str, Any]) -> str:
-    """Compute deterministic cache key from artifact spec.
+def _compute_spec_key(artifact_spec: Dict[str, Any]) -> str:
+    """SHA-256 of canonical artifact spec JSON. Stable and offline-computable."""
+    canonical = json.dumps(artifact_spec, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-    Args:
-        artifact_spec: Normalized artifact spec from _create_artifact_spec
 
-    Returns:
-        SHA-256 hex digest of canonical JSON representation
+def _normalize_s3_source_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
+    """Select and normalize S3-specific fields for stable source key hashing.
+
+    File: etag, size, last_modified (None values excluded for stability).
+    Directory: file_count, total_size, per-file etag/size/last_modified (sorted).
     """
-    # Serialize to canonical JSON (sorted keys, compact)
-    canonical_json = json.dumps(artifact_spec, sort_keys=True, separators=(",", ":"))
+    if meta.get("object_type") == "directory":
+        files = [
+            {k: v for k, v in f.items() if v is not None} for f in meta.get("files", [])
+        ]
+        return {
+            "object_type": "directory",
+            "file_count": meta.get("file_count"),
+            "total_size": meta.get("total_size"),
+            "files": sorted(files, key=lambda f: f.get("rel_path", "")),
+        }
+    return {
+        k: v
+        for k, v in {
+            "object_type": "file",
+            "etag": meta.get("etag"),
+            "size": meta.get("size"),
+            "last_modified": meta.get("last_modified"),
+        }.items()
+        if v is not None
+    }
 
-    # Compute SHA-256 hash
-    cache_key = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
-    return cache_key
+def _compute_source_key(source_meta: Optional[Dict[str, Any]], source_type: str) -> str:
+    """Source-type-aware source cache key.
 
-
-def _get_cache_dir(base_dir: Path, cache_key: str) -> Path:
-    """Get cache directory path for a given cache key.
-
-    Args:
-        base_dir: Floability base directory (e.g., from --base-dir flag)
-        cache_key: Cache key (SHA-256 hex)
-
-    Returns:
-        Path to cache directory: base_dir/floability-data-cache/{cache_key}/
+    s3: SHA-256 of normalized etag/size/last_modified (file) or per-file listings
+        (directory). Changes whenever remote data changes.
+    pelican: placeholder — not yet implemented.
+    http: placeholder — not yet implemented.
+    fs/backpack/local: "local" — no remote metadata; cache validity checked via
+        fingerprint in _lookup_cache_entry.
     """
-    # Accept both base dirs and explicit cache roots ending in floability-data-cache.
-    cache_root = (
+    effective_type = source_type
+    if source_type == "multi" and source_meta:
+        effective_type = source_meta.get("used_source_type", "unknown")
+
+    if effective_type == "s3" and source_meta and source_meta.get("ok"):
+        normalized = _normalize_s3_source_meta(source_meta)
+        canonical = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    if effective_type == "pelican":
+        return "pelican_source_key"
+
+    if effective_type == "http":
+        return "http_source_key"
+
+    return "local"
+
+
+def _fetch_source_metadata_for_item(
+    item: Dict[str, Any],
+    name: str = "<unnamed>",
+    perf: Optional[Any] = None,
+    verbose: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Fetch remote source metadata for source key computation.
+
+    Implemented for s3 only. Returns None for local sources (fs, backpack) and
+    unimplemented remote sources (pelican, http) — _compute_source_key falls back
+    to a placeholder string for those.
+
+    Timing is recorded via perf (metadata_fetch_<name>) when perf is provided.
+    """
+    perf = perf or _NullPerf()
+    stype = item.get("source_type")
+    source = item.get("source", "")
+
+    if stype == "s3":
+        perf.start_timer(f"metadata_fetch_{name}")
+        meta = s3_source_metadata(source)
+        perf.end_timer(f"metadata_fetch_{name}", f"S3 metadata fetch for '{name}'")
+        return meta
+
+    if stype == "multi":
+        for s in item.get("sources", []):
+            if s.get("source_type") == "s3":
+                src = s.get("source", "")
+                perf.start_timer(f"metadata_fetch_{name}")
+                meta = s3_source_metadata(src)
+                perf.end_timer(f"metadata_fetch_{name}", f"S3 metadata fetch for '{name}'")
+                if meta.get("ok"):
+                    meta["used_source"] = src
+                    meta["used_source_type"] = "s3"
+                    return meta
+        return None
+
+    # pelican, http: not yet implemented
+    # fs, backpack: local sources — no remote metadata
+    return None
+
+
+def _cache_root(base_dir: Path) -> Path:
+    """Resolve the floability-data-cache root from any base dir."""
+    return (
         base_dir
         if base_dir.name == "floability-data-cache"
         else base_dir / "floability-data-cache"
     )
-    return cache_root / cache_key
+
+
+def _get_cache_dir_parent(base_dir: Path, spec_key: str) -> Path:
+    """Parent directory for all cached versions of one artifact: cache_root/spec_key/
+
+    All source_key subdirectories live here — one per observed remote state.
+    """
+    return _cache_root(base_dir) / spec_key
+
+
+def _get_cache_dir(base_dir: Path, spec_key: str, source_key: str) -> Path:
+    """Two-level cache path: cache_root/spec_key/source_key/
+
+    spec_key  — SHA-256 of artifact spec (stable, offline-computable).
+    source_key — SHA-256 of remote metadata (changes when source changes),
+                 or a placeholder string ("local", "pelican_source_key", …).
+    """
+    return _get_cache_dir_parent(base_dir, spec_key) / source_key
 
 
 def _acquire_cache_lock(cache_dir: Path, timeout: int = 300) -> bool:
@@ -1421,18 +1821,12 @@ def _write_cache_metadata(
     artifact_spec: Dict[str, Any],
     content_sha256: str,
     actual_size: int,
+    source_key: Optional[str] = None,
+    source_meta: Optional[Dict[str, Any]] = None,
     source_fingerprint: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Write cache metadata to .meta.json.
-
-    Args:
-        cache_dir: Cache directory path
-        artifact_spec: Original artifact spec used to compute cache key
-        content_sha256: SHA-256 hash of cached content
-        actual_size: Actual size of cached content in bytes
-        source_fingerprint: Optional fingerprint dict from fingerprint.compute_fingerprint()
-    """
-    meta = {
+    """Write cache metadata to .meta.json."""
+    meta: Dict[str, Any] = {
         "artifact_spec": artifact_spec,
         "content_sha256": content_sha256,
         "actual_size": actual_size,
@@ -1440,11 +1834,15 @@ def _write_cache_metadata(
         "created_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
-    # Add source fingerprint if provided
+    if source_key:
+        meta["source_key"] = source_key
+    if source_meta:
+        meta["source_meta"] = source_meta
+
+    # Fingerprint only written for local sources (fs/backpack, "meta" mode).
     if source_fingerprint:
         meta["source_fingerprint"] = source_fingerprint.get("fingerprint")
-        meta["fingerprint_mode"] = source_fingerprint.get("mode")
-        meta["fingerprint_params"] = source_fingerprint.get("params", {})
+        meta["fingerprint_mode"] = "meta"
 
     meta_file = cache_dir / ".meta.json"
     with meta_file.open("w", encoding="utf-8") as f:
@@ -1528,42 +1926,26 @@ def _build_cache_entry(
     item: Dict[str, Any],
     cache_dir: Path,
     backpack_root: Path,
+    artifact_spec: Dict[str, Any],
+    source_key: Optional[str] = None,
+    source_meta: Optional[Dict[str, Any]] = None,
     verbose: bool = False,
-    fingerprint_mode: str = "meta",
     perf: Optional[Any] = None,
 ) -> bool:
-    """Build a new cache entry by downloading and processing data.
+    """Download data into cache_dir/cached_data/ and write .meta.json.
 
-    Steps:
-    1. Create cache_dir/cached_data/ directory
-    2. Download/copy data to cache_dir/cached_data/<target_location>
-    3. Apply post_process if specified
-    4. Compute content hash and size
-    5. Compute source fingerprint (for filesystem sources)
-    6. Write metadata to .meta.json
-
-    Args:
-        item: Normalized data item from spec
-        cache_dir: Cache directory path
-        backpack_root: Base path for resolving sources
-        verbose: Print progress messages
-        fingerprint_mode: Fingerprint mode for filesystem sources: 'meta', 'sample', or 'strict'
-
-    Returns:
-        True if cache entry built successfully, False otherwise
+    artifact_spec, source_key, and source_meta are pre-computed by the caller
+    so we avoid redundant computation here.
     """
-    cached_data_dir = cache_dir / "cached_data"
-    cached_data_dir.mkdir(parents=True, exist_ok=True)
-
-    # Get full target_location path
+    perf = perf or _NullPerf()
+    stype = item.get("source_type")
     target_location = item.get("target_location") or item.get("target_path")
     if not target_location:
         if verbose:
             print("[cache] ERROR: Missing target_location in item")
         return False
 
-    # Store with full target_location path inside cached_data/
-    # e.g., target_location="data/samples/file.root" -> cached_data/data/samples/file.root
+    cached_data_dir = cache_dir / "cached_data"
     cache_file = cached_data_dir / target_location
     cache_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1571,90 +1953,62 @@ def _build_cache_entry(
         print(f"[cache] Building cache entry: {cache_dir}")
         print(f"[cache] Downloading to: {cache_file}")
 
-    # Download/copy data to cache
-    stype = item.get("source_type")
-
     try:
         if stype == "multi":
-            # Try each source until one succeeds
-            success = False
-            for src_entry in item.get("sources", []):
-                if verbose:
-                    print(
-                        f"[cache] Trying source: {src_entry.get('source_type')}://{src_entry.get('source')}"
-                    )
-                if _download_to_cache(src_entry, cache_file, backpack_root, verbose):
-                    success = True
-                    break
+            success = any(
+                _download_to_cache(src_entry, cache_file, backpack_root, verbose)
+                for src_entry in item.get("sources", [])
+            )
             if not success:
                 if verbose:
                     print("[cache] ERROR: All sources failed")
                 return False
         else:
-            # Single source
             if not _download_to_cache(item, cache_file, backpack_root, verbose):
                 if verbose:
                     print("[cache] ERROR: Download failed")
                 return False
 
-        # Apply post_process if specified
-        post_process = item.get("post_process")
-        if post_process:
-            if verbose:
-                print(f"[cache] Applying post_process: {post_process}")
-            # TODO: Implement post-processing (unzip, untar, etc.)
-            # For now, log a warning
-            print(f"[cache] WARNING: post_process not yet implemented: {post_process}")
+        if item.get("post_process"):
+            print(
+                f"[cache] WARNING: post_process not yet implemented: {item['post_process']}"
+            )
 
-        # TODO: Content hash computation is expensive but not used for validation
-        # Future investigation needed: either implement actual validation or remove entirely
-        # See analysis: content_sha256 only stored in metadata, never used for cache verification
-        if verbose:
-            print("[cache] Skipping expensive content hash computation (placeholder values)")
-        content_sha256 = "placeholder_hash_needs_investigation"
-        actual_size = 0  # placeholder, needs investigation
-
-        # Create artifact spec for metadata
-        artifact_spec = _create_artifact_spec(item, backpack_root)
-
-        # Compute source fingerprint for filesystem sources
+        # Fingerprint only for local sources (fs/backpack), always "meta" mode.
         source_fingerprint = None
         if stype in ("fs", "backpack"):
             try:
                 from .fingerprint import compute_fingerprint
-                source = item.get("source")
-                if source:
-                    source_path = Path(source)
-                    if not source_path.is_absolute():
-                        source_path = (backpack_root / source_path).resolve()
-                    if source_path.exists():
-                        if verbose:
-                            print(f"[cache] Computing {fingerprint_mode} fingerprint for source...")
-                        if perf:
-                            perf.start_timer(f"fingerprint_{fingerprint_mode}_{source_path.name}")
-                        source_fingerprint = compute_fingerprint(
-                            str(source_path),
-                            mode=fingerprint_mode,
-                            verbose=verbose
-                        )
-                        if perf:
-                            perf.end_timer(f"fingerprint_{fingerprint_mode}_{source_path.name}", 
-                                         f"Fingerprint ({fingerprint_mode}) for {source_path.name}")
+
+                source = item.get("source", "")
+                source_path = Path(source)
+                if not source_path.is_absolute():
+                    source_path = (backpack_root / source_path).resolve()
+                if source_path.exists():
+                    perf.start_timer(f"fingerprint_compute_{source_path.name}")
+                    source_fingerprint = compute_fingerprint(
+                        str(source_path), mode="meta", verbose=verbose
+                    )
+                    perf.end_timer(
+                        f"fingerprint_compute_{source_path.name}",
+                        f"Fingerprint for {source_path.name}",
+                    )
             except Exception as e:
                 if verbose:
                     print(f"[cache] Warning: Failed to compute source fingerprint: {e}")
 
-        # Write metadata
-        _write_cache_metadata(cache_dir, artifact_spec, content_sha256, actual_size, source_fingerprint)
+        _write_cache_metadata(
+            cache_dir,
+            artifact_spec,
+            content_sha256="placeholder",
+            actual_size=0,
+            source_key=source_key,
+            source_meta=source_meta,
+            source_fingerprint=source_fingerprint,
+        )
 
         if verbose:
-            print(f"[cache] Cache entry built successfully")
-            print(f"[cache]   content_sha256: {content_sha256}")
-            print(f"[cache]   actual_size: {actual_size}")
-            if source_fingerprint:
-                print(f"[cache]   source_fingerprint: {source_fingerprint.get('fingerprint', '')[:16]}...")
-                print(f"[cache]   fingerprint_mode: {source_fingerprint.get('mode')}")
-
+            print(f"[cache] Cache entry built: source_key={source_key}")
         return True
 
     except Exception as e:
@@ -1697,7 +2051,7 @@ def _download_to_cache(
             # Determine if source is a directory
             # Priority: 1) Explicit source_object_type field, 2) URL trailing slash, 3) Metadata check
             source_obj_type = item.get("source_object_type", "").lower()
-            
+
             is_dir = False
             if source_obj_type == "directory":
                 is_dir = True
@@ -1705,8 +2059,8 @@ def _download_to_cache(
                 is_dir = False
             else:
                 # Auto-detect: trailing slash or metadata check
-                is_dir = source.endswith('/') or is_s3_directory(source)
-            
+                is_dir = source.endswith("/") or is_s3_directory(source)
+
             if is_dir:
                 # Directory download - cache_file is the destination directory
                 s3_directory_download(
@@ -1729,7 +2083,7 @@ def _download_to_cache(
             # Determine if source is a directory
             # Priority: 1) Explicit source_object_type field, 2) URL trailing slash, 3) Metadata check
             source_obj_type = item.get("source_object_type", "").lower()
-            
+
             is_dir = False
             if source_obj_type == "directory":
                 is_dir = True
@@ -1737,8 +2091,8 @@ def _download_to_cache(
                 is_dir = False
             else:
                 # Auto-detect: trailing slash or metadata check
-                is_dir = source.endswith('/') or is_pelican_directory(source)
-            
+                is_dir = source.endswith("/") or is_pelican_directory(source)
+
             if is_dir:
                 # Directory download - cache_file is the destination directory
                 pelican_directory_download(
@@ -1790,146 +2144,6 @@ def _download_to_cache(
         if verbose:
             print(f"[cache] Download error: {e}")
         return False
-
-
-def _lookup_cache_entry(
-    cache_dir: Path,
-    artifact_spec: Dict[str, Any],
-    verbose: bool = False,
-    fingerprint_mode: str = "meta",
-    backpack_root: Path | None = None,
-    perf: Optional[Any] = None,
-) -> Optional[Dict[str, Any]]:
-    """Look up and validate an existing cache entry.
-
-    Checks:
-    1. Cache directory exists
-    2. .meta.json exists and is valid
-    3. data/ directory exists
-    4. Artifact spec matches (deterministic check)
-    5. Size matches (if specified in artifact_spec)
-    6. Source fingerprint matches (for filesystem sources)
-
-    Args:
-        cache_dir: Cache directory path
-        artifact_spec: Expected artifact spec
-        verbose: Print validation messages
-        fingerprint_mode: Fingerprint mode for filesystem source validation
-        backpack_root: Base path for resolving relative filesystem sources
-
-    Returns:
-        Metadata dict if valid, None if invalid/missing
-    """
-    if not cache_dir.exists():
-        if verbose:
-            print(f"[cache] Cache miss: directory does not exist")
-        return None
-
-    # Check for lock file (another process building)
-    lock_file = cache_dir / ".verify.lock"
-    if lock_file.exists():
-        if verbose:
-            print(f"[cache] Cache building in progress (lock exists)")
-        return None
-
-    # Read metadata
-    meta = _read_cache_metadata(cache_dir)
-    if not meta:
-        if verbose:
-            print(f"[cache] Cache invalid: missing or corrupt .meta.json")
-        return None
-
-    # Verify artifact spec matches
-    cached_spec = meta.get("artifact_spec", {})
-    if cached_spec != artifact_spec:
-        if verbose:
-            print(f"[cache] Cache invalid: artifact spec mismatch")
-            print(f"[cache]   Expected: {artifact_spec}")
-            print(f"[cache]   Cached:   {cached_spec}")
-        return None
-
-    # Check data directory exists
-    cached_data_dir = cache_dir / "cached_data"
-    if not cached_data_dir.exists():
-        if verbose:
-            print(f"[cache] Cache invalid: cached_data/ directory missing")
-        return None
-
-    # Quick size validation if expected_size specified
-    expected_size = artifact_spec.get("expected_size")
-    actual_size = meta.get("actual_size")
-    if expected_size is not None and actual_size is not None:
-        if expected_size != actual_size:
-            if verbose:
-                print(
-                    f"[cache] Cache invalid: size mismatch (expected {expected_size}, got {actual_size})"
-                )
-            return None
-
-    # Validate source fingerprint for filesystem sources
-    source_type = artifact_spec.get("source_type")
-    if source_type in ("fs", "backpack"):
-        cached_fingerprint = meta.get("source_fingerprint")
-        cached_mode = meta.get("fingerprint_mode")
-        
-        # If no cached fingerprint, cache is invalid (needs rebuild with fingerprinting)
-        if not cached_fingerprint:
-            if verbose:
-                print(f"[cache] Cache invalid: no source fingerprint (old cache format)")
-            return None
-        
-        # Recompute fingerprint from source
-        source = artifact_spec.get("source")
-        if source and backpack_root:
-            try:
-                from .fingerprint import compute_fingerprint
-                source_path = Path(source)
-                if not source_path.is_absolute():
-                    source_path = (backpack_root / source_path).resolve()
-                
-                if not source_path.exists():
-                    if verbose:
-                        print(f"[cache] Cache invalid: source no longer exists: {source_path}")
-                    return None
-                
-                if verbose:
-                    print(f"[cache] Validating source fingerprint (mode={fingerprint_mode})...")
-                
-                if perf:
-                    perf.start_timer(f"fingerprint_validation_{source_path.name}")
-                current_fingerprint = compute_fingerprint(
-                    str(source_path),
-                    mode=fingerprint_mode,
-                    verbose=False  # Suppress fingerprint details
-                )
-                if perf:
-                    perf.end_timer(f"fingerprint_validation_{source_path.name}", 
-                                 f"Fingerprint validation for {source_path.name}")
-                
-                # Compare fingerprints
-                if current_fingerprint.get("fingerprint") != cached_fingerprint:
-                    if verbose:
-                        print(f"[cache] Cache invalid: source fingerprint mismatch")
-                        print(f"[cache]   Cached:  {cached_fingerprint[:16]}... (mode={cached_mode})")
-                        print(f"[cache]   Current: {current_fingerprint.get('fingerprint', '')[:16]}... (mode={fingerprint_mode})")
-                    return None
-                
-                if verbose:
-                    print(f"[cache] Source fingerprint valid: {cached_fingerprint[:16]}...")
-                    
-            except Exception as e:
-                if verbose:
-                    print(f"[cache] Warning: Failed to validate source fingerprint: {e}")
-                # Don't invalidate cache on fingerprint errors, just warn
-                # This allows cache to work even if fingerprinting fails
-
-    if verbose:
-        print(f"[cache] Cache hit: {cache_dir}")
-        print(f"[cache]   content_sha256: {meta.get('content_sha256')}")
-        print(f"[cache]   actual_size: {meta.get('actual_size')}")
-        print(f"[cache]   created_at: {meta.get('created_at_iso')}")
-
-    return meta
 
 
 def _materialize_from_cache(

@@ -74,6 +74,14 @@ class DataCommand(BaseCommand):
             choices=["meta", "sample", "strict"],
             help="Fingerprint mode for filesystem source validation: meta (fast, metadata only), sample (first N bytes), strict (full content hash).",
         )
+        
+        parser.add_argument(
+            "--cache-lookup-mode",
+            default="strict",
+            choices=["strict", "local"], #strict mode will check both data specs and source fingerprints
+            help="Cache lookup mode for data operations: local (match only data specs), strict (default, match both specs and source fingerprints).",
+        )
+        
         parser.add_argument(
             "--base-dir",
             default=None,

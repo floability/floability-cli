@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 import os
+import time
 
 
 def _env_aws_no_sign_request() -> bool:
@@ -467,3 +468,63 @@ def s3_list_objects(
                 })
 
     return results
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Source metadata for cache key computation
+# ──────────────────────────────────────────────────────────────────────────────
+
+def s3_source_metadata(uri: str, anonymous: bool = None) -> Dict[str, Any]:
+    """Normalized S3 source metadata for cache key computation. No body transfer.
+
+    For files: reuses s3_file_metadata (HEAD only).
+    For directories: reuses s3_list_objects (paginated listing) and strips the
+    prefix to produce stable rel_path values.
+
+    Returns dict with 'ok' bool and fingerprint fields:
+      file      → object_type, etag, size, last_modified
+      directory → object_type, file_count, total_size, files[]
+
+    Timing is not included — callers should wrap with perf.start_timer/end_timer.
+    """
+    if anonymous is None:
+        anonymous = _env_aws_no_sign_request()
+
+    if is_s3_directory(uri, anonymous=anonymous):
+        try:
+            _, prefix = parse_s3_uri(uri)
+            if prefix and not prefix.endswith("/"):
+                prefix += "/"
+
+            objects = s3_list_objects(uri, recursive=True, anonymous=anonymous)
+            files = []
+            for obj in objects:
+                key = obj["key"]
+                if key.endswith("/"):
+                    continue
+                rel = key[len(prefix):] if key.startswith(prefix) else key
+                files.append({
+                    "rel_path": rel,
+                    "etag": obj.get("etag"),
+                    "size": obj.get("size"),
+                    "last_modified": obj.get("last_modified"),
+                })
+            files.sort(key=lambda f: f["rel_path"])
+            return {
+                "ok": True,
+                "object_type": "directory",
+                "file_count": len(files),
+                "total_size": sum(f["size"] or 0 for f in files),
+                "files": files,
+            }
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    meta = s3_file_metadata(uri, anonymous=anonymous)
+    return {
+        "ok": meta.get("exists", False),
+        "object_type": "file",
+        "etag": meta.get("etag"),
+        "size": meta.get("size"),
+        "last_modified": meta.get("last_modified"),
+    }
