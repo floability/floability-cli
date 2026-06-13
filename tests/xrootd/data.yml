@@ -1,0 +1,50 @@
+schema_version: "1.0"
+default_profile: single_file
+
+# Test server: cmsxrootd.crc.nd.edu (CMS XRootD redirector)
+# Requires a valid x509 proxy or CMS credentials in the environment.
+# Tests skip gracefully if the server is unreachable.
+
+data_profiles:
+
+  # ── Single file ──────────────────────────────────────────────────────────
+  single_file:
+    policy:
+      retry_attempts: 0
+      timeout: 300
+      size_tolerance_bytes: 0
+      verification_type: strict   # requires checksum match
+    data:
+      - name: tree_1
+        source: root://cmsxrootd.crc.nd.edu//store/user/jkil/2018/WJetsToLNu_HT-1200To2500_TuneCP5_13TeV-madgraphMLM-pythia8/WJetsHT1200To2500/260502_023848/0000/tree_1.root
+        target_location: data/tree_1.root
+        expected_size: 465160187
+        checksum: "md5:923c3f8c61141f15eb2d5777c5ae4b75"
+
+  # ── Directory ─────────────────────────────────────────────────────────────
+  directory:
+    policy:
+      retry_attempts: 0
+      timeout: 600
+      size_tolerance_bytes: 0
+      verification_type: size_only
+    data:
+      - name: wjets_dir
+        source: root://cmsxrootd.crc.nd.edu//store/user/jkil/2018/WJetsToLNu_HT-1200To2500_TuneCP5_13TeV-madgraphMLM-pythia8/WJetsHT1200To2500/260502_023848/0000/
+        source_object_type: directory
+        target_location: data/wjets
+
+  # ── Multi-source (XRootD primary, fallback file) ──────────────────────────
+  multi_source:
+    policy:
+      retry_attempts: 0
+      timeout: 300
+      size_tolerance_bytes: 0
+    data:
+      - name: tree_2_multi
+        sources:
+          - source: root://cmsxrootd.crc.nd.edu//store/user/jkil/2018/WJetsToLNu_HT-1200To2500_TuneCP5_13TeV-madgraphMLM-pythia8/WJetsHT1200To2500/260502_023848/0000/tree_2.root
+          - source: root://cmsxrootd.fnal.gov//store/user/jkil/2018/WJetsToLNu_HT-1200To2500_TuneCP5_13TeV-madgraphMLM-pythia8/WJetsHT1200To2500/260502_023848/0000/tree_2.root
+        target_location: data/tree_2.root
+        expected_size: 525842863
+        checksum: "md5:8913a07705da579670669e5675e1b22e"

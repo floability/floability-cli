@@ -24,6 +24,13 @@ from .s3_file_utils import (
     is_s3_directory,
     s3_source_metadata,
 )
+from .xrootd_file_utils import (
+    xrootd_file_metadata,
+    xrootd_file_download,
+    xrootd_directory_download,
+    is_xrootd_directory,
+    xrootd_source_metadata,
+)
 from .fs_file_utils import fs_file_metadata, fs_file_copy
 from floability.performance_tracker import NullPerf as _NullPerf
 
@@ -748,6 +755,8 @@ def _normalize_data_item(item: Dict[str, Any]) -> Dict[str, Any]:
                 it["source_type"] = "http"
             elif src.startswith("s3://"):
                 it["source_type"] = "s3"
+            elif src.startswith("root://"):
+                it["source_type"] = "xrootd"
             elif src.startswith("osdf://") or src.startswith("pelican://"):
                 it["source_type"] = "pelican"
             elif src:
@@ -770,6 +779,8 @@ def _normalize_data_item(item: Dict[str, Any]) -> Dict[str, Any]:
                     s_it["source_type"] = "http"
                 elif src.startswith("s3://"):
                     s_it["source_type"] = "s3"
+                elif src.startswith("root://"):
+                    s_it["source_type"] = "xrootd"
                 elif src.startswith("osdf://") or src.startswith("pelican://"):
                     s_it["source_type"] = "pelican"
                 elif src:
@@ -882,6 +893,8 @@ def _metadata_for_source(item: Dict[str, Any], backpack_root: Path) -> Dict[str,
         return http_file_metadata(src)
     if stype == "s3":
         return s3_file_metadata(src)
+    if stype == "xrootd":
+        return xrootd_file_metadata(src)
     if stype == "pelican":
         return pelican_file_metadata(src)
     if stype == "backpack":
@@ -1522,6 +1535,35 @@ def _attempt_fetch_source(
                     overwrite=force,
                 )
             return True
+        if stype == "xrootd":
+            source_obj_type = item.get("source_object_type", "").lower()
+            is_dir = False
+            if source_obj_type == "directory":
+                is_dir = True
+            elif source_obj_type == "file":
+                is_dir = False
+            else:
+                is_dir = src.endswith("/") or is_xrootd_directory(src)
+
+            if is_dir:
+                if verbose:
+                    print(f"[data:fetch] XRootD directory download: {src} -> {target_path}")
+                xrootd_directory_download(
+                    src,
+                    dest_dir=str(target_path),
+                    overwrite=force,
+                    show_progress=verbose,
+                )
+            else:
+                if verbose:
+                    print(f"[data:fetch] XRootD file download: {src} -> {target_path.parent}/{target_path.name}")
+                xrootd_file_download(
+                    src,
+                    dest_dir=str(target_path.parent),
+                    filename=target_path.name,
+                    overwrite=force,
+                )
+            return True
         if stype == "pelican":
             # Determine if source is a directory
             # Priority: 1) Explicit source_object_type field, 2) URL trailing slash, 3) Metadata check
@@ -1677,15 +1719,45 @@ def _normalize_s3_source_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _normalize_xrootd_source_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
+    """Select and normalize XRootD-specific fields for stable source key hashing.
+
+    File:      size, mtime, checksum (None values excluded).
+    Directory: file_count, total_size, per-file size/mtime/checksum (sorted by rel_path).
+    """
+    if meta.get("object_type") == "directory":
+        files = [
+            {k: v for k, v in f.items() if v is not None} for f in meta.get("files", [])
+        ]
+        return {
+            "object_type": "directory",
+            "file_count": meta.get("file_count"),
+            "total_size": meta.get("total_size"),
+            "files": sorted(files, key=lambda f: f.get("rel_path", "")),
+        }
+    return {
+        k: v
+        for k, v in {
+            "object_type": "file",
+            "size": meta.get("size"),
+            "mtime": meta.get("mtime"),
+            "checksum": meta.get("checksum"),
+        }.items()
+        if v is not None
+    }
+
+
 def _compute_source_key(source_meta: Optional[Dict[str, Any]], source_type: str) -> str:
     """Source-type-aware source cache key.
 
-    s3: SHA-256 of normalized etag/size/last_modified (file) or per-file listings
-        (directory). Changes whenever remote data changes.
+    s3:     SHA-256 of normalized etag/size/last_modified (file) or per-file
+            listings (directory). Changes whenever remote data changes.
+    xrootd: SHA-256 of normalized size/mtime/checksum (file) or per-file
+            listings (directory). Fully implemented — strongest cache signal.
     pelican: placeholder — not yet implemented.
-    http: placeholder — not yet implemented.
+    http:    placeholder — not yet implemented.
     fs/backpack/local: "local" — no remote metadata; cache validity checked via
-        fingerprint in _lookup_cache_entry.
+            fingerprint in _lookup_cache_entry.
     """
     effective_type = source_type
     if source_type == "multi" and source_meta:
@@ -1693,6 +1765,11 @@ def _compute_source_key(source_meta: Optional[Dict[str, Any]], source_type: str)
 
     if effective_type == "s3" and source_meta and source_meta.get("ok"):
         normalized = _normalize_s3_source_meta(source_meta)
+        canonical = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    if effective_type == "xrootd" and source_meta and source_meta.get("ok"):
+        normalized = _normalize_xrootd_source_meta(source_meta)
         canonical = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -1713,9 +1790,9 @@ def _fetch_source_metadata_for_item(
 ) -> Optional[Dict[str, Any]]:
     """Fetch remote source metadata for source key computation.
 
-    Implemented for s3 only. Returns None for local sources (fs, backpack) and
-    unimplemented remote sources (pelican, http) — _compute_source_key falls back
-    to a placeholder string for those.
+    Implemented for s3 and xrootd. Returns None for local sources (fs, backpack)
+    and unimplemented remote sources (pelican, http) — _compute_source_key falls
+    back to a placeholder string for those.
 
     Timing is recorded via perf (metadata_fetch_<name>) when perf is provided.
     """
@@ -1729,16 +1806,31 @@ def _fetch_source_metadata_for_item(
         perf.end_timer(f"metadata_fetch_{name}", f"S3 metadata fetch for '{name}'")
         return meta
 
+    if stype == "xrootd":
+        perf.start_timer(f"metadata_fetch_{name}")
+        meta = xrootd_source_metadata(source)
+        perf.end_timer(f"metadata_fetch_{name}", f"XRootD metadata fetch for '{name}'")
+        return meta
+
     if stype == "multi":
         for s in item.get("sources", []):
-            if s.get("source_type") == "s3":
-                src = s.get("source", "")
+            s_type = s.get("source_type")
+            src = s.get("source", "")
+            if s_type == "s3":
                 perf.start_timer(f"metadata_fetch_{name}")
                 meta = s3_source_metadata(src)
                 perf.end_timer(f"metadata_fetch_{name}", f"S3 metadata fetch for '{name}'")
                 if meta.get("ok"):
                     meta["used_source"] = src
                     meta["used_source_type"] = "s3"
+                    return meta
+            elif s_type == "xrootd":
+                perf.start_timer(f"metadata_fetch_{name}")
+                meta = xrootd_source_metadata(src)
+                perf.end_timer(f"metadata_fetch_{name}", f"XRootD metadata fetch for '{name}'")
+                if meta.get("ok"):
+                    meta["used_source"] = src
+                    meta["used_source_type"] = "xrootd"
                     return meta
         return None
 
@@ -2072,6 +2164,32 @@ def _download_to_cache(
             else:
                 # Single file download
                 s3_file_download(
+                    source,
+                    dest_dir=str(cache_file.parent),
+                    filename=cache_file.name,
+                    overwrite=True,
+                )
+            return cache_file.exists()
+
+        elif stype == "xrootd":
+            source_obj_type = item.get("source_object_type", "").lower()
+            is_dir = False
+            if source_obj_type == "directory":
+                is_dir = True
+            elif source_obj_type == "file":
+                is_dir = False
+            else:
+                is_dir = source.endswith("/") or is_xrootd_directory(source)
+
+            if is_dir:
+                xrootd_directory_download(
+                    source,
+                    dest_dir=str(cache_file),
+                    overwrite=True,
+                    show_progress=verbose,
+                )
+            else:
+                xrootd_file_download(
                     source,
                     dest_dir=str(cache_file.parent),
                     filename=cache_file.name,

@@ -16,3 +16,4 @@ dependencies:
   - fsspec
   - boto3         # AWS S3 support
   - pelicanfs
+  - xrootd        # XRootD protocol support (root://)
