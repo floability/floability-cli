@@ -15,6 +15,7 @@ from .pelican_file_utils import (
     pelican_file_download,
     pelican_directory_download,
     is_pelican_directory,
+    pelican_source_metadata,
 )
 from .s3_file_utils import (
     s3_file_metadata,
@@ -1747,6 +1748,33 @@ def _normalize_xrootd_source_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _normalize_pelican_source_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
+    """Select and normalize Pelican-specific fields for stable source key hashing.
+
+    File:      size, modified (None values excluded).
+    Directory: file_count, total_size, per-file size/modified (sorted by rel_path).
+    """
+    if meta.get("object_type") == "directory":
+        files = [
+            {k: v for k, v in f.items() if v is not None} for f in meta.get("files", [])
+        ]
+        return {
+            "object_type": "directory",
+            "file_count": meta.get("file_count"),
+            "total_size": meta.get("total_size"),
+            "files": sorted(files, key=lambda f: f.get("rel_path", "")),
+        }
+    return {
+        k: v
+        for k, v in {
+            "object_type": "file",
+            "size": meta.get("size"),
+            "modified": meta.get("modified"),
+        }.items()
+        if v is not None
+    }
+
+
 def _compute_source_key(source_meta: Optional[Dict[str, Any]], source_type: str) -> str:
     """Source-type-aware source cache key.
 
@@ -1773,8 +1801,10 @@ def _compute_source_key(source_meta: Optional[Dict[str, Any]], source_type: str)
         canonical = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-    if effective_type == "pelican":
-        return "pelican_source_key"
+    if effective_type == "pelican" and source_meta and source_meta.get("ok"):
+        normalized = _normalize_pelican_source_meta(source_meta)
+        canonical = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     if effective_type == "http":
         return "http_source_key"
@@ -1790,9 +1820,8 @@ def _fetch_source_metadata_for_item(
 ) -> Optional[Dict[str, Any]]:
     """Fetch remote source metadata for source key computation.
 
-    Implemented for s3 and xrootd. Returns None for local sources (fs, backpack)
-    and unimplemented remote sources (pelican, http) — _compute_source_key falls
-    back to a placeholder string for those.
+    Implemented for s3, xrootd, and pelican. Returns None for local sources
+    (fs, backpack) and http (not yet implemented).
 
     Timing is recorded via perf (metadata_fetch_<name>) when perf is provided.
     """
@@ -1832,9 +1861,23 @@ def _fetch_source_metadata_for_item(
                     meta["used_source"] = src
                     meta["used_source_type"] = "xrootd"
                     return meta
+            elif s_type == "pelican":
+                perf.start_timer(f"metadata_fetch_{name}")
+                meta = pelican_source_metadata(src)
+                perf.end_timer(f"metadata_fetch_{name}", f"Pelican metadata fetch for '{name}'")
+                if meta.get("ok"):
+                    meta["used_source"] = src
+                    meta["used_source_type"] = "pelican"
+                    return meta
         return None
 
-    # pelican, http: not yet implemented
+    if stype == "pelican":
+        perf.start_timer(f"metadata_fetch_{name}")
+        meta = pelican_source_metadata(source)
+        perf.end_timer(f"metadata_fetch_{name}", f"Pelican metadata fetch for '{name}'")
+        return meta
+
+    # http: not yet implemented
     # fs, backpack: local sources — no remote metadata
     return None
 
