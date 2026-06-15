@@ -55,6 +55,7 @@ floability run --instance <instance-name-or-path>
 
 - `--jupyter-port INT` (default: `8888`)
 - `--manager-ports A,B` (default: `9123,9150`)
+- `--worker-transfer-ports A:B` (optional): port range for worker-worker transfers (e.g. `10000:11000`). Passed as `--transfer-port` to vine_factory.
 - `--manager-name NAME`: TaskVine manager name (auto-generated if omitted)
 - `--env-vars KEY=VALUE,...`: environment variables to inject into the conda env
 

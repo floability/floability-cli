@@ -204,3 +204,10 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Enable debug mode for workers",
     )
+    
+    vf_group.add_argument(
+        "--worker-transfer-ports",
+        required=False,
+        help="Port range for worker-worker transfers (e.g. 10000:11000). Passed as --transfer-port to vine_factory",
+    )
+
