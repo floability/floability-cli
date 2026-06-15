@@ -3,7 +3,7 @@ channels:
   - conda-forge
 dependencies:
   - python
-  - ndcctools
+  - ndcctools>=7.17.0
   - pyyaml
   - requests
   - pip

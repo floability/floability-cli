@@ -292,6 +292,7 @@ def _normalize_compute_specs(
             "cores": _attr(cli_args, "cores_per_worker"),
             "batch_options": _attr(cli_args, "batch_options"),
             "debug_workers": _attr(cli_args, "debug_workers"),
+            "transfer_port": _attr(cli_args, "worker_transfer_ports"),
         },
     )
 
@@ -344,6 +345,7 @@ def _start_vine_factory(
         ("--timeout", "timeout"),
         ("--worker-extra-options", "worker_extra_options"),
         ("--condor-requirements", "condor_requirements"),
+        ("--transfer-port", "transfer_port"),
     ]:
         if cfg.get(key):
             cmd.append(f"{flag}={cfg[key]}")

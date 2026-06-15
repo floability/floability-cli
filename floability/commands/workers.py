@@ -60,6 +60,10 @@ class WorkersCommand(BaseCommand):
             action="store_true",
             help="Enable debug mode for workers.",
         )
+        start_parser.add_argument(
+            "--worker-transfer-ports",
+            help="Port range for worker-worker transfers (e.g. 10000:11000). Passed as --transfer-port to vine_factory",
+        )
 
         # workers stop sub-command
         stop_parser = workers_subparsers.add_parser(
