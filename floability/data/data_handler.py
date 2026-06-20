@@ -358,7 +358,11 @@ def fetch_data_from_spec(
         perf.end_timer(f"data_fetch_{item_name}", f"Time to fetch '{item_name}'")
 
         # Check if fetch was successful (returns source on success, None on failure or skip)
-        target_path = _resolve_target_path(item, target_prefix=target_prefix)
+        target_path = _resolve_target_path(
+            item,
+            target_prefix=target_prefix,
+            backpack_root=backpack_root,
+        )
 
         # Verify the file actually exists after fetch attempt
         if not target_path.exists():
@@ -496,7 +500,11 @@ def verify_data_from_spec(
             cache_lookup_mode=cache_lookup_mode,
         )
         # Evaluate integrity on local target
-        target_path = _resolve_target_path(item, target_prefix=target_prefix)
+        target_path = _resolve_target_path(
+            item,
+            target_prefix=target_prefix,
+            backpack_root=backpack_root,
+        )
         local_exists = target_path.exists()
         is_dir = target_path.is_dir() if local_exists else False
 
@@ -921,16 +929,21 @@ def _metadata_for_source(item: Dict[str, Any], backpack_root: Path) -> Dict[str,
 
 
 # --------------------------- Fetch Logic ---------------------------
-def _resolve_target_path(item: Dict[str, Any], target_prefix: Path) -> Path:
+def _resolve_target_path(
+    item: Dict[str, Any], target_prefix: Path, backpack_root: Optional[Path] = None
+) -> Path:
     """Resolve final target path for an item.
 
     Parameters:
       - item: data item dict (may contain target_path/target_location/name)
       - target_prefix: explicit prefix Path to use for relative targets (required)
+      - backpack_root: base directory used to resolve relative item-level target_prefix overrides
 
     Behavior:
       - Absolute target paths are returned as absolute paths without dereferencing symlinks.
       - Relative targets are placed under `target_prefix/target`.
+      - If item includes `target_prefix`, it overrides `target_prefix`.
+        Relative item-level target_prefix values are resolved against backpack_root.
     """
 
     target_path_from_spec = item.get("target_location") or item.get("target_path")
@@ -943,7 +956,16 @@ def _resolve_target_path(item: Dict[str, Any], target_prefix: Path) -> Path:
     if target_path.is_absolute():
         return Path(os.path.abspath(os.path.expanduser(str(target_path))))
 
-    prefix_p = Path(os.path.abspath(os.path.expanduser(str(target_prefix))))
+    effective_prefix = target_prefix
+    item_target_prefix = item.get("target_prefix")
+    if item_target_prefix:
+        item_prefix = Path(os.path.expanduser(str(item_target_prefix)))
+        if item_prefix.is_absolute():
+            effective_prefix = item_prefix
+        elif backpack_root is not None:
+            effective_prefix = Path(backpack_root) / item_prefix
+
+    prefix_p = Path(os.path.abspath(os.path.expanduser(str(effective_prefix))))
     prefix_p.mkdir(parents=True, exist_ok=True)
     return Path(os.path.abspath(str(prefix_p / target_path)))
 
@@ -983,11 +1005,16 @@ def _copy_local_source_to_target(
 def _prepare_fetch_target(
     item: Dict[str, Any],
     target_prefix: Path,
+    backpack_root: Path,
     force: bool,
     verbose: bool,
 ) -> Path:
     name = item.get("name", "<unnamed>")
-    target_path = _resolve_target_path(item, target_prefix=target_prefix)
+    target_path = _resolve_target_path(
+        item,
+        target_prefix=target_prefix,
+        backpack_root=backpack_root,
+    )
     if verbose:
         print(f"[data:fetch] Target resolved for '{name}': {target_path}")
 
@@ -1408,6 +1435,7 @@ def _fetch_single_item(
     target_path = _prepare_fetch_target(
         item,
         target_prefix,
+        backpack_root,
         force=force,
         verbose=verbose,
     )
