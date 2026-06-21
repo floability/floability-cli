@@ -109,6 +109,13 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
         choices=["meta", "sample", "strict"],
         help="Fingerprint mode for filesystem source validation: meta (fast, metadata only), sample (first N bytes), strict (full content hash).",
     )
+    
+    parser.add_argument(
+        "--cache-lookup-mode",
+        default="strict",
+        choices=["strict", "local"], #strict mode will check both data specs and source fingerprints
+        help="Cache lookup mode for data operations: strict (default, match both specs and source fingerprints), local (match only data specs).",
+    )
 
     parser.add_argument(
         "--no-worker",

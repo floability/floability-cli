@@ -341,24 +341,102 @@ def pelican_directory_download(
 
 
 def is_pelican_directory(url: str) -> bool:
+    """Check if a Pelican URL points to a directory.
+
+    Uses fs.ls() on the parent to read the entry's type field — fs.info() returns
+    unreliable type/size for directories, and probing path+'/' succeeds even for
+    files on some Pelican servers.
     """
-    Check if a Pelican URL points to a directory.
-    
-    Args:
-        url: Pelican URL to check
-    
-    Returns:
-        True if URL points to a directory, False if it's a file
-    """
-    # Quick heuristic: if URL ends with /, it's a directory
     if url.endswith('/'):
         return True
-    
-    # Otherwise, check metadata
     try:
         fs, path = _get_fs_and_path(url)
-        info = fs.info(path)
-        return info.get('type') == 'directory'
+        parent = str(Path(path).parent)
+        parent_ls = parent if parent.endswith('/') else parent + '/'
+        entries = fs.ls(parent_ls, detail=True)
+        name = Path(path).name
+        for e in entries:
+            if Path(e.get('name', '')).name == name:
+                return e.get('type') == 'directory'
+        # Entry not found in parent — fall back to probing as directory
+        try:
+            inner = fs.ls(path + '/', detail=True)
+            return len(inner) > 0
+        except Exception:
+            return False
     except Exception:
-        # If we can't determine, assume file
         return False
+
+
+# ---------------- source metadata for cache key computation ----------------
+
+def _pelican_walk_files(fs, base_path: str, current_path: str, results: list) -> None:
+    """Recursively collect file entries. One fs.ls() call per directory level."""
+    try:
+        entries = fs.ls(current_path, detail=True)
+    except Exception:
+        return
+    for e in entries:
+        ename = e.get('name', '')
+        if e.get('type') == 'directory':
+            subpath = ename if ename.endswith('/') else ename + '/'
+            _pelican_walk_files(fs, base_path, subpath, results)
+        else:
+            rel = ename[len(base_path):].lstrip('/')
+            modified = e.get('modified')
+            results.append({
+                'rel_path': rel,
+                'size': e.get('size'),
+                'modified': modified.isoformat() if modified is not None else None,
+            })
+
+
+def pelican_source_metadata(url: str) -> dict:
+    """Normalized Pelican source metadata for cache key computation.
+
+    For files:       {ok, object_type, size, modified}
+    For directories: {ok, object_type, file_count, total_size, files[]}
+                     files[] sorted by rel_path, each {rel_path, size, modified}.
+
+    Uses fs.ls(detail=True) throughout — all metadata comes from listing calls,
+    no separate per-file stat/info round-trips needed.
+    """
+    try:
+        fs, path = _get_fs_and_path(url)
+    except Exception as e:
+        return {'ok': False, 'error': str(e)}
+
+    if is_pelican_directory(url):
+        base_path = path if path.endswith('/') else path + '/'
+        raw: list = []
+        _pelican_walk_files(fs, base_path, base_path, raw)
+        files = sorted(
+            [{k: v for k, v in f.items() if v is not None} for f in raw],
+            key=lambda f: f.get('rel_path', ''),
+        )
+        return {
+            'ok': True,
+            'object_type': 'directory',
+            'file_count': len(files),
+            'total_size': sum(f.get('size') or 0 for f in files),
+            'files': files,
+        }
+
+    # File — ls the parent directory and pick out this entry
+    try:
+        parent = str(Path(path).parent)
+        parent_ls = parent if parent.endswith('/') else parent + '/'
+        entries = fs.ls(parent_ls, detail=True)
+        name = Path(path).name
+        entry = next((e for e in entries if Path(e.get('name', '')).name == name), None)
+        if entry is None:
+            return {'ok': False, 'error': 'not found in parent listing'}
+        modified = entry.get('modified')
+        return {
+            'ok': True,
+            'object_type': 'file',
+            'size': entry.get('size'),
+            'modified': modified.isoformat() if modified is not None else None,
+        }
+    except Exception as e:
+        return {'ok': False, 'error': str(e)}
