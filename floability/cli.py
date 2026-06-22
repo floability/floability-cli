@@ -4,11 +4,33 @@ Floability CLI: main entry point for running distributed Jupyter-based workflows
 """
 
 import argparse
+import sys
 
 from .cleanup import CleanupManager, install_signal_handlers
 from .commands import get_all_commands
 
 from . import __version__
+
+
+def _collect_explicit_args(parser: argparse.ArgumentParser, argv: list[str]) -> set[str]:
+    """Collect option dests that were explicitly supplied on the CLI."""
+    explicit = set()
+
+    def _visit(current_parser: argparse.ArgumentParser) -> None:
+        for action in current_parser._actions:
+            if action.option_strings:
+                for option_string in action.option_strings:
+                    for token in argv:
+                        if token == option_string or token.startswith(f"{option_string}="):
+                            explicit.add(action.dest)
+                            break
+            subparsers_action = getattr(argparse, "_SubParsersAction", None)
+            if subparsers_action and isinstance(action, subparsers_action):
+                for subparser in action.choices.values():
+                    _visit(subparser)
+
+    _visit(parser)
+    return explicit
 
 
 def main():
@@ -38,7 +60,9 @@ def main():
         cmd.add_arguments(cmd_parser)
         command_map[cmd.name] = cmd
 
-    args = parser.parse_args()
+    argv = sys.argv[1:]
+    args = parser.parse_args(argv)
+    args._explicit_args = _collect_explicit_args(parser, argv)
 
     # Setup cleanup manager for signal handling
     cleanup_manager = CleanupManager()

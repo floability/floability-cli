@@ -50,8 +50,10 @@ class AuditCommand(BaseCommand):
 
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
         """Execute audit command."""
+        from floability.sites import apply_site_defaults
         from ..ops.audit import run_audit_command
 
+        apply_site_defaults(args, explicit_args=getattr(args, "_explicit_args", None))
         run_audit_command(args)
 
     def get_examples(self) -> list:
