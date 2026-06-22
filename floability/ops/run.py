@@ -563,7 +563,7 @@ def _send_catalog_event(
 
 def _start_workers(
     args: argparse.Namespace,
-    ctx: tanceContext,
+    ctx: InstanceContext,
     env_ctx: EnvironmentContext,
     cleanup_manager: CleanupManager,
 ) -> Optional[Any]:
