@@ -563,7 +563,7 @@ def _send_catalog_event(
 
 def _start_workers(
     args: argparse.Namespace,
-    ctx: InstanceContext,
+    ctx: tanceContext,
     env_ctx: EnvironmentContext,
     cleanup_manager: CleanupManager,
 ) -> Optional[Any]:
@@ -577,7 +577,9 @@ def _start_workers(
         return None
 
     print("[floability] worker factory startup")
-
+    if args.worker_transfer_ports is None and "fnal.gov" in os.uname().nodename:
+        print(os.uname().nodename)
+        args.worker_transfer_ports = "10000:11000"
     factory_proc = start_workers_for_instance(
         instance_path=ctx.root,
         cli_args=args,
