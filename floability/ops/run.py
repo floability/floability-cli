@@ -578,7 +578,6 @@ def _start_workers(
 
     print("[floability] worker factory startup")
     if args.worker_transfer_ports is None and "fnal.gov" in os.uname().nodename:
-        print(os.uname().nodename)
         args.worker_transfer_ports = "10000:11000"
     factory_proc = start_workers_for_instance(
         instance_path=ctx.root,
