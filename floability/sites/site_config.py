@@ -64,15 +64,44 @@ def apply_site_defaults(
     setattr(args, "_detected_site", site.name)
 
     applied = site.apply_defaults(args, explicit_args=explicit_args)
+    
+    _print_site_config_summary(site, applied)
+    
+    return args
+
+def _get_hostname() -> str:
+    """Return best-effort hostname for site configuration messages."""
+    try:
+        from ..utils import get_system_information
+
+        info = get_system_information()
+        fqdn = str(info.get("fqdn", "") or "").strip()
+        hostname = str(info.get("hostname", "") or "").strip()
+        return fqdn or hostname or "unknown"
+    except Exception:
+        return "unknown"
+    
+
+def _print_site_config_summary(site: BaseSite, applied: list[str]) -> None:
+    """Print a visible summary of detected site configuration."""
+    hostname = _get_hostname()
+
+    print("=" * 60)
+    print("[site_config] Site Configuration")
+    print("=" * 60)
+    print(f"  Hostname      : {hostname}")
+    print(f"  Detected site : {site.display_name}")
+
+    if site.name == GENERIC_SITE.name:
+        print("  Site config   : no known site-specific config")
+    elif site.defaults:
+        print("  Site config   : known site with special defaults")
+    else:
+        print("  Site config   : known site, no defaults configured")
 
     if applied:
-        print(
-            f"[site_config] Applied defaults for {site.display_name}: "
-            f"{', '.join(applied)}"
-        )
-    elif site.name == GENERIC_SITE.name:
-        print("[site_config] No site defaults applied.")
+        print(f"  Applied       : {', '.join(applied)}")
     else:
-        print(f"[site_config] Detected {site.display_name}; no site defaults applied.")
+        print("  Applied       : none")
 
-    return args
+    print("=" * 60)
