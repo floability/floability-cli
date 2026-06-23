@@ -12,7 +12,7 @@ class NotreDameSite(BaseSite):
     """Notre Dame CRC site configuration."""
 
     _HOST_HINTS = (
-        ".nd.edu",
+        "crc.nd.edu",
     )
 
     @property
@@ -21,7 +21,7 @@ class NotreDameSite(BaseSite):
 
     @property
     def display_name(self) -> str:
-        return "Notre Dame (ND)"
+        return "Notre Dame CRC (ND)"
 
     @property
     def defaults(self) -> dict[str, str]:
