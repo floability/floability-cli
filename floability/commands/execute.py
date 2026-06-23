@@ -24,8 +24,10 @@ class ExecuteCommand(BaseCommand):
 
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
         """Execute command in batch mode."""
+        from floability.sites import apply_site_defaults
         from ..ops.run import run_workflow
 
+        apply_site_defaults(args, explicit_args=getattr(args, "_explicit_args", None))
         run_workflow(args, cleanup_manager, mode="execute")
 
     def get_examples(self) -> list:

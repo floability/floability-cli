@@ -1,13 +1,206 @@
 import os
 import time
 import datetime
-import getpass
 import socket
+import getpass
+import logging
+import ipaddress
+import threading
+import urllib.request
+from collections import namedtuple
+
 import tarfile
 from pathlib import Path
-
+ 
+ 
+# --- module-level caches (each expensive lookup runs at most once) -----------
+_FQDN_CACHE = None
+_CANDIDATES_CACHE = None
 SYSTEM_INFORMATION = None
+ 
+# A candidate address plus how we found it and whether direct (non-tunnel)
+# access from outside is plausible.
+AccessCandidate = namedtuple("AccessCandidate", ["address", "source", "direct_ok"])
+ 
+_INTERNAL_SUFFIXES = (".local", ".internal", ".ec2.internal", ".localdomain")
+ 
+ 
+# --- primitives --------------------------------------------------------------
+def get_local_ip():
+    """Primary outbound-interface IP. On a cloud VM this is the *private* IP.
+ 
+    Uses a UDP "connect" which sends no packets — it only makes the kernel
+    pick the interface that would route to the internet.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except Exception as e:
+        print(f"[utils] Warning: could not determine local IP: {e}")
+        return None
+    finally:
+        s.close()
+ 
+ 
+def _is_public_ip(ip):
+    """True only for a globally-routable IP. False for private/loopback/etc."""
+    try:
+        addr = ipaddress.ip_address(ip)
+        return not (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_unspecified
+            or addr.is_reserved
+            or addr.is_multicast
+        )
+    except ValueError:
+        return False
+ 
+ 
+def _looks_external(name):
+    """True if `name` looks like a real, externally-meaningful hostname.
+ 
+    Deliberately does NOT resolve the name: an HPC login node's FQDN is the
+    right thing to advertise even when it resolves to a private IP internally.
+    Obvious internal/cloud-internal names are excluded so they never leak out.
+    """
+    name = (name or "").strip().lower().rstrip(".")
+    if not name or name == "localhost" or "." not in name:
+        return False
+    return not name.endswith(_INTERNAL_SUFFIXES)
 
+def _system_fqdn(timeout=2.0):
+    """Cached socket.getfqdn(), guarded by a watchdog so it cannot hang us.
+ 
+    getfqdn() does a reverse-DNS lookup that can stall for a long time on a
+    misconfigured network. We run it in a daemon thread and fall back to the
+    (instant, local) short hostname if it doesn't return within `timeout`.
+    """
+    global _FQDN_CACHE
+    if _FQDN_CACHE is not None:
+        return _FQDN_CACHE
+ 
+    result = {"fqdn": None}
+ 
+    def _resolve():
+        try:
+            result["fqdn"] = socket.getfqdn()
+        except Exception as e:
+            print(f"[utils] Warning: getfqdn() failed with error: {e}")
+ 
+    t = threading.Thread(target=_resolve, daemon=True)
+    t.start()
+    t.join(timeout)
+    if result["fqdn"] is None:
+        print(f"[utils] Warning: getfqdn() did not return within {timeout} seconds. Using short hostname instead.")
+ 
+    _FQDN_CACHE = result["fqdn"] or socket.gethostname()
+    return _FQDN_CACHE
+
+
+# --- cloud (AWS EC2) ---------------------------------------------------------
+def _probe_imds(timeout=0.3):
+    """Fast TCP check for the EC2 metadata endpoint.
+ 
+    Returns almost instantly on non-cloud hosts where 169.254.169.254 is not
+    routable, so we only pay the metadata round-trip when we're plausibly on EC2.
+    Also works inside containers on EC2, where a DMI/SMBIOS check would miss.
+    """
+    try:
+        with socket.create_connection(("169.254.169.254", 80), timeout=timeout):
+            return True
+    except Exception:
+        return False
+ 
+ 
+def _get_cloud_public_ip():
+    """Public IPv4 from AWS EC2 IMDSv2, or None if not on EC2 / no public IP."""
+    if not _probe_imds():
+        return None
+    base = "http://169.254.169.254/latest"
+    try:
+        token = urllib.request.urlopen(
+            urllib.request.Request(
+                f"{base}/api/token",
+                method="PUT",
+                headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"},
+            ),
+            timeout=1.0,
+        ).read().decode()
+        ip = urllib.request.urlopen(
+            urllib.request.Request(
+                f"{base}/meta-data/public-ipv4",
+                headers={"X-aws-ec2-metadata-token": token},
+            ),
+            timeout=1.0,
+        ).read().decode().strip()
+        return ip if (ip and _is_public_ip(ip)) else None
+    except Exception as e:
+        print(f"[utils] Warning: EC2 metadata lookup failed: {e}")
+        return None
+ 
+ 
+# --- resolution --------------------------------------------------------------
+def get_access_candidates():
+    """Ordered list of AccessCandidate, best first. Computed once and cached.
+ 
+    Always returns at least one candidate.
+    """
+    global _CANDIDATES_CACHE
+    if _CANDIDATES_CACHE is not None:
+        return _CANDIDATES_CACHE
+ 
+    candidates = []
+ 
+    override = os.environ.get("FLOABILITY_ACCESS_HOST")
+    if override:
+        candidates.append(AccessCandidate(override.strip(), "FLOABILITY_ACCESS_HOST override", True))
+ 
+    cloud_ip = _get_cloud_public_ip()
+    if cloud_ip:
+        candidates.append(AccessCandidate(cloud_ip, "cloud public IP (EC2 metadata)", True))
+ 
+    fqdn = _system_fqdn()
+    if _looks_external(fqdn):
+        candidates.append(AccessCandidate(fqdn, "hostname (FQDN)", True))
+ 
+    local_ip = get_local_ip()
+    if local_ip and _is_public_ip(local_ip):
+        candidates.append(AccessCandidate(local_ip, "public local IP", True))
+    elif local_ip:
+        candidates.append(AccessCandidate(local_ip, "local network IP", False))
+ 
+    if not candidates:
+        candidates.append(AccessCandidate("localhost", "fallback", False))
+ 
+    for c in candidates:
+        print(f"[utils] access candidate: {c.address} [{c.source}]")
+ 
+    _CANDIDATES_CACHE = candidates
+    return _CANDIDATES_CACHE
+ 
+ 
+def get_access_address():
+    """Single best-guess address for external users (the top candidate)."""
+    return get_access_candidates()[0].address
+ 
+ 
+def get_system_information():
+    """Cached system info dict, including the resolved access address."""
+    global SYSTEM_INFORMATION
+    if SYSTEM_INFORMATION is None:
+        candidates = get_access_candidates()
+        SYSTEM_INFORMATION = {
+            "username": getpass.getuser(),
+            "hostname": socket.gethostname(),
+            "fqdn": _system_fqdn(),
+            "ip_address": get_local_ip(),                 # internal / private
+            "access_address": candidates[0].address,      # advertise this
+            "access_candidates": [c._asdict() for c in candidates],
+        }
+    return SYSTEM_INFORMATION
 
 def create_unique_directory(
     base_dir=".", prefix="fi", max_attempts=10
@@ -59,30 +252,6 @@ def normalize_cli_base_dir(raw_base: str | None) -> Path:
         pass
 
     return base
-
-
-def get_local_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))  # Connect to a public DNS server (Google)
-        ip_address = s.getsockname()[0]
-        s.close()
-        return ip_address
-    except Exception as e:
-        print(f"Error getting local IP: {e}")
-        return None
-
-
-def get_system_information():
-    global SYSTEM_INFORMATION
-    if SYSTEM_INFORMATION is None:
-        SYSTEM_INFORMATION = {
-            "username": getpass.getuser(),
-            "hostname": socket.gethostname(),
-            "ip_address": get_local_ip(),
-        }
-
-    return SYSTEM_INFORMATION
 
 
 def safe_extract_tar(tar_file: Path, dest_dir: Path) -> None:

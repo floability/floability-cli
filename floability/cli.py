@@ -4,9 +4,11 @@ Floability CLI: main entry point for running distributed Jupyter-based workflows
 """
 
 import argparse
+import sys
 
 from .cleanup import CleanupManager, install_signal_handlers
 from .commands import get_all_commands
+from .cli_utils import collect_explicit_args
 
 from . import __version__
 
@@ -38,7 +40,9 @@ def main():
         cmd.add_arguments(cmd_parser)
         command_map[cmd.name] = cmd
 
-    args = parser.parse_args()
+    argv = sys.argv[1:]
+    args = parser.parse_args(argv)
+    args._explicit_args = collect_explicit_args(parser, args, argv)
 
     # Setup cleanup manager for signal handling
     cleanup_manager = CleanupManager()

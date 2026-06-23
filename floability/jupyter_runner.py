@@ -12,8 +12,10 @@ from .utils import get_system_information
 
 def print_instructions_for_accessing_jupyter(port, token, stdout_file):
     system_info = get_system_information()
-    ip_address = system_info.get("ip_address", "remote.yourdomain.edu")
+    ip_address = system_info.get("access_address", "remote.yourdomain.edu")
     username = system_info.get("username", "user")
+    
+    print(f"[jupyter] Detected JupyterLab URL with port {port} and token {token}.")
 
     instructions = f"""[jupyter] JupyterLab is running on port {port} on {ip_address}.
     

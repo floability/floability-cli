@@ -137,8 +137,10 @@ class InstanceCommand(BaseCommand):
 
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
         """Execute instance command."""
+        from floability.sites import apply_site_defaults
         from ..ops.instance import run_instance_command
 
+        apply_site_defaults(args, explicit_args=getattr(args, "_explicit_args", None))
         run_instance_command(args)
 
     def get_examples(self) -> list:
