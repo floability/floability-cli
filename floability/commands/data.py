@@ -91,7 +91,9 @@ class DataCommand(BaseCommand):
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
         """Execute data command."""
         from ..ops.data import run_data_command
-
+        from floability.sites import apply_site_defaults
+        
+        apply_site_defaults(args, explicit_args=getattr(args, "_explicit_args", None))
         run_data_command(args)
 
     def get_examples(self) -> list:
