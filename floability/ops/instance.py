@@ -135,7 +135,6 @@ def _create_instance_impl(args):
             base_dir=Path(args.base_dir),
             cache_base_dir=Path(args.cache_base_dir),
             target_root=target_root,
-            fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
             perf=perf,
             _out_cache_dirs=cache_dirs,
         )

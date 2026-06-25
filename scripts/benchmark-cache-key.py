@@ -192,7 +192,6 @@ def benchmark_cache_key(path, backpack_root=None, sample_bytes=200, verbose=Fals
         # Create artifact spec with fingerprint info
         artifact_spec = artifact_spec_base.copy()
         artifact_spec["fingerprint"] = fp_result["fingerprint"]
-        artifact_spec["fingerprint_mode"] = mode
         
         # Benchmark cache key computation
         cache_key_start = time.time()

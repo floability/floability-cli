@@ -218,7 +218,6 @@ Supported options:
 - `--data-cache-mode off|symlink|hardlink|copy` (default `off`)
 - `--data-cache-dir`
 - `--force-data-cache`
-- `--fingerprint-mode meta|sample|strict` (default `meta`)
 - `--base-dir`
 
 ### `floability run` / `floability execute`

@@ -63,12 +63,6 @@ class InstanceCommand(BaseCommand):
             help="Force rebuild of cache entries.",
         )
         create_parser.add_argument(
-            "--fingerprint-mode",
-            default="meta",
-            choices=["meta", "sample", "strict"],
-            help="Fingerprint mode for filesystem source validation: meta (fast, metadata only), sample (first N bytes), strict (full content hash).",
-        )
-        create_parser.add_argument(
             "--environment",
             help="Path to environment.yml (optional).",
         )

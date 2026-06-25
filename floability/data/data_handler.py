@@ -48,7 +48,6 @@ def execute_default_data_operation(
     base_dir: Path | None = None,
     cache_base_dir: Path | None = None,
     target_root: Path | None = None,
-    fingerprint_mode: str = "meta",
     cache_lookup_mode: str = "strict",
     perf: Optional[Any] = None,
     _out_cache_dirs: Optional[List[str]] = None,
@@ -70,7 +69,6 @@ def execute_default_data_operation(
         base_dir: Floability base directory for cache storage (default: current directory)
         cache_base_dir: Floability data cache directory (overrides default <base_dir>/floability-data-cache)
         target_root: Target directory for materialized data (typically instance/workflow). If None, defaults to backpack_root/workflow
-        fingerprint_mode: Fingerprint mode for filesystem sources: 'meta', 'sample', or 'strict'
 
     Returns:
         bool: True if the operation succeeded, False otherwise.
@@ -122,7 +120,6 @@ def execute_default_data_operation(
             base_dir=base_dir,
             cache_base_dir=cache_base_dir,
             target_root=target_root,
-            fingerprint_mode=fingerprint_mode,
             cache_lookup_mode=cache_lookup_mode,
             perf=perf,
             _out_cache_dirs=_out_cache_dirs,
@@ -139,7 +136,6 @@ def execute_default_data_operation(
             base_dir=base_dir,
             cache_base_dir=cache_base_dir,
             target_root=target_root,
-            fingerprint_mode=fingerprint_mode,
             cache_lookup_mode=cache_lookup_mode,
         )
     else:
@@ -250,7 +246,6 @@ def fetch_data_from_spec(
     base_dir: Path | None = None,
     cache_base_dir: Path | None = None,
     target_root: Path | None = None,
-    fingerprint_mode: str = "meta",
     cache_lookup_mode: str = "strict",
     perf: Optional[Any] = None,
     _out_cache_dirs: Optional[List[str]] = None,
@@ -351,7 +346,6 @@ def fetch_data_from_spec(
             force_data_cache=force_data_cache,
             cache_base_dir=cache_base_dir,
             target_prefix=target_prefix,
-            fingerprint_mode=fingerprint_mode,
             perf=perf,
             _out_cache_dirs=_out_cache_dirs,
         )
@@ -397,7 +391,6 @@ def verify_data_from_spec(
     base_dir: Path | None = None,
     cache_base_dir: Path | None = None,
     target_root: Path | None = None,
-    fingerprint_mode: str = "meta",
     cache_lookup_mode: str = "strict",
 ) -> bool:
     """Verify data items: ensure present (download/copy if needed) then validate integrity.
@@ -496,7 +489,6 @@ def verify_data_from_spec(
             force_data_cache=force_data_cache,
             cache_base_dir=cache_base_dir,
             target_prefix=target_prefix,
-            fingerprint_mode=fingerprint_mode,
             cache_lookup_mode=cache_lookup_mode,
         )
         # Evaluate integrity on local target
@@ -1417,7 +1409,6 @@ def _fetch_single_item(
     force_data_cache: bool = False,
     cache_base_dir: Path | None = None,
     target_prefix: Path | None = None,
-    fingerprint_mode: str = "meta",  # TODO: remove — only "meta" mode remains
     cache_lookup_mode: str = "strict",
     perf: Optional[Any] = None,
     _out_cache_dirs: Optional[List[str]] = None,
@@ -2005,7 +1996,6 @@ def _write_cache_metadata(
     # Fingerprint only written for local sources (fs/backpack, "meta" mode).
     if source_fingerprint:
         meta["source_fingerprint"] = source_fingerprint.get("fingerprint")
-        meta["fingerprint_mode"] = "meta"
 
     meta_file = cache_dir / ".meta.json"
     with meta_file.open("w", encoding="utf-8") as f:

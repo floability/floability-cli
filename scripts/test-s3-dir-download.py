@@ -156,7 +156,6 @@ def test_s3_caching_with_data_handler():
                 cache_dir=cache_dir,
                 backpack_root=Path(tmpdir),
                 verbose=True,
-                fingerprint_mode='meta'
             )
             
             if not success:

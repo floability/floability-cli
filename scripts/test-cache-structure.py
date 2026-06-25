@@ -41,7 +41,6 @@ def test_cache_structure():
             cache_dir=cache_dir,
             backpack_root=Path(tmpdir),
             verbose=True,
-            fingerprint_mode='meta'
         )
         
         if not success:

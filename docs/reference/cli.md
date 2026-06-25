@@ -72,7 +72,6 @@ floability run --instance <instance-name-or-path>
 - `--data-cache-mode off|symlink|hardlink|copy` (default: `symlink`)
 - `--data-cache-dir DIR`: override default `<base-dir>/floability-data-cache`
 - `--force-data-cache`: rebuild cache entries even if they already exist
-- `--fingerprint-mode meta|sample|strict` (default: `meta`)
 - `--continue-on-data-failure`: proceed even if data operations fail
 
 **Workers/factory:**
@@ -129,7 +128,6 @@ Options:
 - `--data-profile NAME`: override the default profile in the data spec
 - `--data-cache-mode off|symlink|hardlink|copy` (default: `off`)
 - `--force-data-cache`: rebuild cache entries even if they already exist
-- `--fingerprint-mode meta|sample|strict` (default: `meta`)
 - `--environment PATH`: manager environment spec
 - `--worker-environment PATH`: worker environment spec
 - `--manager-name NAME`: TaskVine manager name (auto-generated if omitted)
@@ -238,7 +236,6 @@ Options:
 - `--data-cache-mode off|symlink|hardlink|copy` (default: `off`)
 - `--data-cache-dir DIR`: override default `<base-dir>/floability-data-cache`
 - `--force-data-cache`: rebuild cache entries even if they already exist
-- `--fingerprint-mode meta|sample|strict` (default: `meta`)
 - `--base-dir DIR` (default: `~/floability-base-dir`)
 
 ---

@@ -454,7 +454,6 @@ def _materialize_data(
         base_dir=Path(args.base_dir),
         cache_base_dir=Path(args.cache_base_dir),
         target_root=target_root,
-        fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
         cache_lookup_mode=getattr(args, "cache_lookup_mode", "strict"),
         perf=perf if perf_enabled else None,
         _out_cache_dirs=cache_dirs,

@@ -68,12 +68,6 @@ class DataCommand(BaseCommand):
             action="store_true",
             help="Force rebuild of cache entries even if they already exist.",
         )
-        parser.add_argument(
-            "--fingerprint-mode",
-            default="meta",
-            choices=["meta", "sample", "strict"],
-            help="Fingerprint mode for filesystem source validation: meta (fast, metadata only), sample (first N bytes), strict (full content hash).",
-        )
         
         parser.add_argument(
             "--cache-lookup-mode",
