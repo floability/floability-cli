@@ -47,6 +47,53 @@ class AuditCommand(BaseCommand):
             action="store_true",
             help="Generate dependencies at the cell level instead of notebook level",
         )
+        parser.add_argument(
+            "--conda-env",
+            required=False,
+            default=None,
+            help=(
+                "Path to a conda environment prefix to use when executing the notebook "
+                "(e.g. /shared/miniconda3/envs/my-env). The notebook's dependencies "
+                "must be installed in this environment."
+            ),
+        )
+        parser.add_argument(
+            "--backpack-name",
+            required=False,
+            default=None,
+            help=(
+                "If provided, generate a complete backpack directory with this name "
+                "in the current directory. Creates workflow/, software/, and compute/ "
+                "from audit outputs."
+            ),
+        )
+        parser.add_argument(
+            "--force",
+            action="store_true",
+            default=False,
+            help="Overwrite existing backpack directory if it exists (only used with --backpack-name).",
+        )
+        parser.add_argument(
+            "--no-worker",
+            action="store_true",
+            default=False,
+            help=(
+                "Skip starting a vine_worker during audit. Use for non-distributed "
+                "notebooks that do not use TaskVine."
+            ),
+        )
+        parser.add_argument(
+            "--data-dirs",
+            nargs="+",
+            default=None,
+            metavar="PATH",
+            help=(
+                "One or more directories containing data files accessed by the notebook "
+                "(e.g. --data-dirs ./data ./inputs). Paths relative to the notebook "
+                "directory or absolute. Used to detect data dependencies directly from "
+                "strace output instead of relying on Python-level open() tracing."
+            ),
+        )
 
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
         """Execute audit command."""
@@ -60,4 +107,9 @@ class AuditCommand(BaseCommand):
         return [
             "floability audit --notebook example/matrix-multiplication/workflow/matrix-multiplication.ipynb",
             "floability audit --notebook mynotebook.ipynb --cell-level",
+            "floability audit --notebook mynotebook.ipynb --conda-env /path/to/conda/env",
+            "floability audit --notebook mynotebook.ipynb --backpack-name my-workflow",
+            "floability audit --notebook mynotebook.ipynb --conda-env /path/to/conda/env --backpack-name my-workflow --force",
+            "floability audit --notebook mynotebook.ipynb --data-dirs ./data ./inputs --backpack-name my-workflow",
+            "floability audit --notebook mynotebook.ipynb --no-worker --conda-env /path/to/env --backpack-name my-workflow",
         ]
