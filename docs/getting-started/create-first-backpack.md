@@ -37,17 +37,90 @@ consistently everywhere — your laptop, a university cluster, or cloud.
 
 ## Creating a Backpack
 
-There are three ways to create a backpack, depending on what you already have:
+There are four ways to create a backpack, depending on what you already have:
 
-1. **Manual creation**: Write the directory structure and files yourself
-2. **From a template**: Start from a pre-built example notebook when you don't have existing code yet
-3. **From an existing workflow**: Automatically scaffold the backpack structure around your existing notebook or script
+1. **Automatic creation (audit)**: Run your existing notebook with dependency tracing to automatically generate the full backpack structure, including environment, data files, and compute configuration
+2. **Manual creation**: Write the directory structure and files yourself
+3. **From a template**: Start from a pre-built example notebook when you don't have existing code yet
+4. **From an existing workflow**: Automatically scaffold the backpack structure around your existing notebook or script
 
 In every case you will need to review and adjust the generated files to match
 your actual computation, dependencies, and resource requirements.
 
 
-### Option 1: Create a Backpack Manually
+### Option 1: Automatic Creation (Audit)
+
+The `floability audit` command runs your notebook with dependency tracing and automatically generates a complete backpack. It captures the software environment and data files your notebook accessed during execution.
+
+```bash
+floability audit \
+  --notebook my-analysis.ipynb \
+  --conda-env /path/to/my-conda-env \
+  --data-dirs ./data \
+  --backpack-name my-backpack
+```
+
+This creates:
+
+```
+my-backpack/
+├── compute/
+│   └── compute.yml
+├── software/
+│   └── environment.yml    # captured from your conda env
+├── workflow/
+│   └── my-analysis.ipynb
+└── data/
+    ├── data.yml           # generated from detected data files
+    └── <data files>       # copied from your data directory
+```
+
+#### Key flags
+
+| Flag | Description |
+|---|---|
+| `--notebook` | Path to the notebook to audit |
+| `--conda-env` | Conda environment prefix where the notebook runs |
+| `--data-dirs` | One or more directories containing input data files |
+| `--no-worker` | Skip vine worker (for non-distributed notebooks) |
+| `--backpack-name` | Name for the generated backpack directory |
+| `--force` | Overwrite existing backpack directory |
+
+#### Distributed workflows (TaskVine)
+
+For notebooks that use TaskVine:
+
+```bash
+floability audit \
+  --notebook cms-analysis.ipynb \
+  --conda-env /shared/envs/physics-env \
+  --data-dirs ./data \
+  --backpack-name cms-backpack
+```
+
+#### Non-distributed workflows
+
+For notebooks that do not use TaskVine, add `--no-worker`:
+
+```bash
+floability audit \
+  --notebook gis-analysis.ipynb \
+  --conda-env /shared/envs/gis-env \
+  --data-dirs ./data \
+  --no-worker \
+  --backpack-name gis-backpack
+```
+
+#### After running audit
+
+Review and adjust the generated files before running:
+
+- **`compute/compute.yml`**: Set worker count, cores, and memory for your workload
+- **`software/environment.yml`**: Verify all dependencies were captured correctly
+- **`data/data.yml`**: Update `source_type` and `source` paths if you plan to fetch data from a remote source (S3, Pelican, HTTP) rather than bundling files in the backpack
+
+
+### Option 2: Create a Backpack Manually
 
 Creating a backpack manually gives you full control. The required layout is:
 
@@ -102,7 +175,7 @@ Optionally add a `data/data.yml` if your workflow reads input files.
 See [Data Specification](../reference/data-spec.md) for the format.
 
 
-### Option 2: From a Template (Start from Scratch)
+### Option 3: From a Template (Start from Scratch)
 
 Use a template when you **don't have existing code** and want a working
 starter notebook to edit. The template demonstrates the TaskVine distributed
@@ -199,7 +272,7 @@ for file_path in files:
 This also creates a `data/data.yml` file where you specify input sources (S3, HTTP, local directory). See [Data Specification](../reference/data-spec.md) for configuration details.
 
 
-### Option 3: From an Existing Workflow
+### Option 4: From an Existing Workflow
 
 If you already have a notebook or script, the `--from-workflow` flag
 scaffolds the full backpack structure around it automatically.

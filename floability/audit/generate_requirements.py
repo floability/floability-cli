@@ -5,23 +5,34 @@ import yaml
 
 
 # Function to process strace log file and extract package information
-def process_strace_log(file_path):
-    manager_packages = []  # List to store package information
-    seen_manager = set()  # Set to track already processed packages
+def process_strace_log(file_path, conda_env_prefix=None):
+    """
+    Extract package information from a strace log.
+
+    Args:
+        file_path: Path to strace log.
+        conda_env_prefix: When provided, only consider site-packages paths
+                          under this prefix. Filters out base-conda and other
+                          env packages that appear because strace -f follows
+                          the 'conda run' wrapper process.
+    """
+    manager_packages = []
+    seen_manager = set()
 
     try:
-        # Open the strace log file for reading
         with open(file_path, "r") as file:
             for line in file:
-                # Skip lines that don't contain 'openat' or 'site-packages'
                 if "openat" not in line or "site-packages" not in line:
                     continue
 
                 try:
-                    # Extract the full path from the line
                     start = line.index('"') + 1
                     end = line.index('"', start)
                     full_path = line[start:end]
+
+                    if conda_env_prefix and not full_path.startswith(conda_env_prefix):
+                        continue
+
                     path_parts = full_path.split("/")
 
                     try:
@@ -72,10 +83,10 @@ def process_strace_log(file_path):
 
     except FileNotFoundError:
         print(f"Error: File '{file_path}' not found")
-        return [], []
+        return []
     except Exception as e:
         print(f"Error processing file: {str(e)}")
-        return [], []
+        return []
 
 
 # Function to find the version of a package from its directory
@@ -191,12 +202,11 @@ def generate_requirements_txt(
 
 
 # Main function to process log files and generate requirements
-def main(manager_log_file, worker_log_file):
-    manager_packages = process_strace_log(manager_log_file)
-    worker_packages = process_strace_log(worker_log_file)
+def main(manager_log_file, worker_log_file, conda_env_prefix=None):
+    manager_packages = process_strace_log(manager_log_file, conda_env_prefix)
+    worker_packages = process_strace_log(worker_log_file, conda_env_prefix)
 
     if manager_packages or worker_packages:
-        # Generate requirements files
         generate_requirements_txt(manager_packages, worker_packages)
     else:
         print("No packages found or error occurred")

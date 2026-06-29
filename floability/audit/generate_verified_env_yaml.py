@@ -120,12 +120,20 @@ def get_installed_packages_pip():
     return installed
 
 
-def get_installed_packages_conda():
-    """Gets installed packages using conda list."""
+def get_installed_packages_conda(prefix=None):
+    """Gets installed packages using conda list.
+
+    Args:
+        prefix: Path to conda environment prefix to query. When None, queries
+                the currently active environment.
+    """
     installed = {}
+    cmd = ["conda", "list", "--json"]
+    if prefix:
+        cmd += ["--prefix", prefix]
     try:
         result = subprocess.run(
-            ["conda", "list", "--json"],
+            cmd,
             capture_output=True,
             text=True,
             check=True,
@@ -213,7 +221,7 @@ def normalize_req_line(line):
 # --- Main Logic ---
 
 
-def main(requirements_file, output="environment.yaml", env_name="reconstructed-env"):
+def main(requirements_file, output="environment.yaml", env_name="reconstructed-env", conda_prefix=None):
 
     req_file_path = pathlib.Path(requirements_file)
     output_file_path = pathlib.Path(output)
@@ -223,21 +231,25 @@ def main(requirements_file, output="environment.yaml", env_name="reconstructed-e
         sys.exit(1)
 
     print(f"Step 1: Determining active environment type...")
-    env_type, active_prefix = get_environment_type()
-    print(f"--> Active environment type: {env_type}")
-    print(f"--> Active Python prefix: {active_prefix}")
+    if conda_prefix:
+        # Target env is always conda when explicitly specified
+        env_type = "conda"
+        print(f"--> Using specified conda env: {conda_prefix}")
+    else:
+        env_type, active_prefix = get_environment_type()
+        print(f"--> Active environment type: {env_type}")
+        print(f"--> Active Python prefix: {active_prefix}")
 
     if env_type == "unknown":
         print(
             "Warning: Could not reliably determine environment type. Assuming 'pip'-based workflow."
         )
-        # Default to pip behavior if unsure
-        env_type = "venv"  # Treat unknown as venv for package gathering
+        env_type = "venv"
 
-    print(f"\nStep 2: Getting installed packages from active {env_type} environment...")
+    print(f"\nStep 2: Getting installed packages from {conda_prefix or 'active'} environment...")
     if env_type == "conda":
-        installed_packages = get_installed_packages_conda()
-    else:  # venv or unknown treated as venv
+        installed_packages = get_installed_packages_conda(prefix=conda_prefix)
+    else:
         installed_packages = get_installed_packages_pip()
 
     if not installed_packages:
@@ -320,11 +332,10 @@ def main(requirements_file, output="environment.yaml", env_name="reconstructed-e
                 f"  \n**[Not Found]:** {norm_req_name} (Not found in the list of currently installed packages)\n"
             )
 
-    # Add python version
-    python_version = platform.python_version()
-    conda_deps.insert(
-        0, f"python=={python_version}"
-    )  # Add python itself as a dependency
+    # Get Python version from the queried package list so it matches the target env
+    python_pkg = installed_packages.get("python")
+    python_version = python_pkg["version"] if python_pkg else platform.python_version()
+    conda_deps.insert(0, f"python=={python_version}")
     print(f"\nAdded Python dependency: python=={python_version}")
 
     # Ensure pip is included if there are pip dependencies
