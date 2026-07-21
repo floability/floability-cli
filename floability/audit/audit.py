@@ -101,6 +101,10 @@ def add_code_to_notebook(notebook_path, code):
 
     new_cell = nbformat.v4.new_code_cell(code)
     nb.cells.insert(0, new_cell)
+    
+    # Ensure the notebook format is compatible with nbformat 5
+    if nb.nbformat_minor < 5:
+        nb.nbformat_minor = 5
 
     with open(notebook_path, "w") as f:
         nbformat.write(nb, f)
