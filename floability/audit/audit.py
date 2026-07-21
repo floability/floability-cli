@@ -3,6 +3,7 @@ import shutil
 import signal
 import subprocess
 import time
+import json
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -16,25 +17,77 @@ from floability.audit.generate_verified_env_yaml import (
 from floability.audit.generate_data_deps import main as generate_data_deps
 from floability.audit.log_data_deps import get_code_to_log_data_deps
 
+def _find_kernelspec(kernel_name, conda_env=None):
+    """Look up a kernelspec by name and find the given kernel"""
 
-def update_notebook_kernel(notebook_path, kernel_name):
-    ksm = KernelSpecManager()
-    kernels = ksm.find_kernel_specs()
+    # If conda_env is given, query kernels registered inside the  conda env
+    if conda_env:
+        try:
+            result = subprocess.run(
+                [
+                    "conda", "run", "--prefix", conda_env, "--no-capture-output",
+                    "jupyter", "kernelspec", "list", "--json",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise ValueError(
+                f"Could not list kernels in conda env '{conda_env}': "
+                f"{e.stderr.strip() if e.stderr else e}"
+            )
 
-    if kernel_name not in kernels:
-        raise ValueError(
-            f"Kernel '{kernel_name}' not found. Available kernels: {list(kernels.keys())}"
-        )
+        try:
+            kernelspecs = json.loads(result.stdout)["kernelspecs"]
+        except (json.JSONDecodeError, KeyError) as e:
+            raise ValueError(
+                f"Unexpected output from 'jupyter kernelspec list' in "
+                f"'{conda_env}': {e}"
+            )
 
-    spec = ksm.get_kernel_spec(kernel_name)
+        if kernel_name not in kernelspecs:
+            raise ValueError(
+                f"Kernel '{kernel_name}' not found in conda env '{conda_env}'. "
+                f"Available kernels: {list(kernelspecs.keys())}"
+            )
+
+        spec_json = kernelspecs[kernel_name]["spec"]
+        return {
+            "name": kernel_name,
+            "display_name": spec_json.get("display_name", kernel_name),
+            "language": spec_json.get("language", ""),
+        }
+    # If conda_env is not given, use default KernelSpecManager
+    else:
+        ksm = KernelSpecManager()
+        kernels = ksm.find_kernel_specs()
+
+        if kernel_name not in kernels:
+            raise ValueError(
+                f"Kernel '{kernel_name}' not found. "
+                f"Available kernels: {list(kernels.keys())}"
+            )
+
+        spec = ksm.get_kernel_spec(kernel_name)
+        return {
+            "name": kernel_name,
+            "display_name": spec.display_name,
+            "language": spec.language,
+        }
+
+
+def update_notebook_kernel(notebook_path, kernel_name, conda_env=None):
+    """Update kernelspec for the provided notebook kernel"""
+    spec = _find_kernelspec(kernel_name, conda_env=conda_env)
 
     with open(notebook_path, "r", encoding="utf-8") as f:
         nb = nbformat.read(f, as_version=4)
 
     nb.metadata.kernelspec = {
-        "name": kernel_name,
-        "display_name": spec.display_name,
-        "language": spec.language,
+        "name": spec["name"],
+        "display_name": spec["display_name"],
+        "language": spec["language"],
     }
 
     with open(notebook_path, "w", encoding="utf-8") as f:
@@ -144,9 +197,13 @@ def audit(notebook_path, kernel_name, manager_name, manager_port, conda_env=None
 
     if kernel_name:
         try:
-            update_notebook_kernel(notebook_copy_path, kernel_name)
-        except ValueError:
-            print(f"Error updating notebook kernel: {kernel_name}")
+            update_notebook_kernel(notebook_copy_path, kernel_name, conda_env=conda_env)
+        except ValueError as e:
+            print(f"Error updating notebook kernel: {e}")
+            os.remove(notebook_copy_path)
+            if worker_pid is not None:
+                os.killpg(os.getpgid(worker_pid), signal.SIGTERM)
+                print("Removed vine worker process tree.")
             return {}
 
     print("Starting the notebook with strace... ")
