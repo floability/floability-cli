@@ -253,10 +253,15 @@ floability audit --notebook <notebook.ipynb>
 
 Options:
 
-- `--notebook FILE` (required)
+- `--notebook FILE` (required): Path to the notebook to audit
 - `--kernel NAME`: Jupyter kernel to use when analyzing the notebook
-- `--manager-port PORT` (default: `9123`)
+- `--manager-port PORT` (default: `9123`): Taskvine manager port for connection
 - `--manager-name NAME`: TaskVine manager name
+- `--conda-env NAME` : Conda environment prefix where the notebook runs
+- `--data-dirs DIR` : One or more directories containing input data files
+- `--no-worker` : Skip vine worker (for non-distributed notebooks)
+- `--backpack-name NAME` (required) : Name for the generated backpack directory
+- `--force` : Overwrite existing backpack directory
 - `--cell-level`: generate dependencies at cell level instead of notebook level
 
 ---

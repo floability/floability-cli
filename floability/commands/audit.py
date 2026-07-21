@@ -59,7 +59,7 @@ class AuditCommand(BaseCommand):
         )
         parser.add_argument(
             "--backpack-name",
-            required=False,
+            required=True,
             default=None,
             help=(
                 "If provided, generate a complete backpack directory with this name "

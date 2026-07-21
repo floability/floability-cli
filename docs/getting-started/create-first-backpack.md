@@ -50,7 +50,7 @@ your actual computation, dependencies, and resource requirements.
 
 ### Option 1: Automatic Creation (Audit)
 
-The `floability audit` command runs your notebook with dependency tracing and automatically generates a complete backpack. It captures the software environment and data files your notebook accessed during execution.
+The `floability audit` command runs your notebook with dependency tracing and automatically generates a complete backpack. It captures the software environment and data files your notebook accessed during execution. Before running your notebook with `floability audit`, make sure to pre-provision the execution environment with all necessary dependencies either locally or using Conda.
 
 ```bash
 floability audit \
@@ -79,11 +79,12 @@ my-backpack/
 
 | Flag | Description |
 |---|---|
-| `--notebook` | Path to the notebook to audit |
+| `--notebook` | (required) Path to the notebook to audit |
 | `--conda-env` | Conda environment prefix where the notebook runs |
 | `--data-dirs` | One or more directories containing input data files |
 | `--no-worker` | Skip vine worker (for non-distributed notebooks) |
-| `--backpack-name` | Name for the generated backpack directory |
+| `--kernel` | Jupyter kernel to use when analyzing the notebook |
+| `--backpack-name` |(required) Name for the generated backpack directory |
 | `--force` | Overwrite existing backpack directory |
 
 #### Distributed workflows (TaskVine)
@@ -115,9 +116,9 @@ floability audit \
 
 Review and adjust the generated files before running:
 
-- **`compute/compute.yml`**: Set worker count, cores, and memory for your workload
-- **`software/environment.yml`**: Verify all dependencies were captured correctly
-- **`data/data.yml`**: Update `source_type` and `source` paths if you plan to fetch data from a remote source (S3, Pelican, HTTP) rather than bundling files in the backpack
+- **`compute/compute.yml`**: Set worker count, cores, and memory for your workload.
+- **`software/environment.yml`**: Verify all dependencies were captured correctly. Currently, only Python dependencies are being captured. Any binaries or system libraries have to be manually added.
+- **`data/data.yml`**: Update `source_type` and `source` paths if you plan to fetch data from a remote source (S3, Pelican, HTTP) rather than bundling files in the backpack.
 
 
 ### Option 2: Create a Backpack Manually
