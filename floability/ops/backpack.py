@@ -106,8 +106,10 @@ def update_env_backpack_cmd(args: argparse.Namespace) -> None:
     the existing env name, backs up the old file as old-environment.yml, then writes
     the new environment.yml.
 
-    With --versions-only, only the versions of packages already listed in the backpack
-    environment.yml are updated rather than replacing the full dependency list.
+    By default only the versions of packages already listed in the backpack
+    environment.yml are patched. With --full the entire dependency list is replaced.
+    With --export-lock-file an additional conda-lock.yml (with build strings) is written
+    to the software/ directory.
     """
     backpack_path = Path(args.path).resolve()
 
@@ -115,7 +117,8 @@ def update_env_backpack_cmd(args: argparse.Namespace) -> None:
         update_env_from_instance(
             instance_ref=args.from_instance,
             backpack_path=backpack_path,
-            versions_only=getattr(args, "versions_only", False),
+            full=getattr(args, "full", False),
+            export_lock_file=getattr(args, "export_lock_file", False),
         )
     except Exception as e:
         print(f"[floability] Error updating environment: {e}")
