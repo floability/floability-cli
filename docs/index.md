@@ -39,10 +39,10 @@ and compute that run the same way everywhere.
 - [Compute Specification](reference/compute-spec.md)
 - [Instance Registry](reference/instance-registry.md)
 
-## Examples
+## Backpacks
 
-- [Matrix multiplication](https://github.com/floability/floability-examples/tree/main/matrix-multiplication) — quickstart example
-- [All examples](https://github.com/floability/floability-examples)
+- [Matrix multiplication](https://github.com/floability-hub/matrix-multiplication) — quickstart backpack
+- [Browse all backpacks](https://github.com/floability-hub) — each repository is an independent backpack
 
 ## Help
 

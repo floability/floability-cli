@@ -24,27 +24,29 @@ conda activate floability-env
 
 
 
-## Get the Example Backpacks
+## Get the Example Backpack
 
-Floability example backpacks are stored in a separate repository. Clone it:
+Each Floability backpack is maintained in its own repository in
+[Floability Hub](https://github.com/floability-hub). For this guide, clone the
+`matrix-multiplication` backpack:
 
 ```bash
-git clone https://github.com/floability/floability-examples.git
-cd floability-examples
+git clone https://github.com/floability-hub/matrix-multiplication.git
+cd matrix-multiplication
 ```
 
 ## Run the Backpack
 
-The examples repository contains multiple backpacks. You can run any of them by replacing `<example-backpack-path>` with the path to a backpack folder in the repository. For this guide, we run the `matrix-multiplication` backpack:
+Because the repository itself is the backpack, run it from the repository root:
 
 ```bash
-floability run --backpack matrix-multiplication
+floability run --backpack .
 ```
 
 If you are running this command from an HPC cluster login node, you can also specify a batch type to submit worker jobs to the cluster scheduler. For example, on a Slurm cluster:
 
 ```bash
-floability run --backpack matrix-multiplication --batch-type slurm
+floability run --backpack . --batch-type slurm
 ```
 
 See [Deployment Overview](../deployment/index.md) for more on running on HPC clusters.
@@ -114,7 +116,7 @@ By default, data is cached in `<base-dir>/floability-data-cache`, which is `~/fl
 You can change the base directory using the `--base-dir` flag when running a backpack. You can change only the data cache directory using the `--data-cache-dir` flag. For example:
 
 ```bash
-floability run --backpack matrix-multiplication --data-cache-dir /scratch/mislam/floability-data-cache
+floability run --backpack . --data-cache-dir /scratch/mislam/floability-data-cache
 ```
 
 
