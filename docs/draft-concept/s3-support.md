@@ -254,8 +254,8 @@ Most tests are marked with `@pytest.mark.skip` by default to avoid accidental ch
 
 ## Implementation Details
 
-- **Module**: `floability/data/s3_file_utils.py`
-- **Integration**: `floability/data/data_handler.py`
+- **Module**: `src/floability/data/s3_file_utils.py`
+- **Integration**: `src/floability/data/data_handler.py`
 - **Dependencies**: `boto3`, `botocore`
 - **Download strategy**: Chunked streaming with `.part` files for atomic writes
 - **Error handling**: Comprehensive boto3 exception handling

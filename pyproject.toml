@@ -46,10 +46,11 @@ Repository = "https://github.com/floability/floability-cli"
 floability = "floability.cli:main"
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["floability*"]
 
 [tool.setuptools_scm]
-write_to = "floability/_version.py"
+write_to = "src/floability/_version.py"
 version_scheme = "guess-next-dev"
 local_scheme = "node-and-date"
 
@@ -79,6 +80,8 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.mypy]
 python_version = "3.11"
+mypy_path = "src"
+packages = ["floability"]
 
 [tool.coverage.run]
 source = ["floability"]

@@ -6,6 +6,7 @@ import importlib.metadata
 import subprocess
 import sys
 import types
+from pathlib import Path
 
 from floability import __version__
 from floability.version_info import concise_version, verbose_version
@@ -42,6 +43,24 @@ def test_ndcctools_version_uses_taskvine_module(monkeypatch) -> None:
     from floability.version_info import _ndcctools_version
 
     assert _ndcctools_version() == "7.17.1"
+
+
+def test_git_details_finds_repository_above_src_layout(monkeypatch, tmp_path) -> None:
+    repository = tmp_path / "repository"
+    package_dir = repository / "src" / "floability"
+    package_dir.mkdir(parents=True)
+    (repository / ".git").mkdir()
+    monkeypatch.setattr("floability.version_info.shutil.which", lambda _name: "git")
+
+    def fake_run(command, **_kwargs):
+        stdout = "abc123\n" if command[1:3] == ["rev-parse", "HEAD"] else ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("floability.version_info.subprocess.run", fake_run)
+
+    from floability.version_info import _git_details
+
+    assert _git_details(Path(package_dir)) == ("abc123", "no")
 
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:

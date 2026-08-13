@@ -1647,13 +1647,13 @@ du -sh ~/floability-data-cache/* | sort -h | tail -10
 
 ### Implementation Files
 
-- **`floability/data/data_handler.py`**: Core orchestration (check/fetch/verify)
-- **`floability/data/http_file_utils.py`**: HTTP download utilities
-- **`floability/data/s3_file_utils.py`**: S3 file/directory operations
-- **`floability/data/pelican_file_utils.py`**: Pelican/OSDF file/directory operations
-- **`floability/data/fs_file_utils.py`**: Filesystem utilities
-- **`floability/data/fingerprint.py`**: Source fingerprinting (meta/sample/strict)
-- **`floability/ops/data.py`**: CLI operation handlers
+- **`src/floability/data/data_handler.py`**: Core orchestration (check/fetch/verify)
+- **`src/floability/data/http_file_utils.py`**: HTTP download utilities
+- **`src/floability/data/s3_file_utils.py`**: S3 file/directory operations
+- **`src/floability/data/pelican_file_utils.py`**: Pelican/OSDF file/directory operations
+- **`src/floability/data/fs_file_utils.py`**: Filesystem utilities
+- **`src/floability/data/fingerprint.py`**: Source fingerprinting (meta/sample/strict)
+- **`src/floability/ops/data.py`**: CLI operation handlers
 
 ---
 

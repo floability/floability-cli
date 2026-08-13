@@ -5,7 +5,7 @@ Implemented S3 directory download and caching support in Floability CLI, mirrori
 
 ## Changes Made
 
-### 1. S3 File Utils (`floability/data/s3_file_utils.py`)
+### 1. S3 File Utils (`src/floability/data/s3_file_utils.py`)
 
 Added two new functions:
 
@@ -30,7 +30,7 @@ Added two new functions:
   - Structure preservation (can flatten if desired)
 - Returns Path to destination directory
 
-### 2. Data Handler (`floability/data/data_handler.py`)
+### 2. Data Handler (`src/floability/data/data_handler.py`)
 
 Updated two functions to support S3 directories:
 
@@ -141,8 +141,8 @@ Or you can test manually and report results.
 
 ## Files Modified
 
-1. `floability/data/s3_file_utils.py`: Added 2 functions (~150 lines)
-2. `floability/data/data_handler.py`: Updated 2 functions (~50 lines changed)
+1. `src/floability/data/s3_file_utils.py`: Added 2 functions (~150 lines)
+2. `src/floability/data/data_handler.py`: Updated 2 functions (~50 lines changed)
 3. `example/S3_DIRECTORY_DOWNLOAD.md`: Created documentation
 4. `example/s3-directory-examples.yml`: Created examples
 5. `scripts/test-s3-dir-download.py`: Created test script (~250 lines)

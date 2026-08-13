@@ -65,8 +65,11 @@ def _ndcctools_version() -> str:
 
 
 def _git_details(package_dir: Path) -> tuple[str, str]:
-    repository = package_dir.parent
-    if not (repository / ".git").exists() or shutil.which("git") is None:
+    repository = next(
+        (parent for parent in package_dir.parents if (parent / ".git").exists()),
+        None,
+    )
+    if repository is None or shutil.which("git") is None:
         return "unavailable", "unavailable"
 
     try:
