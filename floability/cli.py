@@ -9,8 +9,7 @@ import sys
 from .cleanup import CleanupManager, install_signal_handlers
 from .commands import get_all_commands
 from .cli_utils import collect_explicit_args
-
-from . import __version__
+from .version_info import concise_version, verbose_version
 
 
 def main():
@@ -27,7 +26,15 @@ def main():
     )
 
     parser.add_argument(
-        "-v", "--version", action="version", version=f"%(prog)s {__version__}"
+        "-v",
+        "--version",
+        action="store_true",
+        help="Show version information and exit.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="With --version, include build, platform, and tool information.",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Floability sub-commands")
@@ -43,6 +50,14 @@ def main():
     argv = sys.argv[1:]
     args = parser.parse_args(argv)
     args._explicit_args = collect_explicit_args(parser, args, argv)
+
+    if args.version:
+        output = verbose_version() if args.verbose else concise_version()
+        print(output)
+        return 0
+
+    if args.verbose:
+        parser.error("--verbose is only valid with --version")
 
     # Setup cleanup manager for signal handling
     cleanup_manager = CleanupManager()

@@ -2,18 +2,8 @@ name: floability-env
 channels:
   - conda-forge
 dependencies:
-  - python
+  - python=3.12
   - ndcctools>=7.17.0
-  - pyyaml
-  - requests
   - pip
-  - pytest
-  - nbformat
-  - jupyter_client
-  - python-magic  # for MIME type guessing
-  - tqdm          # progress bars for streaming
-  - aiohttp       # optional async HTTP client
-  - fsspec
-  - boto3         # AWS S3 support
-  - pelicanfs
-  - xrootd        # XRootD protocol support (root://)
+  - pip:
+      - -e .[dev]

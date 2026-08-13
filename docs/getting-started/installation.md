@@ -36,10 +36,9 @@ conda env create -f environment.yml
 conda activate floability-env
 ```
 
-Install Floability:
-```bash
-pip install .
-```
+The environment installs Floability in editable mode with its development
+dependencies. Source changes are immediately available through the
+`floability` command.
 
 
 ## Verify
@@ -47,8 +46,8 @@ pip install .
 floability --version
 ```
 
-If this command is not found, make sure the `floability-env` environment
-is active (`conda activate floability-env`) and that the install step
+If this command is not found, make sure the `floability-env` environment is
+active (`conda activate floability-env`) and that environment creation
 completed without errors.
 
 ---

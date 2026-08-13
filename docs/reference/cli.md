@@ -8,9 +8,10 @@ This page documents the current Floability CLI commands and options.
 floability <command> [options]
 ```
 
-Top-level option:
+Top-level options:
 
-- `-v, --version`: show CLI version
+- `-v, --version`: show the concise version and exit
+- `--verbose`: with `--version`, include installation diagnostics
 
 Available commands:
 
