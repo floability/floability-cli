@@ -73,8 +73,17 @@ def main():
             print(f"[floability] Error: {error}")
             return 1
 
-        # Execute the command
-        command.execute(args, cleanup_manager)
+        # Execute the command. Commands may return an explicit process status;
+        # legacy commands that return None are successful.
+        try:
+            result = command.execute(args, cleanup_manager)
+        except KeyboardInterrupt:
+            print("\n[floability] Interrupted by user. Cleaning up...")
+            cleanup_manager.cleanup()
+            return 130
+
+        return result if isinstance(result, int) else 0
     else:
         parser.print_help()
         print("\n[floability] No command provided. Use --help for usage information.")
+        return 1

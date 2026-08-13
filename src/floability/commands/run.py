@@ -24,13 +24,13 @@ class RunCommand(BaseCommand):
         """Add run command arguments."""
         add_execution_args(parser)
 
-    def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
+    def execute(self, args: argparse.Namespace, cleanup_manager=None) -> int:
         """Execute run command."""
         from floability.sites import apply_site_defaults
         from ..ops.run import run_workflow
 
         apply_site_defaults(args, explicit_args=getattr(args, "_explicit_args", None))
-        run_workflow(args, cleanup_manager)
+        return run_workflow(args, cleanup_manager)
 
     def get_examples(self) -> list:
         return [

@@ -243,6 +243,7 @@ def finalize_instance_metadata(
     metadata_path: Path,
     success: bool,
     error: Optional[str] = None,
+    state: Optional[str] = None,
 ) -> None:
     """
     Mark instance execution as completed.
@@ -251,10 +252,11 @@ def finalize_instance_metadata(
         metadata_path: Path to run.json
         success: Whether execution succeeded
         error: Error message if failed
+        state: Optional explicit terminal state, such as ``interrupted``
     """
     updates = {
         "status": {
-            "state": "completed" if success else "failed",
+            "state": state or ("completed" if success else "failed"),
             "completed_at": datetime.utcnow().isoformat() + "Z",
             "success": success,
             "error": error,

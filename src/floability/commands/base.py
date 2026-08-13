@@ -41,13 +41,19 @@ class BaseCommand(ABC):
         pass
 
     @abstractmethod
-    def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
+    def execute(
+        self, args: argparse.Namespace, cleanup_manager=None
+    ) -> Optional[int]:
         """
         Execute the command.
 
         Args:
             args: Parsed command-line arguments
             cleanup_manager: Optional cleanup manager for signal handling
+
+        Returns:
+            An explicit process exit status, or None for legacy successful
+            commands.
         """
         pass
 

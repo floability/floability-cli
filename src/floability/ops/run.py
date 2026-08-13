@@ -75,7 +75,7 @@ class EnvironmentContext:
 
 def run_workflow(
     args: argparse.Namespace, cleanup_manager: CleanupManager, mode="run"
-) -> None:
+) -> int:
     """Run or execute a workflow either by creating a new instance from a backpack
     or by reusing an existing instance (via --instance).
     """
@@ -129,15 +129,18 @@ def run_workflow(
             _execute_batch(args, ctx, env_ctx, cleanup_manager, perf, notebook_path)
 
         print("[floability] Exiting run.")
+        return 0
 
     except ValueError as e:
         print(f"[floability] Error: {e}")
-        return
+        if "ctx" in locals():
+            _cleanup_and_abort(cleanup_manager, ctx)
+        return 1
     except RuntimeError as e:
         print(f"[floability] Error: {e}")
         if "ctx" in locals():
             _cleanup_and_abort(cleanup_manager, ctx)
-        return
+        return 1
     except Exception as e:
         print(f"[floability] Unexpected error: {e}")
         if "ctx" in locals():
@@ -723,6 +726,7 @@ def _run_interactive(
     notebook_path: Optional[str],
 ) -> None:
     """Run interactive mode with JupyterLab."""
+    interrupted = False
     print("[floability] JupyterLab startup")
     # JupyterLab can only open a notebook at startup; pass None for .py entrypoints
     # so it launches in the workflow directory without trying to open the script.
@@ -755,10 +759,18 @@ def _run_interactive(
             if jupyter_proc is not None and jupyter_proc.poll() is not None:
                 print("[floability] JupyterLab ended.")
     except KeyboardInterrupt:
-        print("[floability] KeyboardInterrupt in main loop. Cleaning up...")
-        cleanup_manager.cleanup()
+        interrupted = True
+        raise
     finally:
-        _finalize_run(args, ctx, perf, sync_outputs=True)
+        _finalize_run(
+            args,
+            ctx,
+            perf,
+            sync_outputs=not interrupted,
+            success=not interrupted,
+            error="Interrupted by user" if interrupted else None,
+            state="interrupted" if interrupted else None,
+        )
 
 
 def _execute_batch(
@@ -853,6 +865,9 @@ def _finalize_run(
     ctx: InstanceContext,
     perf: PerformanceTracker,
     sync_outputs: bool = False,
+    success: bool = True,
+    error: Optional[str] = None,
+    state: Optional[str] = None,
 ) -> None:
     """Finalize run: sync outputs, save metrics, release lock."""
     if sync_outputs:
@@ -864,7 +879,12 @@ def _finalize_run(
         print(f"[floability] Performance report saved to {ctx.paths['metrics']}")
 
     try:
-        finalize_instance_metadata(ctx.metadata_file, success=True)
+        finalize_instance_metadata(
+            ctx.metadata_file,
+            success=success,
+            error=error,
+            state=state,
+        )
     except Exception as e:
         print(f"[floability] Warning: Could not finalize metadata: {e}")
 

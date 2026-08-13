@@ -22,13 +22,13 @@ class ExecuteCommand(BaseCommand):
         """Add execute command arguments."""
         add_execution_args(parser)
 
-    def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
+    def execute(self, args: argparse.Namespace, cleanup_manager=None) -> int:
         """Execute command in batch mode."""
         from floability.sites import apply_site_defaults
         from ..ops.run import run_workflow
 
         apply_site_defaults(args, explicit_args=getattr(args, "_explicit_args", None))
-        run_workflow(args, cleanup_manager, mode="execute")
+        return run_workflow(args, cleanup_manager, mode="execute")
 
     def get_examples(self) -> list:
         return [

@@ -6,7 +6,6 @@ terminate() if they're still alive.
 """
 
 import signal
-import sys
 import time
 import os
 import shutil
@@ -77,18 +76,22 @@ class CleanupManager:
 
 def install_signal_handlers(cleanup_manager: CleanupManager):
     """
-    Installs a signal handler so that Ctrl+C (SIGINT) or SIGTERM triggers
-    the CleanupManager's cleanup(), then exits.
-    """
-    import signal
+    Install signal handlers with conventional process exit semantics.
 
+    SIGINT becomes ``KeyboardInterrupt`` so the CLI can record an interrupted
+    workflow before cleaning up and returning 130. SIGTERM performs immediate
+    cleanup and exits with 143 (128 + signal 15).
+    """
     def signal_handler(sig, frame):
-        # Temporarily disable the signal handler to prevent recursion
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+        if sig == signal.SIGINT:
+            raise KeyboardInterrupt
+
         print(f"[cleanup] Caught signal {sig}, initiating cleanup...")
         cleanup_manager.cleanup()
-        sys.exit(0)
+        raise SystemExit(128 + sig)
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
