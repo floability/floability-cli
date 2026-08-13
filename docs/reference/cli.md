@@ -48,9 +48,7 @@ floability run --instance <instance-name-or-path>
 - `--instance PATH_OR_NAME`: existing instance to reuse (mutually exclusive with `--backpack`)
 - `--environment PATH`: manager environment spec. Required for new instances unless auto-resolved from the backpack's `software/environment.yml`.
 - `--worker-environment PATH`: worker environment spec (optional; auto-resolved from `software/worker-environment.yml` if present)
-- `--notebook FILE`: notebook to open in JupyterLab (optional; auto-detected from `workflow/`)
-- `--python-script FILE`: Python script to execute (optional; auto-detected from `workflow/`)
-- `--prefer-python`: use Python script instead of notebook when both exist in the backpack workflow. Without this flag, notebooks take priority.
+- `--entrypoint FILENAME`: explicitly select the file that runs first from `workflow/`; normally unnecessary unless automatic selection is ambiguous
 
 **Session:**
 

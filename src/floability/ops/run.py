@@ -111,22 +111,22 @@ def run_workflow(
         # Step 4: Setup environment
         env_ctx = _setup_environment(args, ctx, perf)
 
-        # Step 5: Send catalog event
-        _send_catalog_event(args, ctx, mode)
+        # Step 5: Resolve the workflow entrypoint before starting remote work.
+        entrypoint_path = _resolve_entrypoint(args, ctx, mode)
 
-        # Step 6: Start workers
+        # Step 6: Send catalog event
+        _send_catalog_event(args, ctx, mode, entrypoint_path)
+
+        # Step 7: Start workers
         factory_proc = _start_workers(args, ctx, env_ctx, cleanup_manager)
-
-        # Step 7: Find notebook
-        notebook_path = _find_notebook(args, ctx, mode)
 
         # Step 8: Run or execute
         if mode == "run":
             _run_interactive(
-                args, ctx, env_ctx, cleanup_manager, factory_proc, perf, notebook_path
+                args, ctx, env_ctx, cleanup_manager, factory_proc, perf, entrypoint_path
             )
         else:
-            _execute_batch(args, ctx, env_ctx, cleanup_manager, perf, notebook_path)
+            _execute_batch(args, ctx, env_ctx, cleanup_manager, perf, entrypoint_path)
 
         print("[floability] Exiting run.")
         return 0
@@ -313,10 +313,6 @@ def _prepare_new_instance(args: argparse.Namespace, mode: str) -> InstanceContex
             source_workflow_dir=backpack_workflow_dir,
             dest_workflow_dir=workflow_dir,
         )
-        if args.notebook:
-            args.notebook = str(workflow_dir / Path(args.notebook).name)
-        if args.python_script:
-            args.python_script = str(workflow_dir / Path(args.python_script).name)
     else:
         print(
             f"[floability] No backpack specified; created empty workflow directory at {workflow_dir}"
@@ -542,6 +538,7 @@ def _send_catalog_event(
     args: argparse.Namespace,
     ctx: InstanceContext,
     mode: str,
+    entrypoint_path: Optional[str],
     event: str = "startup",
 ) -> None:
     """Send catalog update event."""
@@ -550,8 +547,8 @@ def _send_catalog_event(
         if getattr(args, "backpack", None)
         else None
     )
-    notebook_name = (
-        Path(args.notebook).name if getattr(args, "notebook", None) else None
+    entrypoint_name = (
+        Path(entrypoint_path).name if entrypoint_path else None
     )
     send_catalog_update(
         manager_name=args.manager_name,
@@ -559,7 +556,7 @@ def _send_catalog_event(
         run_dir=str(ctx.paths["root"]),
         backpack_name=backpack_name,
         event=event,
-        notebook_name=notebook_name,
+        entrypoint_name=entrypoint_name,
         mode=mode,
     )
 
@@ -592,49 +589,46 @@ def _start_workers(
     return factory_proc
 
 
-def _warn_script_with_run_mode(args: argparse.Namespace, entrypoint_path: Optional[str]) -> None:
-    """Warn the user that 'floability run' is not designed for script execution."""
-    name = Path(entrypoint_path).name if entrypoint_path else "script"
+def _run_entrypoint_error(args: argparse.Namespace, entrypoint: Path) -> RuntimeError:
+    """Build the actionable error for a script selected with interactive run."""
     backpack = getattr(args, "backpack", None)
     backpack_hint = f" --backpack {backpack}" if backpack else " --backpack <path>"
-    print(
-        f"\n[floability] Warning: '{name}' is a Python script, but 'floability run' opens "
-        f"an interactive JupyterLab session designed for notebooks."
+    return RuntimeError(
+        f"Interactive 'floability run' requires a .ipynb entrypoint; "
+        f"'{entrypoint.name}' is a {entrypoint.suffix} script. "
+        f"Use 'floability execute{backpack_hint}' instead."
     )
     print(f"[floability] For direct script execution, use:")
     print(f"[floability]   floability execute{backpack_hint}\n")
 
 
-def _find_notebook(
+def _resolve_entrypoint(
     args: argparse.Namespace,
     ctx: InstanceContext,
     mode: str,
 ) -> Optional[str]:
-    """Resolve the workflow entrypoint (notebook or script) from the workflow directory.
+    """Resolve and validate the workflow entrypoint for the selected mode.
 
     Priority
     --------
-    1. ``--entry-file <filename>``  — filename match across both .ipynb and .py files.
-    2. ``--prefer-python``          — pick the first .py before any .ipynb.
-    3. ``--notebook <path>``        — match by filename within notebooks (legacy).
-    4. Auto-detect                  — notebooks first, then scripts.
+    1. ``--entrypoint <filename>`` — explicit filename match.
+    2. Auto-detect one eligible entrypoint.
 
-    A warning is printed when the resolved entrypoint is a .py script and the
-    caller is in interactive ``run`` mode, since JupyterLab is not the right
-    tool for script execution.
+    Interactive ``run`` accepts only ``.ipynb``. Batch ``execute`` accepts
+    ``.ipynb``, ``.py``, and ``.sh`` entrypoints.
 
     Returns:
-        Absolute path string to the entrypoint, or None if nothing was found
-        and mode is not 'execute'.
+        Absolute path string to the entrypoint.
 
     Raises:
-        RuntimeError: In execute mode when no entrypoint is found.
+        RuntimeError: If selection is missing, ambiguous, or incompatible.
     """
-    entry_file = getattr(args, "entry_file", None)
-    notebook_arg = getattr(args, "notebook", None)
-    prefer_python = getattr(args, "prefer_python", False)
+    requested_entrypoint = getattr(args, "entrypoint", None)
 
-    # Collect all candidates from the workflow directory
+    if mode not in {"run", "execute"}:
+        raise ValueError(f"Unknown workflow mode: {mode}")
+
+    # Collect all supported candidates from the workflow directory.
     all_notebooks = [
         p for p in ctx.workflow_dir.rglob("*.ipynb")
         if ".ipynb_checkpoints" not in str(p)
@@ -643,77 +637,71 @@ def _find_notebook(
         p for p in ctx.workflow_dir.rglob("*.py")
         if "__pycache__" not in str(p)
     ]
+    all_shell_scripts = list(ctx.workflow_dir.rglob("*.sh"))
+    all_candidates = sorted(
+        all_notebooks + all_scripts + all_shell_scripts,
+        key=lambda path: str(path.relative_to(ctx.workflow_dir)),
+    )
+    eligible = all_notebooks if mode == "run" else all_candidates
 
     entrypoint: Optional[Path] = None
 
-    # ── Priority 1: --entry-file (filename only, matches any extension) ──────
-    if entry_file:
-        match = next(
-            (p for p in all_notebooks + all_scripts if p.name == entry_file),
-            None,
-        )
-        if match:
-            entrypoint = match
-            print(f"[floability] Using entry file: {entrypoint.name}")
-        else:
-            print(
-                f"[floability] Warning: --entry-file '{entry_file}' not found in "
-                f"workflow/, falling back to auto-detection"
+    # ── Priority 1: --entrypoint ─────────────────────────────────────────────
+    if requested_entrypoint:
+        matches = [
+            path for path in all_candidates if path.name == requested_entrypoint
+        ]
+        if not matches:
+            raise RuntimeError(
+                f"Entrypoint '{requested_entrypoint}' was not found in workflow/."
             )
-
-    # ── Priority 2: --prefer-python (pick first .py over .ipynb) ─────────────
-    if entrypoint is None and prefer_python:
-        if all_scripts:
-            entrypoint = all_scripts[0]
-            print(f"[floability] --prefer-python: using {entrypoint.name}")
-        elif all_notebooks:
-            print(
-                f"[floability] --prefer-python: no .py script found, "
-                f"falling back to notebook {all_notebooks[0].name}"
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"Entrypoint '{requested_entrypoint}' is ambiguous in workflow/."
             )
-            entrypoint = all_notebooks[0]
+        entrypoint = matches[0]
+        if mode == "run" and entrypoint.suffix != ".ipynb":
+            raise _run_entrypoint_error(args, entrypoint)
+        print(f"[floability] Using entrypoint: {entrypoint.name}")
 
-    # ── Priority 3: --notebook hint (match by name within detected notebooks) ─
-    if entrypoint is None and notebook_arg:
-        name_hint = Path(notebook_arg).name  # always use filename only
-        match = next((p for p in all_notebooks if p.name == name_hint), None)
-        if match:
-            entrypoint = match
-            print(f"[floability] Found notebook: {entrypoint.name}")
-        else:
-            print(
-                f"[floability] Specified notebook '{name_hint}' not found in "
-                f"workflow/, auto-detecting"
-            )
-
-    # ── Priority 4: auto-detect (notebooks first, scripts as fallback) ────────
+    # ── Priority 2: auto-detect one eligible entrypoint ──────────────────────
     if entrypoint is None:
-        if all_notebooks:
-            entrypoint = all_notebooks[0]
-            print(f"[floability] Auto-detected notebook: {entrypoint.name}")
-        elif all_scripts:
-            entrypoint = all_scripts[0]
-            print(f"[floability] No notebook found, auto-detected script: {entrypoint.name}")
+        if len(eligible) == 1:
+            entrypoint = eligible[0]
+            print(f"[floability] Auto-detected entrypoint: {entrypoint.name}")
+        elif len(eligible) > 1:
+            backpack_name = (
+                Path(args.backpack).resolve().name
+                if getattr(args, "backpack", None)
+                else None
+            )
+            named_matches = [
+                path for path in eligible if path.stem == backpack_name
+            ]
+            if len(named_matches) == 1:
+                entrypoint = named_matches[0]
+                print(
+                    "[floability] Auto-detected backpack-named entrypoint: "
+                    f"{entrypoint.name}"
+                )
+            else:
+                names = ", ".join(path.name for path in eligible)
+                raise RuntimeError(
+                    f"Multiple workflow entrypoints found: {names}. "
+                    "Select one with --entrypoint."
+                )
 
-    if entrypoint is None and mode == "execute":
+    if entrypoint is None and mode == "run" and all_candidates:
+        raise _run_entrypoint_error(args, all_candidates[0])
+
+    if entrypoint is None:
+        expected = ".ipynb" if mode == "run" else ".ipynb, .py, or .sh"
         raise RuntimeError(
             "No workflow entrypoint found in workflow directory. "
-            "Expected a .ipynb notebook or .py script."
+            f"Expected {expected}."
         )
 
-    entrypoint_path = str(entrypoint) if entrypoint else None
-
-    # ── Warn when script-mode intent conflicts with interactive 'run' command ──
-    if mode == "run":
-        is_script_intent = (
-            prefer_python
-            or (entry_file is not None and entry_file.endswith(".py"))
-            or (entrypoint_path is not None and entrypoint_path.endswith(".py"))
-        )
-        if is_script_intent:
-            _warn_script_with_run_mode(args, entrypoint_path)
-
-    return entrypoint_path
+    return str(entrypoint)
 
 
 def _run_interactive(
@@ -723,18 +711,22 @@ def _run_interactive(
     cleanup_manager: CleanupManager,
     factory_proc: Optional[Any],
     perf: PerformanceTracker,
-    notebook_path: Optional[str],
+    entrypoint_path: Optional[str],
 ) -> None:
     """Run interactive mode with JupyterLab."""
     interrupted = False
     print("[floability] JupyterLab startup")
     # JupyterLab can only open a notebook at startup; pass None for .py entrypoints
     # so it launches in the workflow directory without trying to open the script.
-    nb_for_jupyter = notebook_path if notebook_path and notebook_path.endswith(".ipynb") else None
-    if notebook_path and not nb_for_jupyter:
-        print(f"[floability] Script entrypoint detected ({Path(notebook_path).name}); "
+    nb_for_jupyter = (
+        entrypoint_path
+        if entrypoint_path and entrypoint_path.endswith(".ipynb")
+        else None
+    )
+    if entrypoint_path and not nb_for_jupyter:
+        print(f"[floability] Script entrypoint detected ({Path(entrypoint_path).name}); "
               "JupyterLab will open in the workflow directory — run the script manually "
-              "or use execute mode (floability run --execute).")
+              "or use 'floability execute'.")
     jupyter_proc = start_jupyterlab(
         notebook_path=nb_for_jupyter,
         port=getattr(args, "jupyter_port", 8888),
@@ -779,47 +771,38 @@ def _execute_batch(
     env_ctx: EnvironmentContext,
     cleanup_manager: CleanupManager,
     perf: PerformanceTracker,
-    notebook_path: Optional[str],
+    entrypoint_path: Optional[str],
 ) -> None:
     """Execute batch mode (notebook or python script).
 
     Dispatch rules
     --------------
-    1. notebook_path ends with .py  → execute_python_script (auto-detected script backpack)
-    2. --prefer-python + --python-script  → execute_python_script (legacy explicit flag)
-    3. notebook_path ends with .ipynb  → execute_notebook
+    1. entrypoint_path ends with .py  → execute_python_script
+    2. entrypoint_path ends with .ipynb  → execute_notebook
     """
-    script_path = getattr(args, "python_script", None)
-    if ctx.is_new and script_path:
-        script_path = Path(script_path).name
-
     execution_success = False
 
     # Auto-detected .py entrypoint from the workflow directory
-    if notebook_path and notebook_path.endswith(".py"):
+    if entrypoint_path and entrypoint_path.endswith(".py"):
         print("[floability] Python script execution (auto-detected .py entrypoint)")
         execution_success = execute_python_script(
-            script_path=notebook_path,
+            script_path=entrypoint_path,
             run_dir=str(ctx.paths["logs"]),
             conda_env_dir=env_ctx.env_dir,
             working_dir=str(ctx.workflow_dir),
             extra_env=env_ctx.instance_env,
         )
-    elif getattr(args, "prefer_python", False) and script_path:
-        print("[floability] python script execution")
-        execution_success = execute_python_script(
-            script_path=script_path,
-            run_dir=str(ctx.paths["logs"]),
-            conda_env_dir=env_ctx.env_dir,
-            working_dir=str(ctx.workflow_dir),
-            extra_env=env_ctx.instance_env,
-        )
-    elif notebook_path:
+    elif entrypoint_path:
+        if entrypoint_path.endswith(".sh"):
+            raise RuntimeError(
+                "Shell entrypoints are valid for 'floability execute', but shell "
+                "execution is not implemented yet."
+            )
         print("[floability] notebook execution")
         if perf.enabled:
             perf.start_timer("notebook_execute_time")
         execution_success = execute_notebook(
-            notebook_path=notebook_path,
+            notebook_path=entrypoint_path,
             run_dir=str(ctx.paths["logs"]),
             conda_env_dir=env_ctx.env_dir,
             working_dir=str(ctx.workflow_dir),
@@ -832,7 +815,7 @@ def _execute_batch(
     else:
         print(
             "[floability] Error: nothing to execute — no notebook or Python script "
-            "found. Use --notebook, --python-script, or provide a backpack with a "
+            "found. Use --entrypoint or provide a backpack with a "
             "workflow/ entrypoint."
         )
 

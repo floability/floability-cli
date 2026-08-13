@@ -33,8 +33,6 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
         help="Path to worker-environment.yml (optional).",
     )
 
-    parser.add_argument("--notebook", help="Path to a .ipynb file (optional).")
-
     parser.add_argument(
         "--jupyter-port",
         type=int,
@@ -124,29 +122,15 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
     )
 
     parser.add_argument(
-        "--entry-file",
+        "--entrypoint",
         default=None,
         metavar="FILENAME",
         help=(
             "Filename of the workflow entrypoint inside the backpack's workflow/ directory "
             "(e.g. 'my_script.py' or 'my_notebook.ipynb'). "
-            "Takes precedence over --prefer-python and --notebook. "
             "Provide only the filename, not the full path."
         ),
     )
-    parser.add_argument(
-        "--prefer-python",
-        action="store_true",
-        help=(
-            "Prefer a Python script (.py) over a notebook (.ipynb) when both exist in "
-            "the workflow/ directory. Has no effect when --entry-file is provided."
-        ),
-    )
-    parser.add_argument(
-        "--python-script",
-        help="Path to a Python (.py) file to execute (optional). Legacy; prefer --entry-file.",
-    )
-
     parser.add_argument(
         "--measure-performance",
         action="store_true",
@@ -217,4 +201,3 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
         required=False,
         help="Port range for worker-worker transfers (e.g. 10000:11000). Passed as --transfer-port to vine_factory",
     )
-

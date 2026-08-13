@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
 from .instance_metadata import record_sync_manifest, compute_file_hash
 
@@ -165,34 +165,6 @@ def resolve_backpack_args(args) -> None:
             print(
                 f"[floability] Using worker environment from backpack: {args.worker_environment}"
             )
-
-    # Notebook / Python script selection
-    if not getattr(args, "notebook", None) and not getattr(args, "python_script", None):
-        workflow_dir = backpack_dir / "workflow"
-        notebooks = list(workflow_dir.glob("*.ipynb"))
-        scripts = list(workflow_dir.glob("*.py"))
-
-        prefer_python = getattr(args, "prefer_python", False)
-
-        def _pick_by_name(files: List[Path], stem: str) -> Path:
-            if len(files) == 1:
-                return files[0]
-            for f in files:
-                if f.stem == stem:
-                    return f
-            return files[0]
-
-        # Default: prefer notebook. With --prefer-python: prefer script.
-        if notebooks and not prefer_python:
-            args.notebook = str(_pick_by_name(notebooks, backpack_dir.stem))
-            print(f"[floability] Using notebook from backpack: {args.notebook}")
-        elif scripts:
-            args.python_script = str(_pick_by_name(scripts, backpack_dir.stem))
-            print(f"[floability] Using Python script from backpack: {args.python_script}")
-        elif notebooks:
-            # --prefer-python set but no scripts found; fall back to notebook
-            args.notebook = str(_pick_by_name(notebooks, backpack_dir.stem))
-            print(f"[floability] Using notebook from backpack: {args.notebook}")
 
     args.backpack_root = str(backpack_dir)
 

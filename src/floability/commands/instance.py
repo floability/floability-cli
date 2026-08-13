@@ -95,8 +95,6 @@ class InstanceCommand(BaseCommand):
             help="Enable performance measurements.",
         )
         # These will be auto-resolved from backpack
-        create_parser.add_argument("--notebook", help=argparse.SUPPRESS)
-        create_parser.add_argument("--python-script", help=argparse.SUPPRESS)
         create_parser.add_argument("--data-spec", help=argparse.SUPPRESS)
         create_parser.add_argument("--compute-spec", help=argparse.SUPPRESS)
 

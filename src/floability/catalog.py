@@ -13,7 +13,7 @@ def send_catalog_update(
     event: str = None,
     mode: str = None,
     backpack_name: str = None,
-    notebook_name: str = None,
+    entrypoint_name: str = None,
 ):
     """
     Send a catalog update for this Floability instance.
@@ -26,7 +26,7 @@ def send_catalog_update(
         "jupyter_port": jupyter_port,
         "run_dir": os.path.abspath(run_dir),
         "mode": mode if mode else "default",
-        "notebook_name": notebook_name if notebook_name else "none",
+        "entrypoint_name": entrypoint_name if entrypoint_name else "none",
         "backpack": backpack_name if backpack_name else "none",
         "port": -random.randint(
             30000, 60000

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -78,3 +80,23 @@ def test_metadata_can_record_interrupted_state(tmp_path):
     assert status["state"] == "interrupted"
     assert status["success"] is False
     assert status["error"] == "Interrupted by user"
+
+
+@pytest.mark.parametrize(
+    "removed_option",
+    ["--notebook", "--entry-file", "--workflow-entry", "--python-script"],
+)
+def test_removed_workflow_options_are_rejected(removed_option):
+    result = _run_installed_cli("run", removed_option, "workflow.ipynb")
+
+    assert result.returncode == 2
+    assert "unrecognized arguments" in result.stderr
+
+
+def _run_installed_cli(*args):
+    return subprocess.run(
+        [str(Path(sys.executable).with_name("floability")), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
