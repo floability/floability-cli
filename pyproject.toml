@@ -68,6 +68,10 @@ markers = [
   "network: tests requiring network access",
   "slow: long-running tests",
   "integration: full-system integration tests",
+  "push: required fast checks before every push",
+  "release: checks required before a release",
+  "data_cache: data-cache behavior tests",
+  "backpack: tests that validate or deploy a backpack",
 ]
 timeout = 300
 
