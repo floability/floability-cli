@@ -333,7 +333,15 @@ def _start_vine_factory(
     ]
 
     if manager_env_dir:
-        cmd = ["conda", "run", "--prefix", manager_env_dir, "--no-capture-output"] + cmd
+        cmd[0] = os.path.join(manager_env_dir, "bin", "vine_factory")
+        cmd = [
+            "conda",
+            "run",
+            "--prefix",
+            manager_env_dir,
+            "--no-capture-output",
+            *cmd,
+        ]
         print(f"[workers] Using manager env for vine_factory: {manager_env_dir}")
 
     for flag, key in [

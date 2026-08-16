@@ -121,15 +121,23 @@ def run_workflow(
         factory_proc = _start_workers(args, ctx, env_ctx, cleanup_manager)
 
         # Step 8: Run or execute
+        execution_success = True
         if mode == "run":
             _run_interactive(
                 args, ctx, env_ctx, cleanup_manager, factory_proc, perf, entrypoint_path
             )
         else:
-            _execute_batch(args, ctx, env_ctx, cleanup_manager, perf, entrypoint_path)
+            execution_success = _execute_batch(
+                args,
+                ctx,
+                env_ctx,
+                cleanup_manager,
+                perf,
+                entrypoint_path,
+            )
 
         print("[floability] Exiting run.")
-        return 0
+        return 0 if execution_success else 1
 
     except ValueError as e:
         print(f"[floability] Error: {e}")
@@ -174,10 +182,14 @@ def execute_python_script(
 
     if conda_env_dir:
         cmd = [
-            "conda", "run",
-            "--prefix", conda_env_dir,
+            "conda",
+            "run",
+            "--prefix",
+            conda_env_dir,
             "--no-capture-output",
-            "python", "-u", script_name,
+            os.path.join(conda_env_dir, "bin", "python"),
+            "-u",
+            script_name,
         ]
     else:
         cmd = ["python", "-u", script_name]
@@ -772,7 +784,7 @@ def _execute_batch(
     cleanup_manager: CleanupManager,
     perf: PerformanceTracker,
     entrypoint_path: Optional[str],
-) -> None:
+) -> bool:
     """Execute batch mode (notebook or python script).
 
     Dispatch rules
@@ -812,19 +824,23 @@ def _execute_batch(
             perf.end_timer(
                 "notebook_execute_time", "Time to execute notebook in execute mode"
             )
-    else:
-        print(
-            "[floability] Error: nothing to execute — no notebook or Python script "
-            "found. Use --entrypoint or provide a backpack with a "
-            "workflow/ entrypoint."
-        )
-
     if execution_success:
         _sync_outputs_if_needed(args, ctx)
 
     cleanup_manager.cleanup()
-    _finalize_run(args, ctx, perf, sync_outputs=False)
-    print("[floability] Exiting run.")
+    _finalize_run(
+        args,
+        ctx,
+        perf,
+        sync_outputs=False,
+        success=execution_success,
+        error=None if execution_success else "Workflow entrypoint execution failed",
+    )
+
+    if not execution_success:
+        print("[floability] Workflow entrypoint execution failed.")
+
+    return execution_success
 
 
 def _sync_outputs_if_needed(args: argparse.Namespace, ctx: InstanceContext) -> None:
@@ -1016,6 +1032,26 @@ def _build_instance_env(
 
     env = os.environ.copy()
 
+    # Do not leak the currently activated Conda environment into subprocesses
+    # that will be activated with ``conda run --prefix``. Keep CONDA_EXE and
+    # CONDA_PYTHON_EXE so the Conda installation itself remains discoverable.
+    for key in (
+        "CONDA_PREFIX",
+        "CONDA_DEFAULT_ENV",
+        "CONDA_PROMPT_MODIFIER",
+        "CONDA_SHLVL",
+        "_CE_CONDA",
+        "_CE_M",
+    ):
+        env.pop(key, None)
+
+    # Always resolve workflow tools from the selected backpack environment.
+    # Keeping an already-active environment ahead of this prefix can make the
+    # manager and workers use different Python versions.
+    if env_dir is not None:
+        env_bin = str(Path(env_dir) / "bin")
+        env["PATH"] = env_bin + os.pathsep + env.get("PATH", "")
+
     # -------------------------------------------------
     # TaskVine identity (per-instance)
     # -------------------------------------------------
@@ -1109,7 +1145,7 @@ def _display_env_info(env_dir: Optional[str], instance_env: dict) -> None:
                 "--prefix",
                 env_dir,
                 "--no-capture-output",
-                "python",
+                str(Path(env_dir) / "bin" / "python"),
                 "-c",
                 snippet,
             ],

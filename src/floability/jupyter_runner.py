@@ -92,8 +92,15 @@ def start_jupyterlab(
         print(f"[jupyter] Working directory: {working_dir}")
 
     if conda_env_dir:
-        # Use conda run to start JupyterLab within the extracted environment
-        cmd = ["conda", "run", "--prefix", conda_env_dir, "--no-capture-output"] + cmd
+        cmd[0] = os.path.join(conda_env_dir, "bin", "jupyter-lab")
+        cmd = [
+            "conda",
+            "run",
+            "--prefix",
+            conda_env_dir,
+            "--no-capture-output",
+            *cmd,
+        ]
 
     try:
         stdout_file = os.path.join(run_dir, "jupyterlab.stdout")
@@ -151,13 +158,20 @@ def execute_notebook(
     ]
 
     if conda_env_dir:
-        # Use conda run to start JupyterLab within the extracted environment
-        cmd = ["conda", "run", "--prefix", conda_env_dir, "--no-capture-output"] + cmd
+        cmd = [
+            "conda",
+            "run",
+            "--prefix",
+            conda_env_dir,
+            "--no-capture-output",
+            os.path.join(conda_env_dir, "bin", "jupyter-nbconvert"),
+            *cmd[2:],
+        ]
 
     try:
-        stdout_file = os.path.join(run_dir, "jupyterlab.stdout")
+        stdout_file = os.path.join(run_dir, "notebook-execution.log")
 
-        print(f"[jupyter] JupyterLab stdout: {os.path.abspath(stdout_file)}")
+        print(f"[jupyter] Notebook execution log: {os.path.abspath(stdout_file)}")
 
         if working_dir:
             print(f"[jupyter] Executing notebook from working directory: {working_dir}")
