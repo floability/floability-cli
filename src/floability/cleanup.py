@@ -18,10 +18,12 @@ class CleanupManager:
 
     def __init__(self):
         self.subprocesses = []
+        self.process_groups = {}
         self.directories = []
 
     def register_subprocess(self, proc):
         self.subprocesses.append(proc)
+        self.process_groups[id(proc)] = os.getpgid(proc.pid)
 
     def register_directory(self, directory):
         self.directories.append(directory)
@@ -31,15 +33,26 @@ class CleanupManager:
             "[cleanup] Sending SIGINT to all subprocesses so they can do their own cleanup..."
         )
 
+        # Capture process groups at registration time. A wrapper such as
+        # ``conda run`` can exit before its children, making proc.poll() and
+        # os.getpgid(proc.pid) insufficient to determine whether the group is
+        # still alive.
+        def process_group_exists(pgid):
+            try:
+                os.killpg(pgid, 0)
+                return True
+            except ProcessLookupError:
+                return False
+            except PermissionError:
+                return True
+
         # 1) Send SIGINT
         for proc in self.subprocesses:
-            if proc.poll() is None:  # still running
-                print(
-                    f"[cleanup] SIGINT -> pid={proc.pid}, pgid={os.getpgid(proc.pid)}"
-                )
+            pgid = self.process_groups.get(id(proc))
+            if pgid is not None and process_group_exists(pgid):
+                print(f"[cleanup] SIGINT -> pid={proc.pid}, pgid={pgid}")
                 try:
-                    # proc.send_signal(signal.SIGINT)
-                    os.killpg(os.getpgid(proc.pid), signal.SIGINT)
+                    os.killpg(pgid, signal.SIGINT)
                 except Exception as e:
                     print(
                         f"[cleanup] Warning: could not send SIGINT to pid={proc.pid}: {e}"
@@ -48,15 +61,16 @@ class CleanupManager:
         # 2) Give them a moment to exit
         time.sleep(2)
 
-        # 3) Anyone still running, we call terminate()
+        # 3) Terminate any surviving process group, even if its original
+        # wrapper/leader has already exited.
         for proc in self.subprocesses:
-            if proc.poll() is None:
+            pgid = self.process_groups.get(id(proc))
+            if pgid is not None and process_group_exists(pgid):
                 print(
-                    f"[cleanup] Process pid={proc.pid} still alive; calling terminate()"
+                    f"[cleanup] Process group {pgid} still alive; sending SIGTERM"
                 )
                 try:
-                    # proc.terminate()
-                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                    os.killpg(pgid, signal.SIGTERM)
                 except Exception as e:
                     print(f"[cleanup] Warning: could not terminate pid={proc.pid}: {e}")
 

@@ -204,6 +204,7 @@ def extract_env_to_instance(
         raise RuntimeError(f"Error extracting environment: {e}")
 
     try:
+        conda_unpack_path = os.path.join(env_dir, "bin", "conda-unpack")
         subprocess.run(
             [
                 "conda",
@@ -211,7 +212,7 @@ def extract_env_to_instance(
                 "--prefix",
                 env_dir,
                 "--no-capture-output",
-                "conda-unpack",
+                conda_unpack_path,
             ],
             check=True,
         )

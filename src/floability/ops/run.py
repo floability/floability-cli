@@ -181,13 +181,14 @@ def execute_python_script(
     print(f"[floability] Output log: {log_file}")
 
     if conda_env_dir:
+        python_path = os.path.join(conda_env_dir, "bin", "python")
         cmd = [
             "conda",
             "run",
             "--prefix",
             conda_env_dir,
             "--no-capture-output",
-            os.path.join(conda_env_dir, "bin", "python"),
+            python_path,
             "-u",
             script_name,
         ]
@@ -762,10 +763,13 @@ def _run_interactive(
                 break
             if jupyter_proc is not None and jupyter_proc.poll() is not None:
                 print("[floability] JupyterLab ended.")
+                break
     except KeyboardInterrupt:
         interrupted = True
         raise
     finally:
+        if not interrupted:
+            cleanup_manager.cleanup()
         _finalize_run(
             args,
             ctx,
@@ -997,13 +1001,15 @@ def _get_env_python_version(prefix: str) -> str:
     Query the target conda prefix for its Python version.
     Returns string like '3.14'
     """
+    python_path = str(Path(prefix) / "bin" / "python")
     result = subprocess.run(
         [
             "conda",
             "run",
             "--prefix",
             str(prefix),
-            "python",
+            "--no-capture-output",
+            python_path,
             "-c",
             "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
         ],

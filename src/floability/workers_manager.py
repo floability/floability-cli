@@ -322,8 +322,7 @@ def _start_vine_factory(
     instance_env: Optional[Dict] = None,
 ) -> object:
     """Launch vine_factory with settings from cfg. Returns a Popen handle."""
-    cmd = [
-        "vine_factory",
+    vine_factory_args = [
         f"-T{cfg['batch_type']}",
         f"--scratch-dir={scratch_dir}",
         f"--manager-name={manager_name}",
@@ -331,18 +330,6 @@ def _start_vine_factory(
         f"--max-workers={cfg['max_workers']}",
         f"--cores={cfg['cores']}",
     ]
-
-    if manager_env_dir:
-        cmd[0] = os.path.join(manager_env_dir, "bin", "vine_factory")
-        cmd = [
-            "conda",
-            "run",
-            "--prefix",
-            manager_env_dir,
-            "--no-capture-output",
-            *cmd,
-        ]
-        print(f"[workers] Using manager env for vine_factory: {manager_env_dir}")
 
     for flag, key in [
         ("--disk", "disk"),
@@ -356,14 +343,29 @@ def _start_vine_factory(
         ("--transfer-port", "transfer_port"),
     ]:
         if cfg.get(key):
-            cmd.append(f"{flag}={cfg[key]}")
+            vine_factory_args.append(f"{flag}={cfg[key]}")
 
     if cfg.get("poncho_env"):
-        cmd.append(f"--poncho-env={cfg['poncho_env']}")
+        vine_factory_args.append(f"--poncho-env={cfg['poncho_env']}")
     if cfg.get("batch_options"):
-        cmd.append(f"--batch-options={cfg['batch_options']}")
+        vine_factory_args.append(f"--batch-options={cfg['batch_options']}")
     if cfg.get("debug_workers"):
-        cmd.append("--debug-workers")
+        vine_factory_args.append("--debug-workers")
+
+    if manager_env_dir:
+        vine_factory_path = os.path.join(manager_env_dir, "bin", "vine_factory")
+        cmd = [
+            "conda",
+            "run",
+            "--prefix",
+            manager_env_dir,
+            "--no-capture-output",
+            vine_factory_path,
+            *vine_factory_args,
+        ]
+        print(f"[workers] Using manager env for vine_factory: {manager_env_dir}")
+    else:
+        cmd = ["vine_factory", *vine_factory_args]
 
     stdout_file = os.path.join(run_dir, "vine_factory.stdout")
     print(f"[workers] Launching: {' '.join(cmd)}")

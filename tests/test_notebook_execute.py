@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import signal
 from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from floability import jupyter_runner
+from floability.cleanup import CleanupManager
 from floability.ops import run as run_ops
 
 
@@ -23,10 +25,22 @@ class _Perf:
 
 
 class _Process:
+    pid = 1234
     returncode = 0
 
     def wait(self):
         return self.returncode
+
+
+class _Thread:
+    instances = []
+
+    def __init__(self, **_kwargs):
+        self.options = _kwargs
+        self.instances.append(self)
+
+    def start(self):
+        pass
 
 
 def _context(tmp_path: Path) -> run_ops.InstanceContext:
@@ -119,6 +133,50 @@ def test_execute_notebook_uses_selected_environment(monkeypatch, tmp_path):
     assert (tmp_path / "notebook-execution.log").is_file()
 
 
+def test_start_jupyterlab_uses_dedicated_binary_without_lab_argument(
+    monkeypatch, tmp_path
+):
+    launches = []
+    _Thread.instances.clear()
+    monkeypatch.setattr(
+        jupyter_runner.subprocess,
+        "Popen",
+        lambda command, **kwargs: launches.append((command, kwargs)) or _Process(),
+    )
+    monkeypatch.setattr(jupyter_runner.threading, "Thread", _Thread)
+    monkeypatch.setattr(jupyter_runner.os, "getpgid", lambda pid: pid)
+
+    process = jupyter_runner.start_jupyterlab(
+        notebook_path="workflow.ipynb",
+        port=8899,
+        run_dir=str(tmp_path),
+        conda_env_dir="/backpack/env",
+        working_dir=str(tmp_path),
+        extra_env={"VINE_MANAGER_NAME": "test-manager"},
+    )
+
+    assert process.pid == 1234
+    command, popen_kwargs = launches[0]
+    assert command == [
+        "conda",
+        "run",
+        "--prefix",
+        "/backpack/env",
+        "--no-capture-output",
+        "/backpack/env/bin/jupyter-lab",
+        "--no-browser",
+        "--port",
+        "8899",
+        "--ip",
+        "0.0.0.0",
+        "--allow-root",
+        "workflow.ipynb",
+    ]
+    assert popen_kwargs["env"] == {"VINE_MANAGER_NAME": "test-manager"}
+    assert popen_kwargs["start_new_session"] is True
+    assert _Thread.instances[0].options["daemon"] is True
+
+
 def test_instance_environment_puts_backpack_tools_first(monkeypatch, tmp_path):
     ctx = _context(tmp_path)
     monkeypatch.setenv("PATH", "/outer/env/bin:/usr/bin")
@@ -151,3 +209,40 @@ def test_instance_environment_puts_backpack_tools_first(monkeypatch, tmp_path):
     assert env["VINE_MANAGER_NAME"] == "test-manager"
     assert env["VINE_MANAGER_PORTS"] == "9123,9150"
     assert env["WORKFLOW_SETTING"] == "enabled"
+
+
+def test_cleanup_terminates_process_group_after_wrapper_exits(monkeypatch):
+    class ExitedWrapper:
+        pid = 1234
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    group_exists = True
+    signals = []
+
+    def fake_killpg(pgid, sig):
+        nonlocal group_exists
+        if sig == 0:
+            if not group_exists:
+                raise ProcessLookupError
+            return
+        signals.append((pgid, sig))
+        if sig == signal.SIGTERM:
+            group_exists = False
+
+    monkeypatch.setattr("floability.cleanup.os.getpgid", lambda _pid: 4321)
+    monkeypatch.setattr("floability.cleanup.os.killpg", fake_killpg)
+    monkeypatch.setattr("floability.cleanup.time.sleep", lambda _seconds: None)
+
+    cleanup = CleanupManager()
+    cleanup.register_subprocess(ExitedWrapper())
+    cleanup.cleanup()
+
+    assert signals == [
+        (4321, signal.SIGINT),
+        (4321, signal.SIGTERM),
+    ]

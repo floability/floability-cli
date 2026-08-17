@@ -70,9 +70,7 @@ def start_jupyterlab(
     extra_env: dict = None,
 ):
 
-    cmd = [
-        "jupyter",
-        "lab",
+    jupyterlab_args = [
         "--no-browser",
         "--port",
         str(port),
@@ -81,7 +79,7 @@ def start_jupyterlab(
         "--allow-root",
     ]
     if notebook_path:
-        cmd.append(notebook_path)
+        jupyterlab_args.append(notebook_path)
 
     print(
         f"[jupyter] Starting JupyterLab on port {port} if available. Correct port will be displayed after starting."
@@ -92,15 +90,18 @@ def start_jupyterlab(
         print(f"[jupyter] Working directory: {working_dir}")
 
     if conda_env_dir:
-        cmd[0] = os.path.join(conda_env_dir, "bin", "jupyter-lab")
+        jupyterlab_path = os.path.join(conda_env_dir, "bin", "jupyter-lab")
         cmd = [
             "conda",
             "run",
             "--prefix",
             conda_env_dir,
             "--no-capture-output",
-            *cmd,
+            jupyterlab_path,
+            *jupyterlab_args,
         ]
+    else:
+        cmd = ["jupyter", "lab", *jupyterlab_args]
 
     try:
         stdout_file = os.path.join(run_dir, "jupyterlab.stdout")
@@ -118,7 +119,7 @@ def start_jupyterlab(
                 stderr=stdout,
                 text=True,
                 cwd=working_dir,
-                # preexec_fn=os.setsid,
+                start_new_session=True,
             )
 
             print(
@@ -126,7 +127,9 @@ def start_jupyterlab(
             )
 
             monitor_thread = threading.Thread(
-                target=monitor_stdout, args=(stdout_file,)
+                target=monitor_stdout,
+                args=(stdout_file,),
+                daemon=True,
             )
             monitor_thread.start()
 
@@ -147,9 +150,7 @@ def execute_notebook(
     extra_env: dict = None,
 ):
 
-    cmd = [
-        "jupyter",
-        "nbconvert",
+    nbconvert_args = [
         "--to",
         "notebook",
         "--execute",
@@ -158,15 +159,18 @@ def execute_notebook(
     ]
 
     if conda_env_dir:
+        nbconvert_path = os.path.join(conda_env_dir, "bin", "jupyter-nbconvert")
         cmd = [
             "conda",
             "run",
             "--prefix",
             conda_env_dir,
             "--no-capture-output",
-            os.path.join(conda_env_dir, "bin", "jupyter-nbconvert"),
-            *cmd[2:],
+            nbconvert_path,
+            *nbconvert_args,
         ]
+    else:
+        cmd = ["jupyter", "nbconvert", *nbconvert_args]
 
     try:
         stdout_file = os.path.join(run_dir, "notebook-execution.log")
