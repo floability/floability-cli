@@ -146,17 +146,17 @@ def run_workflow(
     except ValueError as e:
         print(f"[floability] Error: {e}")
         if "ctx" in locals():
-            _cleanup_and_abort(cleanup_manager, ctx)
+            _cleanup_and_abort(cleanup_manager, ctx, error=str(e))
         return 1
     except RuntimeError as e:
         print(f"[floability] Error: {e}")
         if "ctx" in locals():
-            _cleanup_and_abort(cleanup_manager, ctx)
+            _cleanup_and_abort(cleanup_manager, ctx, error=str(e))
         return 1
     except Exception as e:
         print(f"[floability] Unexpected error: {e}")
         if "ctx" in locals():
-            _cleanup_and_abort(cleanup_manager, ctx)
+            _cleanup_and_abort(cleanup_manager, ctx, error=str(e))
         raise
 
 
@@ -1254,8 +1254,23 @@ def _display_env_info(env_dir: Optional[str], instance_env: dict) -> None:
 def _cleanup_and_abort(
     cleanup_manager: CleanupManager,
     ctx: InstanceContext,
+    error: str,
 ) -> None:
-    """Cleanup resources and abort run."""
-    cleanup_manager.cleanup()
-    if ctx.lock_acquired:
-        release_instance_lock(ctx.root)
+    """Clean up a failed run, finalize its metadata, and release its lock."""
+    try:
+        cleanup_manager.cleanup()
+    except Exception as cleanup_error:
+        print(f"[floability] Warning: cleanup after failure was incomplete: {cleanup_error}")
+
+    try:
+        finalize_instance_metadata(
+            ctx.metadata_file,
+            success=False,
+            error=error,
+            state="failed",
+        )
+    except Exception as metadata_error:
+        print(f"[floability] Warning: Could not finalize failed metadata: {metadata_error}")
+    finally:
+        if ctx.lock_acquired:
+            release_instance_lock(ctx.root)

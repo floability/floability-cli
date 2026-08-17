@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import signal
 from argparse import Namespace
 from pathlib import Path
@@ -22,6 +23,9 @@ class _Cleanup:
 
 class _Perf:
     enabled = False
+
+    def start_timer(self, *_args):
+        pass
 
 
 class _Process:
@@ -46,18 +50,103 @@ class _Thread:
 def _context(tmp_path: Path) -> run_ops.InstanceContext:
     workflow = tmp_path / "workflow"
     logs = tmp_path / "logs"
+    metrics = tmp_path / "metrics"
     metadata = tmp_path / "metadata"
     workflow.mkdir()
     logs.mkdir()
+    metrics.mkdir()
     metadata.mkdir()
     return run_ops.InstanceContext(
         root=tmp_path,
-        paths={"workflow": workflow, "logs": logs, "metadata": metadata},
+        paths={
+            "workflow": workflow,
+            "logs": logs,
+            "metrics": metrics,
+            "metadata": metadata,
+        },
         metadata_file=metadata / "run.json",
         workflow_dir=workflow,
         lock_acquired=False,
         is_new=False,
     )
+
+
+@pytest.mark.parametrize("failure_type", [ValueError, RuntimeError])
+def test_setup_failure_finalizes_metadata_and_returns_one(
+    monkeypatch, tmp_path, failure_type
+):
+    ctx = _context(tmp_path)
+    ctx.lock_acquired = True
+    ctx.is_new = True
+    ctx.metadata_file.write_text(
+        json.dumps({"status": {"state": "initializing"}}),
+        encoding="utf-8",
+    )
+    cleanup = _Cleanup()
+    released = []
+    args = Namespace(base_dir=str(tmp_path), manager_name="test-manager")
+
+    def fail_during_setup(*_args):
+        raise failure_type("setup failed")
+
+    monkeypatch.setattr(run_ops, "_is_new_instance_required", lambda _args: True)
+    monkeypatch.setattr(
+        run_ops,
+        "_prepare_new_instance",
+        lambda _args, _mode: ctx,
+    )
+    monkeypatch.setattr(run_ops, "PerformanceTracker", lambda **_kwargs: _Perf())
+    monkeypatch.setattr(run_ops, "_register_new_instance", lambda *_args: None)
+    monkeypatch.setattr(run_ops, "_materialize_data", fail_during_setup)
+    monkeypatch.setattr(
+        run_ops,
+        "release_instance_lock",
+        lambda root: released.append(root),
+    )
+
+    assert run_ops.run_workflow(args, cleanup, mode="execute") == 1
+
+    status = json.loads(ctx.metadata_file.read_text(encoding="utf-8"))["status"]
+    assert status["state"] == "failed"
+    assert status["success"] is False
+    assert status["error"] == "setup failed"
+    assert status["completed_at"]
+    assert cleanup.calls == 1
+    assert released == [ctx.root]
+
+
+def test_unexpected_setup_failure_finalizes_metadata_before_reraising(
+    monkeypatch, tmp_path
+):
+    ctx = _context(tmp_path)
+    ctx.metadata_file.write_text(
+        json.dumps({"status": {"state": "initializing"}}),
+        encoding="utf-8",
+    )
+    cleanup = _Cleanup()
+    args = Namespace(base_dir=str(tmp_path), manager_name="test-manager")
+
+    def fail_during_setup(*_args):
+        raise FileNotFoundError("tool missing")
+
+    monkeypatch.setattr(run_ops, "_is_new_instance_required", lambda _args: True)
+    monkeypatch.setattr(
+        run_ops,
+        "_prepare_new_instance",
+        lambda _args, _mode: ctx,
+    )
+    monkeypatch.setattr(run_ops, "PerformanceTracker", lambda **_kwargs: _Perf())
+    monkeypatch.setattr(run_ops, "_register_new_instance", lambda *_args: None)
+    monkeypatch.setattr(run_ops, "_materialize_data", fail_during_setup)
+
+    with pytest.raises(FileNotFoundError, match="tool missing"):
+        run_ops.run_workflow(args, cleanup, mode="execute")
+
+    status = json.loads(ctx.metadata_file.read_text(encoding="utf-8"))["status"]
+    assert status["state"] == "failed"
+    assert status["success"] is False
+    assert status["error"] == "tool missing"
+    assert cleanup.calls == 1
 
 
 @pytest.mark.parametrize("notebook_success", [True, False])
