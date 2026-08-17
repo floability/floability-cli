@@ -36,6 +36,12 @@ class _InterruptCommand(_StatusCommand):
         raise KeyboardInterrupt
 
 
+class _CleanedInterruptCommand(_StatusCommand):
+    def execute(self, args, cleanup_manager=None):
+        cleanup_manager.cleanup()
+        raise KeyboardInterrupt
+
+
 @pytest.fixture
 def isolated_cli(monkeypatch):
     monkeypatch.setattr(cli, "install_signal_handlers", lambda _manager: None)
@@ -63,6 +69,20 @@ def test_cli_returns_130_and_cleans_up_on_interrupt(
     assert cli.main() == 130
     assert cleaned == [True]
     assert "Interrupted by user" in capsys.readouterr().out
+
+
+def test_cli_does_not_repeat_completed_cleanup(monkeypatch, isolated_cli):
+    cleaned = []
+    monkeypatch.setattr(cli, "get_all_commands", lambda: [_CleanedInterruptCommand])
+
+    def mark_cleaned(manager):
+        manager._cleanup_complete = True
+        cleaned.append(True)
+
+    monkeypatch.setattr(cli.CleanupManager, "cleanup", mark_cleaned)
+
+    assert cli.main() == 130
+    assert cleaned == [True]
 
 
 def test_metadata_can_record_interrupted_state(tmp_path):

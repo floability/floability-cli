@@ -5,8 +5,19 @@ These functions add commonly-used argument groups to parsers.
 """
 
 import argparse
+from pathlib import Path
 
 from ..utils import normalize_manager_ports, normalize_worker_transfer_ports
+
+
+def _workflow_relative_path(value: str) -> str:
+    """Validate a path that must remain relative to workflow/."""
+    path = Path(value)
+    if not value or path.is_absolute() or ".." in path.parts:
+        raise argparse.ArgumentTypeError(
+            "must be a relative path inside the workflow directory"
+        )
+    return value
 
 
 def add_execution_args(parser: argparse.ArgumentParser) -> None:
@@ -86,7 +97,22 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--no-update-backpack",
         action="store_true",
-        help="Disable syncing outputs from instance back to backpack (default: sync enabled).",
+        help=(
+            "Disable syncing workflow files from instance back to backpack "
+            "(default: sync enabled)."
+        ),
+    )
+
+    parser.add_argument(
+        "--sync-path",
+        action="append",
+        default=[],
+        type=_workflow_relative_path,
+        metavar="PATH",
+        help=(
+            "Also copy a generated file or directory from the instance workflow "
+            "back to the backpack; relative to workflow/ and repeatable."
+        ),
     )
 
     parser.add_argument(

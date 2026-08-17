@@ -9,29 +9,34 @@ This module centralizes logic used by both `ops/run.py` and
 
 from __future__ import annotations
 
-from pathlib import Path
+import os
 import shutil
-from typing import Optional, Dict, Any
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Any, Dict, Optional
 
-from .instance_metadata import record_sync_manifest, compute_file_hash
+from .instance_metadata import compute_file_hash, record_sync_manifest
 
 
-def sync_outputs_to_backpack(
+def sync_workflow_to_backpack(
     workflow_dir: str,
     backpack_dir: str,
-    metadata_dir: Optional[str] = None,
+    copied_paths: Iterable[str | Path] | None = None,
+    extra_paths: Iterable[str | Path] | None = None,
+    metadata_dir: str | None = None,
     verbose: bool = True,
 ) -> bool:
-    """Sync executed notebooks and outputs/ back to the backpack.
+    """Copy selected instance workflow files back to the backpack.
 
-    - Copies executed notebooks (*.ipynb) from the instance workflow dir to the backpack workflow dir
-    - Recursively copies the workflow/outputs/ directory if present
-    - Records a sync manifest into metadata/sync.json when metadata_dir is provided
+    ``copied_paths`` contains files originally copied from the backpack. Paths in
+    ``extra_paths`` are explicit user requests and may name a file or directory.
+    Every path must remain within both workflow directory boundaries. Symlinks
+    are skipped so synchronization never follows a link outside either tree.
 
     Returns True if any files were synced, otherwise False.
     """
-    workflow_path = Path(workflow_dir)
-    backpack_path = Path(backpack_dir)
+    workflow_path = Path(workflow_dir).resolve()
+    backpack_path = Path(backpack_dir).resolve()
 
     if not workflow_path.exists():
         print(
@@ -45,55 +50,41 @@ def sync_outputs_to_backpack(
         )
         return False
 
-    print(f"[floability] Syncing outputs from instance to backpack...")
+    print("[floability] Syncing workflow files from instance to backpack...")
     print(f"[floability]   Source: {workflow_dir}")
     print(f"[floability]   Target: {backpack_dir}")
 
-    synced_files_manifest = []
+    selected_files: dict[Path, Path] = {}
+    requested_paths = [*(copied_paths or ()), *(extra_paths or ())]
 
-    # 1. Sync executed notebooks
-    print(f"[floability]   Syncing notebooks...")
-    for notebook in workflow_path.glob("*.ipynb"):
-        target = backpack_path / notebook.name
+    for requested_path in requested_paths:
         try:
-            shutil.copy2(notebook, target)
+            relative_path = _validate_sync_path(requested_path)
+            source = workflow_path / relative_path
+            _collect_sync_files(source, workflow_path, selected_files)
+        except ValueError as e:
+            print(f"[floability]   Skipping sync path '{requested_path}': {e}")
+
+    synced_files_manifest = []
+    for relative_path, source in sorted(
+        selected_files.items(), key=lambda item: str(item[0])
+    ):
+        target = backpack_path / relative_path
+        try:
+            _validate_sync_destination(target, backpack_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
             file_info = {
-                "path": notebook.name,
-                "type": "notebook",
-                "size": notebook.stat().st_size,
-                "hash": compute_file_hash(notebook),
+                "path": str(relative_path),
+                "type": "workflow",
+                "size": source.stat().st_size,
+                "hash": compute_file_hash(source),
             }
             synced_files_manifest.append(file_info)
             if verbose:
-                print(f"[floability]     ✓ {notebook.name}")
-        except Exception as e:
-            print(f"[floability]     ✗ Failed to sync {notebook.name}: {e}")
-
-    # 2. Sync workflow/outputs/
-    outputs_dir = workflow_path / "outputs"
-    if outputs_dir.exists() and outputs_dir.is_dir():
-        print(f"[floability]   Syncing outputs/ directory...")
-        target_outputs = backpack_path / "outputs"
-        target_outputs.mkdir(parents=True, exist_ok=True)
-
-        for item in outputs_dir.rglob("*"):
-            if item.is_file():
-                rel_path = item.relative_to(outputs_dir)
-                target = target_outputs / rel_path
-                try:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(item, target)
-                    file_info = {
-                        "path": f"outputs/{rel_path}",
-                        "type": "output",
-                        "size": item.stat().st_size,
-                        "hash": compute_file_hash(item),
-                    }
-                    synced_files_manifest.append(file_info)
-                    if verbose:
-                        print(f"[floability]     ✓ outputs/{rel_path}")
-                except Exception as e:
-                    print(f"[floability]     ✗ Failed to sync outputs/{rel_path}: {e}")
+                print(f"[floability]     ✓ {relative_path}")
+        except (OSError, ValueError) as e:
+            print(f"[floability]     ✗ Failed to sync {relative_path}: {e}")
 
     # Record sync manifest
     if metadata_dir and synced_files_manifest:
@@ -113,12 +104,74 @@ def sync_outputs_to_backpack(
 
     if synced_files_manifest:
         print(
-            f"[floability] Successfully synced {len(synced_files_manifest)} file(s) to backpack"
+            "[floability] Successfully synced "
+            f"{len(synced_files_manifest)} file(s) to backpack"
         )
         return True
     else:
-        print(f"[floability] No files to sync")
+        print("[floability] No files to sync")
         return False
+
+
+def _validate_sync_path(path_value: str | Path) -> Path:
+    """Return a safe path relative to workflow/, or raise ValueError."""
+    path = Path(path_value)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError("path must remain inside the workflow directory")
+    return path
+
+
+def _is_within(path: Path, directory: Path) -> bool:
+    try:
+        path.relative_to(directory)
+        return True
+    except ValueError:
+        return False
+
+
+def _collect_sync_files(
+    source: Path,
+    workflow_path: Path,
+    selected_files: dict[Path, Path],
+) -> None:
+    """Add a requested file or directory without following symlinks."""
+    if source.is_symlink():
+        raise ValueError("symbolic links are not synchronized")
+    if not source.exists():
+        raise ValueError("path does not exist in the instance workflow")
+    if not _is_within(source.resolve(), workflow_path):
+        raise ValueError("resolved path leaves the instance workflow directory")
+
+    if source.is_file():
+        selected_files[source.relative_to(workflow_path)] = source
+        return
+    if not source.is_dir():
+        raise ValueError("path is not a regular file or directory")
+
+    for current_root, directory_names, file_names in os.walk(
+        source, followlinks=False
+    ):
+        current_path = Path(current_root)
+        directory_names[:] = [
+            name
+            for name in directory_names
+            if not (current_path / name).is_symlink()
+        ]
+        for file_name in file_names:
+            item = current_path / file_name
+            if item.is_symlink():
+                continue
+            if not _is_within(item.resolve(), workflow_path):
+                continue
+            selected_files[item.relative_to(workflow_path)] = item
+
+
+def _validate_sync_destination(target: Path, backpack_path: Path) -> None:
+    """Ensure copying to target cannot escape the backpack workflow tree."""
+    if target.is_symlink():
+        raise ValueError("destination is a symbolic link")
+    if not _is_within(target.parent.resolve(), backpack_path):
+        raise ValueError("destination leaves the backpack workflow directory")
 
 
 def resolve_backpack_args(args) -> None:

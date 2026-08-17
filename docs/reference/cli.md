@@ -87,8 +87,15 @@ floability run --instance <instance-name-or-path>
 **Other:**
 
 - `--measure-performance`: collect timing metrics and write a report to `metrics/`
-- `--no-update-backpack`: disable syncing executed notebook back to the backpack
+- `--no-update-backpack`: disable copying workflow files back to the backpack
+- `--sync-path PATH`: additionally copy a generated file or directory relative to
+  `workflow/`; repeat the option to select multiple paths
 - `--per-instance-env`: extract a private conda env per instance instead of sharing a read-only base
+
+By default, Floability copies back only files that originally came from the
+backpack's `workflow/` directory. This includes saved notebook changes when an
+interactive run is stopped with `Ctrl+C`. Staged data and newly generated files
+are not copied unless their relative paths are selected with `--sync-path`.
 
 ---
 
@@ -103,7 +110,7 @@ floability execute --backpack <backpack-root>
 `execute` accepts the same options as `run`. The difference in behavior:
 - No JupyterLab is started
 - The notebook or script runs to completion, then exits
-- Outputs are synced back to the backpack on success
+- Original workflow files are copied back to the backpack on success
 
 ---
 

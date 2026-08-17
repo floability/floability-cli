@@ -224,7 +224,7 @@ Registry details and storage location are documented in [Instance Registry](../r
 During execution, Floability may also write:
 
 - `metadata/workers.json` for worker process state
-- sync metadata when outputs are copied back to backpack workflow
+- `metadata/sync.json` when selected workflow files are copied back to the backpack
 
 ## Reuse Workflow Example
 

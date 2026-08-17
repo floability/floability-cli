@@ -65,6 +65,7 @@ def copy_workflow_directory(
     source_workflow_dir: Path,
     dest_workflow_dir: Path,
     skip_patterns: Optional[list] = None,
+    copied_paths: Optional[list[Path]] = None,
 ) -> int:
     """Copy entire workflow directory contents from backpack to instance.
     
@@ -72,6 +73,7 @@ def copy_workflow_directory(
         source_workflow_dir: Source workflow directory (typically backpack/workflow)
         dest_workflow_dir: Destination workflow directory (typically instance/workflow)
         skip_patterns: Directory/file patterns to skip (default: .ipynb_checkpoints, __pycache__, vine-run-info)
+        copied_paths: Optional list populated with copied paths relative to workflow/
     
     Returns:
         Number of files copied
@@ -102,6 +104,8 @@ def copy_workflow_directory(
             dest_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(item, dest_path)
             files_copied += 1
+            if copied_paths is not None:
+                copied_paths.append(rel_path)
         elif item.is_dir():
             dest_path.mkdir(parents=True, exist_ok=True)
     

@@ -18,7 +18,7 @@ from ..workers_manager import start_workers_for_instance
 from ..backpack_manager import (
     resolve_backpack_args,
     validate_backpack_structure,
-    sync_outputs_to_backpack,
+    sync_workflow_to_backpack,
 )
 from ..instance_manager import (
     create_instance_structure,
@@ -58,6 +58,7 @@ class InstanceContext:
     paths: dict
     metadata_file: Path
     workflow_dir: Path
+    copied_workflow_paths: tuple[Path, ...] = field(default_factory=tuple)
     lock_acquired: bool = False
     is_new: bool = True
 
@@ -392,6 +393,7 @@ def _prepare_new_instance(args: argparse.Namespace, mode: str) -> InstanceContex
 
     # Setup workflow directory
     workflow_dir = instance_paths["workflow"]
+    copied_workflow_paths: list[Path] = []
     if getattr(args, "backpack_root", None):
         from ..instance_manager import copy_workflow_directory
 
@@ -399,6 +401,7 @@ def _prepare_new_instance(args: argparse.Namespace, mode: str) -> InstanceContex
         copy_workflow_directory(
             source_workflow_dir=backpack_workflow_dir,
             dest_workflow_dir=workflow_dir,
+            copied_paths=copied_workflow_paths,
         )
     else:
         print(
@@ -412,6 +415,7 @@ def _prepare_new_instance(args: argparse.Namespace, mode: str) -> InstanceContex
         paths=instance_paths,
         metadata_file=metadata_file,
         workflow_dir=workflow_dir,
+        copied_workflow_paths=tuple(copied_workflow_paths),
         lock_acquired=True,
         is_new=True,
     )
@@ -842,13 +846,12 @@ def _run_interactive(
         interrupted = True
         raise
     finally:
-        if not interrupted:
-            cleanup_manager.cleanup()
+        cleanup_manager.cleanup()
         _finalize_run(
             args,
             ctx,
             perf,
-            sync_outputs=not interrupted,
+            sync_workflow=True,
             success=not interrupted,
             error="Interrupted by user" if interrupted else None,
             state="interrupted" if interrupted else None,
@@ -908,14 +911,14 @@ def _execute_batch(
                 "notebook_execute_time", "Time to execute notebook in execute mode"
             )
     if execution_success:
-        _sync_outputs_if_needed(args, ctx)
+        _sync_workflow_if_needed(args, ctx)
 
     cleanup_manager.cleanup()
     _finalize_run(
         args,
         ctx,
         perf,
-        sync_outputs=False,
+        sync_workflow=False,
         success=execution_success,
         error=None if execution_success else "Workflow entrypoint execution failed",
     )
@@ -926,17 +929,19 @@ def _execute_batch(
     return execution_success
 
 
-def _sync_outputs_if_needed(args: argparse.Namespace, ctx: InstanceContext) -> None:
-    """Sync outputs back to backpack if appropriate."""
+def _sync_workflow_if_needed(args: argparse.Namespace, ctx: InstanceContext) -> None:
+    """Copy selected workflow files back to the backpack when enabled."""
     if (
         ctx.is_new
         and getattr(args, "backpack", None)
         and not getattr(args, "no_update_backpack", False)
     ):
-        backpack_workflow_dir = Path(args.backpack) / "workflow"
-        sync_outputs_to_backpack(
+        backpack_workflow_dir = Path(args.backpack_root) / "workflow"
+        sync_workflow_to_backpack(
             ctx.workflow_dir,
             backpack_workflow_dir,
+            copied_paths=ctx.copied_workflow_paths,
+            extra_paths=getattr(args, "sync_path", None),
             metadata_dir=ctx.paths["metadata"],
             verbose=True,
         )
@@ -946,14 +951,14 @@ def _finalize_run(
     args: argparse.Namespace,
     ctx: InstanceContext,
     perf: PerformanceTracker,
-    sync_outputs: bool = False,
+    sync_workflow: bool = False,
     success: bool = True,
     error: Optional[str] = None,
     state: Optional[str] = None,
 ) -> None:
-    """Finalize run: sync outputs, save metrics, release lock."""
-    if sync_outputs:
-        _sync_outputs_if_needed(args, ctx)
+    """Finalize run: sync workflow files, save metrics, release lock."""
+    if sync_workflow:
+        _sync_workflow_if_needed(args, ctx)
 
     if perf.enabled:
         perf.end_timer("total_run_time", "Total run time")

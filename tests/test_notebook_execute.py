@@ -16,6 +16,10 @@ from floability.ops import run as run_ops
 class _Cleanup:
     def __init__(self):
         self.calls = 0
+        self.subprocesses = []
+
+    def register_subprocess(self, process):
+        self.subprocesses.append(process)
 
     def cleanup(self):
         self.calls += 1
@@ -34,6 +38,9 @@ class _Process:
 
     def wait(self):
         return self.returncode
+
+    def poll(self):
+        return None
 
 
 class _Thread:
@@ -178,11 +185,55 @@ def test_execute_batch_returns_and_finalizes_notebook_result(
     assert cleanup.calls == 1
     assert finalized == [
         {
-            "sync_outputs": False,
+            "sync_workflow": False,
             "success": notebook_success,
             "error": None
             if notebook_success
             else "Workflow entrypoint execution failed",
+        }
+    ]
+
+
+def test_interactive_interrupt_cleans_up_and_syncs_saved_workflow(
+    monkeypatch, tmp_path
+):
+    ctx = _context(tmp_path)
+    ctx.is_new = True
+    cleanup = _Cleanup()
+    process = _Process()
+    finalized = []
+
+    monkeypatch.setattr(run_ops, "start_jupyterlab", lambda **_kwargs: process)
+    monkeypatch.setattr(
+        run_ops.time,
+        "sleep",
+        lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+    monkeypatch.setattr(
+        run_ops,
+        "_finalize_run",
+        lambda *args, **kwargs: finalized.append(kwargs),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        run_ops._run_interactive(
+            Namespace(jupyter_port=8888),
+            ctx,
+            SimpleNamespace(env_dir=None, instance_env={}),
+            cleanup,
+            None,
+            _Perf(),
+            str(ctx.workflow_dir / "workflow.ipynb"),
+        )
+
+    assert cleanup.subprocesses == [process]
+    assert cleanup.calls == 1
+    assert finalized == [
+        {
+            "sync_workflow": True,
+            "success": False,
+            "error": "Interrupted by user",
+            "state": "interrupted",
         }
     ]
 

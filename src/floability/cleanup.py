@@ -20,6 +20,7 @@ class CleanupManager:
         self.subprocesses = []
         self.process_groups = {}
         self.directories = []
+        self._cleanup_complete = False
 
     def register_subprocess(self, proc):
         self.subprocesses.append(proc)
@@ -28,7 +29,15 @@ class CleanupManager:
     def register_directory(self, directory):
         self.directories.append(directory)
 
+    @property
+    def cleanup_complete(self) -> bool:
+        return self._cleanup_complete
+
     def cleanup(self):
+        if self._cleanup_complete:
+            return
+        self._cleanup_complete = True
+
         print(
             "[cleanup] Sending SIGINT to all subprocesses so they can do their own cleanup..."
         )

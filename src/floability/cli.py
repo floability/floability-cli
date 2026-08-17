@@ -78,8 +78,11 @@ def main():
         try:
             result = command.execute(args, cleanup_manager)
         except KeyboardInterrupt:
-            print("\n[floability] Interrupted by user. Cleaning up...")
-            cleanup_manager.cleanup()
+            if cleanup_manager.cleanup_complete:
+                print("\n[floability] Interrupted by user.")
+            else:
+                print("\n[floability] Interrupted by user. Cleaning up...")
+                cleanup_manager.cleanup()
             return 130
 
         return result if isinstance(result, int) else 0
