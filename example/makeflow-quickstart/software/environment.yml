@@ -1,0 +1,8 @@
+name: makeflow-quickstart
+channels:
+  - conda-forge
+dependencies:
+  - python
+  - ndcctools
+  - imagemagick
+  - curl

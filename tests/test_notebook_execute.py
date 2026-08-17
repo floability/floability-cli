@@ -98,6 +98,41 @@ def test_execute_batch_returns_and_finalizes_notebook_result(
     ]
 
 
+def test_execute_batch_dispatches_shell_entrypoint(monkeypatch, tmp_path):
+    ctx = _context(tmp_path)
+    script = ctx.workflow_dir / "workflow.sh"
+    script.touch()
+    cleanup = _Cleanup()
+    calls = []
+    monkeypatch.setattr(
+        run_ops,
+        "execute_shell_script",
+        lambda **kwargs: calls.append(kwargs) or True,
+    )
+    monkeypatch.setattr(run_ops, "_finalize_run", lambda *_args, **_kwargs: None)
+
+    result = run_ops._execute_batch(
+        Namespace(backpack=None),
+        ctx,
+        SimpleNamespace(env_dir="/backpack/env", instance_env={"SETTING": "yes"}),
+        cleanup,
+        _Perf(),
+        str(script),
+    )
+
+    assert result is True
+    assert cleanup.calls == 1
+    assert calls == [
+        {
+            "script_path": str(script),
+            "run_dir": str(ctx.paths["logs"]),
+            "conda_env_dir": "/backpack/env",
+            "working_dir": str(ctx.workflow_dir),
+            "extra_env": {"SETTING": "yes"},
+        }
+    ]
+
+
 def test_execute_notebook_uses_selected_environment(monkeypatch, tmp_path):
     commands = []
     monkeypatch.setenv("CONDA_EXE", "/opt/conda/bin/conda")
@@ -211,6 +246,28 @@ def test_instance_environment_puts_backpack_tools_first(monkeypatch, tmp_path):
     assert env["VINE_MANAGER_NAME"] == "test-manager"
     assert env["VINE_MANAGER_PORTS"] == "9123,9150"
     assert env["WORKFLOW_SETTING"] == "enabled"
+
+
+@pytest.mark.parametrize("exit_code, expected", [(0, True), (7, False)])
+def test_execute_shell_script_propagates_exit_status(tmp_path, exit_code, expected):
+    workflow = tmp_path / "workflow"
+    logs = tmp_path / "logs"
+    workflow.mkdir()
+    logs.mkdir()
+    script = workflow / "entrypoint.sh"
+    script.write_text(f"printf 'shell output\\n'\nexit {exit_code}\n")
+
+    result = run_ops.execute_shell_script(
+        script_path=str(script),
+        run_dir=str(logs),
+        working_dir=str(workflow),
+        extra_env={},
+    )
+
+    assert result is expected
+    log = (logs / "workflow.log").read_text()
+    assert "command: /bin/bash entrypoint.sh" in log
+    assert "shell output" in log
 
 
 def test_cleanup_terminates_process_group_after_wrapper_exits(monkeypatch):

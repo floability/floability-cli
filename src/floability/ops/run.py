@@ -239,6 +239,76 @@ def execute_python_script(
     return returncode == 0
 
 
+def execute_shell_script(
+    script_path, run_dir, conda_env_dir=None, working_dir=None, extra_env: dict = None
+):
+    """Execute a shell entrypoint and stream its combined output to workflow.log."""
+    script_abs_path = os.path.abspath(script_path)
+    script_name = os.path.basename(script_abs_path)
+    exec_dir = working_dir if working_dir else os.path.dirname(script_abs_path)
+
+    print(f"[floability] Executing shell script: {script_name}")
+    print(f"[floability] Working directory: {exec_dir}")
+    log_file = os.path.join(run_dir, "workflow.log")
+    print(f"[floability] Output log: {log_file}")
+
+    shell_path = "/bin/bash"
+    if conda_env_dir:
+        cmd = [
+            get_conda_executable(),
+            "run",
+            "--prefix",
+            conda_env_dir,
+            "--no-capture-output",
+            shell_path,
+            script_name,
+        ]
+    else:
+        cmd = [shell_path, script_name]
+
+    print(f"[floability] Running: {' '.join(cmd)}")
+
+    original_dir = os.getcwd()
+    returncode = 1
+    try:
+        os.chdir(exec_dir)
+        with open(log_file, "w") as log:
+            log.write(f"[floability] script: {script_abs_path}\n")
+            log.write(f"[floability] command: {' '.join(cmd)}\n\n")
+            log.flush()
+
+            proc = subprocess.Popen(
+                cmd,
+                env=extra_env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+
+            for line in proc.stdout:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+                log.write(line)
+                log.flush()
+
+            proc.wait()
+            returncode = proc.returncode
+
+        if returncode == 0:
+            print("[floability] Shell script completed successfully (exit 0)")
+        else:
+            print(f"[floability] Shell script exited with code {returncode}")
+        print(f"[floability] Full output saved to: {log_file}")
+
+    except Exception as e:
+        print(f"[floability] Error executing shell script: {e}")
+        print(f"[floability] Check logs at {log_file}")
+    finally:
+        os.chdir(original_dir)
+
+    return returncode == 0
+
+
 # -----------------------------------------------------------------------------
 # Private Helper Functions
 # -----------------------------------------------------------------------------
@@ -789,16 +859,17 @@ def _execute_batch(
     perf: PerformanceTracker,
     entrypoint_path: Optional[str],
 ) -> bool:
-    """Execute batch mode (notebook or python script).
+    """Execute batch mode for a notebook, Python script, or shell script.
 
     Dispatch rules
     --------------
     1. entrypoint_path ends with .py  → execute_python_script
-    2. entrypoint_path ends with .ipynb  → execute_notebook
+    2. entrypoint_path ends with .sh  → execute_shell_script
+    3. entrypoint_path ends with .ipynb  → execute_notebook
     """
     execution_success = False
 
-    # Auto-detected .py entrypoint from the workflow directory
+    # Selected .py entrypoint from the workflow directory
     if entrypoint_path and entrypoint_path.endswith(".py"):
         print("[floability] Python script execution (auto-detected .py entrypoint)")
         execution_success = execute_python_script(
@@ -808,12 +879,16 @@ def _execute_batch(
             working_dir=str(ctx.workflow_dir),
             extra_env=env_ctx.instance_env,
         )
+    elif entrypoint_path and entrypoint_path.endswith(".sh"):
+        print("[floability] Shell script execution")
+        execution_success = execute_shell_script(
+            script_path=entrypoint_path,
+            run_dir=str(ctx.paths["logs"]),
+            conda_env_dir=env_ctx.env_dir,
+            working_dir=str(ctx.workflow_dir),
+            extra_env=env_ctx.instance_env,
+        )
     elif entrypoint_path:
-        if entrypoint_path.endswith(".sh"):
-            raise RuntimeError(
-                "Shell entrypoints are valid for 'floability execute', but shell "
-                "execution is not implemented yet."
-            )
         print("[floability] notebook execution")
         if perf.enabled:
             perf.start_timer("notebook_execute_time")
