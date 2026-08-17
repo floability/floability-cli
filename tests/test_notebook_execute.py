@@ -100,6 +100,7 @@ def test_execute_batch_returns_and_finalizes_notebook_result(
 
 def test_execute_notebook_uses_selected_environment(monkeypatch, tmp_path):
     commands = []
+    monkeypatch.setenv("CONDA_EXE", "/opt/conda/bin/conda")
     monkeypatch.setattr(
         jupyter_runner.subprocess,
         "Popen",
@@ -117,7 +118,7 @@ def test_execute_notebook_uses_selected_environment(monkeypatch, tmp_path):
     assert result is True
     assert commands == [
         [
-            "conda",
+            "/opt/conda/bin/conda",
             "run",
             "--prefix",
             "/backpack/env",
@@ -137,6 +138,7 @@ def test_start_jupyterlab_uses_dedicated_binary_without_lab_argument(
     monkeypatch, tmp_path
 ):
     launches = []
+    monkeypatch.setenv("CONDA_EXE", "/opt/conda/bin/conda")
     _Thread.instances.clear()
     monkeypatch.setattr(
         jupyter_runner.subprocess,
@@ -158,7 +160,7 @@ def test_start_jupyterlab_uses_dedicated_binary_without_lab_argument(
     assert process.pid == 1234
     command, popen_kwargs = launches[0]
     assert command == [
-        "conda",
+        "/opt/conda/bin/conda",
         "run",
         "--prefix",
         "/backpack/env",

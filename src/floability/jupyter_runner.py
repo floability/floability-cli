@@ -7,7 +7,7 @@ import os
 import time
 import re
 
-from .utils import get_system_information
+from .utils import get_conda_executable, get_system_information
 
 
 def print_instructions_for_accessing_jupyter(port, token, stdout_file):
@@ -92,7 +92,7 @@ def start_jupyterlab(
     if conda_env_dir:
         jupyterlab_path = os.path.join(conda_env_dir, "bin", "jupyter-lab")
         cmd = [
-            "conda",
+            get_conda_executable(),
             "run",
             "--prefix",
             conda_env_dir,
@@ -161,7 +161,7 @@ def execute_notebook(
     if conda_env_dir:
         nbconvert_path = os.path.join(conda_env_dir, "bin", "jupyter-nbconvert")
         cmd = [
-            "conda",
+            get_conda_executable(),
             "run",
             "--prefix",
             conda_env_dir,

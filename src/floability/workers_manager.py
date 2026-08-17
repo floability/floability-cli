@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import yaml
+from .utils import get_conda_executable
 from .instance_lock_manager import (
     acquire_workers_lock,
     release_workers_lock,
@@ -355,7 +356,7 @@ def _start_vine_factory(
     if manager_env_dir:
         vine_factory_path = os.path.join(manager_env_dir, "bin", "vine_factory")
         cmd = [
-            "conda",
+            get_conda_executable(),
             "run",
             "--prefix",
             manager_env_dir,

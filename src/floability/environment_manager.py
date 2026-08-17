@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Optional, Tuple
 from dataclasses import dataclass
 
+from .utils import get_conda_executable
+
 
 # -----------------------------------------------------------------------------
 # Data Classes
@@ -207,7 +209,7 @@ def extract_env_to_instance(
         conda_unpack_path = os.path.join(env_dir, "bin", "conda-unpack")
         subprocess.run(
             [
-                "conda",
+                get_conda_executable(),
                 "run",
                 "--prefix",
                 env_dir,
@@ -320,7 +322,7 @@ def _create_conda_env(env_yml: str, env_path: str, is_worker_env: bool) -> None:
 
         subprocess.run(
             [
-                "conda",
+                get_conda_executable(),
                 "env",
                 "create",
                 "--file",

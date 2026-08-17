@@ -25,7 +25,7 @@ from ..instance_manager import (
     create_latest_symlink,
     record_initial_metadata,
 )
-from ..utils import normalize_cli_base_dir
+from ..utils import get_conda_executable, normalize_cli_base_dir
 from ..jupyter_runner import start_jupyterlab, execute_notebook
 from ..instance_lock_manager import (
     acquire_instance_lock,
@@ -183,7 +183,7 @@ def execute_python_script(
     if conda_env_dir:
         python_path = os.path.join(conda_env_dir, "bin", "python")
         cmd = [
-            "conda",
+            get_conda_executable(),
             "run",
             "--prefix",
             conda_env_dir,
@@ -1004,7 +1004,7 @@ def _get_env_python_version(prefix: str) -> str:
     python_path = str(Path(prefix) / "bin" / "python")
     result = subprocess.run(
         [
-            "conda",
+            get_conda_executable(),
             "run",
             "--prefix",
             str(prefix),
@@ -1146,7 +1146,7 @@ def _display_env_info(env_dir: Optional[str], instance_env: dict) -> None:
     try:
         result = subprocess.run(
             [
-                "conda",
+                get_conda_executable(),
                 "run",
                 "--prefix",
                 env_dir,

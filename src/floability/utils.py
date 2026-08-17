@@ -23,6 +23,11 @@ SYSTEM_INFORMATION = None
 AccessCandidate = namedtuple("AccessCandidate", ["address", "source", "direct_ok"])
  
 _INTERNAL_SUFFIXES = (".local", ".internal", ".ec2.internal", ".localdomain")
+
+
+def get_conda_executable():
+    """Return the real Conda executable, including from shell activation."""
+    return os.environ.get("CONDA_EXE") or "conda"
  
  
 # --- primitives --------------------------------------------------------------
