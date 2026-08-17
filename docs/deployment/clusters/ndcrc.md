@@ -35,12 +35,12 @@ floability run --backpack <backpack-root> --batch-type uge
 ## Manager Port Range
 
 NDCRC requires manager communication ports in the `9000-10000` range.
-Floability defaults to `9123,9150`, which is already in that range, so no change is required in most cases.
+Floability defaults to `9123:9150`, which is already in that range, so no change is required in most cases.
 
 If you need to customize it, use `--manager-ports`:
 
 ```bash
-floability run --backpack <backpack-root> --batch-type condor --manager-ports 9200,9800
+floability run --backpack <backpack-root> --batch-type condor --manager-ports 9200:9800
 ```
 
 ## Storage Guidance (Home Directory Limits)

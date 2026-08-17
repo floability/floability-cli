@@ -227,7 +227,7 @@ def test_instance_environment_puts_backpack_tools_first(monkeypatch, tmp_path):
         Namespace(
             env_vars="WORKFLOW_SETTING=enabled",
             manager_name="test-manager",
-            manager_ports="9123,9150",
+            manager_ports="9123:9150",
         ),
         ctx,
         "/backpack/env",

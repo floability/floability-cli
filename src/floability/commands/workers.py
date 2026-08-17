@@ -3,6 +3,8 @@ Workers command - worker management (start, stop, status).
 """
 
 import argparse
+
+from ..utils import normalize_worker_transfer_ports
 from .base import BaseCommand
 
 
@@ -62,7 +64,11 @@ class WorkersCommand(BaseCommand):
         )
         start_parser.add_argument(
             "--worker-transfer-ports",
-            help="Port range for worker-worker transfers (e.g. 10000:11000). Passed as --transfer-port to vine_factory",
+            type=normalize_worker_transfer_ports,
+            help=(
+                "Port range for worker-worker transfers (START:END; legacy "
+                "START,END is accepted). Passed as --transfer-port to vine_factory."
+            ),
         )
 
         # workers stop sub-command

@@ -40,7 +40,7 @@ Set ports explicitly:
 
 ```bash
 floability run --backpack <backpack-root> --batch-type condor \
-	--manager-ports 10000,11000
+	--manager-ports 10000:11000
 ```
 ## Worker Transfer Ports
 The allowed ports for worker transfer is `10000:11000`. If the `--worker-transfer-ports` option is not specified, floability will default to the range `10000:11000` while on LPC.

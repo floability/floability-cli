@@ -23,7 +23,7 @@ We could not find a published Anvil document that clearly lists which manager co
 In our tests, the following range worked:
 
 ```bash
-floability run --backpack <backpack-root> --batch-type slurm --manager-ports 35000,40000
+floability run --backpack <backpack-root> --batch-type slurm --manager-ports 35000:40000
 ```
 
 ## Data Location

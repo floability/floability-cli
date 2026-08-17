@@ -22,7 +22,7 @@ Stampede3 uses Slurm, so use `--batch-type slurm`.
 In our runs, the following manager port range worked:
 
 ```bash
-floability run --backpack <backpack-root> --batch-type slurm --manager-ports 35000,40000
+floability run --backpack <backpack-root> --batch-type slurm --manager-ports 35000:40000
 ```
 
 ## Batch Options

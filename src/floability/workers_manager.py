@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import yaml
-from .utils import get_conda_executable
+from .utils import get_conda_executable, normalize_worker_transfer_ports
 from .instance_lock_manager import (
     acquire_workers_lock,
     release_workers_lock,
@@ -293,7 +293,13 @@ def _normalize_compute_specs(
             "cores": _attr(cli_args, "cores_per_worker"),
             "batch_options": _attr(cli_args, "batch_options"),
             "debug_workers": _attr(cli_args, "debug_workers"),
-            "transfer_port": _attr(cli_args, "worker_transfer_ports"),
+            "transfer_port": (
+                normalize_worker_transfer_ports(
+                    _attr(cli_args, "worker_transfer_ports")
+                )
+                if _attr(cli_args, "worker_transfer_ports")
+                else None
+            ),
         },
     )
 

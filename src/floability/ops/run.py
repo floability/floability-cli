@@ -25,7 +25,11 @@ from ..instance_manager import (
     create_latest_symlink,
     record_initial_metadata,
 )
-from ..utils import get_conda_executable, normalize_cli_base_dir
+from ..utils import (
+    get_conda_executable,
+    normalize_cli_base_dir,
+    normalize_manager_ports,
+)
 from ..jupyter_runner import start_jupyterlab, execute_notebook
 from ..instance_lock_manager import (
     acquire_instance_lock,
@@ -1137,7 +1141,9 @@ def _build_instance_env(
     # TaskVine identity (per-instance)
     # -------------------------------------------------
     env["VINE_MANAGER_NAME"] = getattr(args, "manager_name", "") or ""
-    env["VINE_MANAGER_PORTS"] = getattr(args, "manager_ports", "9123,9150")
+    env["VINE_MANAGER_PORTS"] = normalize_manager_ports(
+        getattr(args, "manager_ports", None) or "9123:9150"
+    )
 
     # -------------------------------------------------
     # PyUser overlay

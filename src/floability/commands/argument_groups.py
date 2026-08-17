@@ -6,6 +6,8 @@ These functions add commonly-used argument groups to parsers.
 
 import argparse
 
+from ..utils import normalize_manager_ports, normalize_worker_transfer_ports
+
 
 def add_execution_args(parser: argparse.ArgumentParser) -> None:
     """
@@ -43,8 +45,12 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--manager-ports",
         required=False,
-        default="9123,9150",
-        help="Comma-separated range for ports for the TaskVine manager (default=9123,9150).",
+        default="9123:9150",
+        type=normalize_manager_ports,
+        help=(
+            "Port range for the TaskVine manager (START:END; legacy "
+            "START,END is accepted; default=9123:9150)."
+        ),
     )
 
     parser.add_argument(
@@ -199,5 +205,9 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
     vf_group.add_argument(
         "--worker-transfer-ports",
         required=False,
-        help="Port range for worker-worker transfers (e.g. 10000:11000). Passed as --transfer-port to vine_factory",
+        type=normalize_worker_transfer_ports,
+        help=(
+            "Port range for worker-worker transfers (START:END; legacy "
+            "START,END is accepted). Passed as --transfer-port to vine_factory."
+        ),
     )

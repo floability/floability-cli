@@ -28,6 +28,42 @@ _INTERNAL_SUFFIXES = (".local", ".internal", ".ec2.internal", ".localdomain")
 def get_conda_executable():
     """Return the real Conda executable, including from shell activation."""
     return os.environ.get("CONDA_EXE") or "conda"
+
+
+def normalize_port_range(value, separator=":"):
+    """Validate a two-port range and return it with the requested separator."""
+    raw = str(value).strip()
+    if ":" in raw and "," not in raw:
+        parts = raw.split(":")
+    elif "," in raw and ":" not in raw:
+        parts = raw.split(",")
+    else:
+        raise ValueError("expected a port range in START:END or START,END form")
+
+    if len(parts) != 2:
+        raise ValueError("expected exactly two ports")
+
+    try:
+        start, end = (int(part.strip()) for part in parts)
+    except ValueError as exc:
+        raise ValueError("ports must be integers") from exc
+
+    if not 1 <= start <= 65535 or not 1 <= end <= 65535:
+        raise ValueError("ports must be between 1 and 65535")
+    if start > end:
+        raise ValueError("range start must not exceed range end")
+
+    return f"{start}{separator}{end}"
+
+
+def normalize_manager_ports(value):
+    """Normalize manager ports for VINE_MANAGER_PORTS consumers."""
+    return normalize_port_range(value, separator=",")
+
+
+def normalize_worker_transfer_ports(value):
+    """Normalize worker transfer ports for vine_factory."""
+    return normalize_port_range(value, separator=":")
  
  
 # --- primitives --------------------------------------------------------------

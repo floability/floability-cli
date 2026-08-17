@@ -3,6 +3,8 @@ Instance command - instance management (create, list, stop).
 """
 
 import argparse
+
+from ..utils import normalize_manager_ports
 from .base import BaseCommand
 
 
@@ -82,8 +84,12 @@ class InstanceCommand(BaseCommand):
         )
         create_parser.add_argument(
             "--manager-ports",
-            default="9123,9150",
-            help="Comma-separated range for ports (default=9123,9150).",
+            default="9123:9150",
+            type=normalize_manager_ports,
+            help=(
+                "Manager port range (START:END; legacy START,END is accepted; "
+                "default=9123:9150)."
+            ),
         )
         create_parser.add_argument(
             "--env-vars",

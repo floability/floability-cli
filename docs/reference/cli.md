@@ -53,8 +53,8 @@ floability run --instance <instance-name-or-path>
 **Session:**
 
 - `--jupyter-port INT` (default: `8888`)
-- `--manager-ports A,B` (default: `9123,9150`)
-- `--worker-transfer-ports A:B` (optional): port range for worker-worker transfers (e.g. `10000:11000`). Passed as `--transfer-port` to vine_factory.
+- `--manager-ports A:B` (default: `9123:9150`): manager port range. Legacy `A,B` input is also accepted.
+- `--worker-transfer-ports A:B` (optional): worker-worker transfer port range. Legacy `A,B` input is also accepted. Passed as `--transfer-port` to vine_factory.
 - `--manager-name NAME`: TaskVine manager name (auto-generated if omitted)
 - `--env-vars KEY=VALUE,...`: environment variables to inject into the conda env
 
@@ -132,7 +132,7 @@ Options:
 - `--environment PATH`: manager environment spec
 - `--worker-environment PATH`: worker environment spec
 - `--manager-name NAME`: TaskVine manager name (auto-generated if omitted)
-- `--manager-ports A,B` (default: `9123,9150`)
+- `--manager-ports A:B` (default: `9123:9150`; legacy `A,B` is accepted)
 - `--env-vars KEY=VALUE,...`
 - `--measure-performance`
 
