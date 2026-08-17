@@ -13,15 +13,13 @@ authors = [
   {name = "Floability Team", email = "dthain@nd.edu"},
 ]
 dependencies = [
-  "aiohttp",
   "boto3",
+  "botocore",
   "conda-pack",
-  "fsspec",
   "jupyter",
   "jupyter-client",
   "nbformat",
   "pelicanfs",
-  "python-magic",
   "PyYAML",
   "requests",
   "tqdm",
