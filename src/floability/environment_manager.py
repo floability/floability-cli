@@ -1,20 +1,19 @@
 # environment.py
+import hashlib
 import os
-import yaml  # pyyaml needed
-import json
+import re
 import shutil
-import logging
 import subprocess
 import tempfile
-import hashlib
 import textwrap
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
-from dataclasses import dataclass
+
+import yaml  # pyyaml needed
 
 from .utils import get_conda_executable
-
 
 # -----------------------------------------------------------------------------
 # Data Classes
@@ -257,21 +256,66 @@ def _is_shared_env_valid(shared_env_dir: Path) -> bool:
     return shared_env_dir.is_dir() and python_exe.exists()
 
 
+def _conda_package_name(package_spec: str) -> str:
+    """Return the normalized package name from a Conda dependency spec."""
+    unqualified_spec = package_spec.strip().lower().rsplit("::", maxsplit=1)[-1]
+    return re.split(r"[<>=!~\s]", unqualified_spec, maxsplit=1)[0]
+
+
+def _ensure_runtime_dependencies(dependencies: list, is_worker_env: bool) -> list[str]:
+    """Add missing runtime dependencies and return user-facing warnings.
+
+    Existing Conda package specifications always take precedence, including
+    versioned and channel-qualified specifications. Pip dependency mappings
+    are not Conda package specifications and are ignored here.
+    """
+    provided_package_names = {
+        _conda_package_name(dependency)
+        for dependency in dependencies
+        if isinstance(dependency, str)
+    }
+    warnings = []
+
+    if "ndcctools" not in provided_package_names:
+        warnings.append(
+            "'ndcctools' is not in environment.yml. Add "
+            "'ndcctools=7.17.1' if this workflow uses TaskVine."
+        )
+
+    required_packages = [
+        ("python", "python=3.12"),
+        ("cloudpickle", "cloudpickle"),
+    ]
+    if not is_worker_env:
+        required_packages.insert(1, ("jupyter", "jupyter"))
+
+    for package_name, default_spec in required_packages:
+        if package_name in provided_package_names:
+            continue
+        dependencies.append(default_spec)
+        provided_package_names.add(package_name)
+        warnings.append(
+            f"'{package_name}' is not in environment.yml. "
+            f"Floability added '{default_spec}'."
+        )
+
+    return warnings
+
+
 def _create_conda_env(env_yml: str, env_path: str, is_worker_env: bool) -> None:
     """Create a conda environment unconditionally from a YAML spec.
 
-    Injects required packages (jupyter+cloudpickle for manager,
-    python+cloudpickle for worker) and runs an optional post-install
-    script defined via the ``post_install_script`` key in the YAML.
+    Adds python=3.12 and the mode-specific runtime packages only when the
+    backpack does not provide its own specifications. Warns when optional
+    ndcctools is absent. Runs an optional post-install script defined via the
+    ``post_install_script`` key in the YAML.
 
     Raises subprocess.CalledProcessError on failure.
     """
 
     if is_worker_env:
-        required_packages = ["python", "cloudpickle"]
         print("[environment] Creating worker environment (python + cloudpickle)")
     else:
-        required_packages = ["python", "jupyter", "cloudpickle"]
         print("[environment] Creating manager environment (jupyter + cloudpickle)")
 
     with open(env_yml, "r") as f:
@@ -279,19 +323,15 @@ def _create_conda_env(env_yml: str, env_path: str, is_worker_env: bool) -> None:
 
     if "dependencies" not in env_data:
         env_data["dependencies"] = []
-    for pkg in required_packages:
-        if pkg not in env_data["dependencies"]:
-            env_data["dependencies"].append(pkg)
-
-    if "ndcctools" not in env_data["dependencies"]:
-        # Note: we are not makiing it required, becasue sometimes we need custom instalation steps for ndcctools (e.g., from source)
-        # but we warn the user if it's not included, since it's required for TaskVine workflows and easy to forget.
-        print(
-            "=" * 50,
-            "[environment] Warning: 'ndcctools' not found in dependencies. ",
-            "If your workflow uses TaskVine, you should include 'ndcctools' in your environment.yml",
-            "=" * 50,
-        )
+    warnings = _ensure_runtime_dependencies(
+        env_data["dependencies"], is_worker_env=is_worker_env
+    )
+    if warnings:
+        print("=" * 50)
+        print("[environment] Environment warnings:")
+        for warning in warnings:
+            print(f"- {warning}")
+        print("=" * 50)
 
     # Resolve post-install script before stripping the key from env_data
     post_install_script = env_data.pop("post_install_script", None)
