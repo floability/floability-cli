@@ -1,8 +1,7 @@
 name: matrix
 channels:
-  - conda-forge
+- conda-forge
 dependencies:
-  - python
-  - numpy
-  - ndcctools
-
+- python=3.14.2
+- numpy=2.4.3
+- ndcctools=7.16.5
