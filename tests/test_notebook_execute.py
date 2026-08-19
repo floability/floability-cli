@@ -410,7 +410,7 @@ def test_execute_shell_script_propagates_exit_status(tmp_path, exit_code, expect
     assert "shell output" in log
 
 
-def test_cleanup_terminates_process_group_after_wrapper_exits(monkeypatch):
+def test_cleanup_kills_process_group_after_wrapper_exits(monkeypatch, capsys):
     class ExitedWrapper:
         pid = 1234
 
@@ -430,18 +430,66 @@ def test_cleanup_terminates_process_group_after_wrapper_exits(monkeypatch):
                 raise ProcessLookupError
             return
         signals.append((pgid, sig))
-        if sig == signal.SIGTERM:
+        # Model a worker that ignores the graceful signals after its wrapper
+        # has exited. Only SIGKILL removes the process group.
+        if sig == signal.SIGKILL:
             group_exists = False
 
     monkeypatch.setattr("floability.cleanup.os.getpgid", lambda _pid: 4321)
     monkeypatch.setattr("floability.cleanup.os.killpg", fake_killpg)
-    monkeypatch.setattr("floability.cleanup.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("floability.cleanup.SIGINT_GRACE_SECONDS", 0)
+    monkeypatch.setattr("floability.cleanup.SIGTERM_GRACE_SECONDS", 0)
+    monkeypatch.setattr("floability.cleanup.SIGKILL_GRACE_SECONDS", 0)
 
     cleanup = CleanupManager()
     cleanup.register_subprocess(ExitedWrapper())
-    cleanup.cleanup()
+    assert cleanup.cleanup() is True
 
     assert signals == [
         (4321, signal.SIGINT),
         (4321, signal.SIGTERM),
+        (4321, signal.SIGKILL),
     ]
+    assert cleanup.cleanup_complete is True
+    assert "All subprocesses cleaned up" in capsys.readouterr().out
+
+
+def test_cleanup_does_not_report_success_while_process_group_survives(
+    monkeypatch, capsys
+):
+    class ExitedWrapper:
+        pid = 1234
+
+        def poll(self):
+            return 0
+
+    signals = []
+
+    def fake_killpg(pgid, sig):
+        if sig != 0:
+            signals.append((pgid, sig))
+
+    monkeypatch.setattr("floability.cleanup.os.getpgid", lambda _pid: 4321)
+    monkeypatch.setattr("floability.cleanup.os.killpg", fake_killpg)
+    monkeypatch.setattr("floability.cleanup.SIGINT_GRACE_SECONDS", 0)
+    monkeypatch.setattr("floability.cleanup.SIGTERM_GRACE_SECONDS", 0)
+    monkeypatch.setattr("floability.cleanup.SIGKILL_GRACE_SECONDS", 0)
+
+    cleanup = CleanupManager()
+    cleanup.register_subprocess(ExitedWrapper())
+
+    assert cleanup.cleanup() is False
+    assert cleanup.cleanup_complete is False
+    assert signals == [
+        (4321, signal.SIGINT),
+        (4321, signal.SIGTERM),
+        (4321, signal.SIGKILL),
+    ]
+
+    output = capsys.readouterr().out
+    assert "cleanup incomplete" in output
+    assert "All subprocesses cleaned up" not in output
+
+    # Since the first cleanup did not finish, another caller can retry it.
+    assert cleanup.cleanup() is False
+    assert len(signals) == 6
