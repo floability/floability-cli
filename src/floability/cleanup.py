@@ -21,6 +21,7 @@ class CleanupManager:
         self.subprocesses = []
         self.process_groups = {}
         self.directories = []
+        self.cleanup_callbacks = []
         self._cleanup_complete = False
 
     def register_subprocess(self, proc):
@@ -29,6 +30,15 @@ class CleanupManager:
 
     def register_directory(self, directory):
         self.directories.append(directory)
+
+    def register_cleanup_callback(self, callback):
+        """Register state reconciliation to run after each cleanup attempt.
+
+        The callback receives one boolean indicating whether all tracked
+        process groups are gone. It may return ``False`` to keep cleanup
+        retryable when its own state update could not be completed.
+        """
+        self.cleanup_callbacks.append(callback)
 
     @property
     def cleanup_complete(self) -> bool:
@@ -61,17 +71,40 @@ class CleanupManager:
             print(f"[cleanup] Cleaning up directory: {directory}")
             shutil.rmtree(directory, ignore_errors=True)
 
+        callbacks_succeeded = self._run_cleanup_callbacks(
+            cleanup_succeeded=not remaining_groups
+        )
+
         if remaining_groups:
             groups = ", ".join(str(pgid) for pgid in sorted(remaining_groups))
             print(
                 "[cleanup] Warning: cleanup incomplete; process groups still "
                 f"alive: {groups}"
             )
+
+        if not callbacks_succeeded:
+            print("[cleanup] Warning: cleanup state reconciliation incomplete.")
+
+        if remaining_groups or not callbacks_succeeded:
             return False
 
         self._cleanup_complete = True
         print("[cleanup] All subprocesses cleaned up.")
         return True
+
+    def _run_cleanup_callbacks(self, cleanup_succeeded):
+        callbacks_succeeded = True
+        for callback in self.cleanup_callbacks:
+            try:
+                if callback(cleanup_succeeded) is False:
+                    callbacks_succeeded = False
+            except Exception as error:
+                callbacks_succeeded = False
+                print(
+                    "[cleanup] Warning: cleanup state callback failed: "
+                    f"{error}"
+                )
+        return callbacks_succeeded
 
     def _stop_process_groups(self, process_groups):
         """Apply the graceful-to-forced shutdown sequence to tracked groups."""

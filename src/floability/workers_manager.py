@@ -162,6 +162,80 @@ def start_workers_for_instance(
     return proc
 
 
+def reconcile_workers_after_cleanup(
+    instance_path: Path,
+    *,
+    cleanup_succeeded: bool,
+    expected_factory_pid: int,
+    reason: str = "run_cleanup",
+) -> bool:
+    """Reconcile worker metadata and lock after a run cleanup attempt.
+
+    State is changed only when ``workers.json`` still belongs to the factory
+    registered by this run. A successful process cleanup records a terminal
+    state before releasing the matching lock. An incomplete process cleanup
+    records the failure but deliberately retains ownership for a later retry.
+    """
+    worker_data = _read_worker_metadata(instance_path)
+    if not worker_data:
+        print(
+            "[workers] Warning: cannot reconcile cleanup without "
+            "workers.json."
+        )
+        return False
+
+    recorded_factory_pid = worker_data.get("factory_pid")
+    if recorded_factory_pid != expected_factory_pid:
+        print(
+            "[workers] Skipping cleanup reconciliation because worker state "
+            "belongs to a different factory."
+        )
+        return True
+
+    reconciled_data = dict(worker_data)
+    if cleanup_succeeded:
+        reconciled_data.update(
+            {
+                "status": "stopped",
+                "stopped_at": time.time(),
+                "stop_reason": reason,
+            }
+        )
+        reconciled_data.pop("cleanup_attempted_at", None)
+        reconciled_data.pop("cleanup_error", None)
+    else:
+        reconciled_data.update(
+            {
+                "status": "cleanup_incomplete",
+                "cleanup_attempted_at": time.time(),
+                "cleanup_error": "Factory process group remained alive after cleanup.",
+            }
+        )
+
+    if not _write_worker_metadata(instance_path, reconciled_data):
+        return False
+
+    if not cleanup_succeeded:
+        return True
+
+    factory_pgid = worker_data.get("factory_pgid")
+    if not factory_pgid:
+        print(
+            "[workers] Warning: cannot release workers.lock without the "
+            "recorded factory process group."
+        )
+        return False
+
+    if not release_workers_lock(
+        instance_path,
+        expected_factory_pgid=factory_pgid,
+    ):
+        print("[workers] Warning: could not release the matching workers.lock.")
+        return False
+
+    return True
+
+
 def stop_workers_for_instance(instance_path: Path) -> bool:
     """Send SIGTERM to the factory process and release the workers lock."""
     data = _read_worker_metadata(instance_path)

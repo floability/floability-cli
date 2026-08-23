@@ -15,7 +15,10 @@ from typing import Optional, Any
 from ..cleanup import CleanupManager
 from ..performance_tracker import PerformanceTracker
 from ..environment_manager import setup_manager_and_worker_envs, ensure_shared_env
-from ..workers_manager import start_workers_for_instance
+from ..workers_manager import (
+    reconcile_workers_after_cleanup,
+    start_workers_for_instance,
+)
 from ..backpack_manager import (
     resolve_backpack_args,
     validate_backpack_structure,
@@ -740,6 +743,13 @@ def _start_workers(
     )
     if factory_proc:
         cleanup_manager.register_subprocess(factory_proc)
+        cleanup_manager.register_cleanup_callback(
+            lambda cleanup_succeeded: reconcile_workers_after_cleanup(
+                ctx.root,
+                cleanup_succeeded=cleanup_succeeded,
+                expected_factory_pid=factory_proc.pid,
+            )
+        )
     return factory_proc
 
 

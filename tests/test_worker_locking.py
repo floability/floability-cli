@@ -6,10 +6,13 @@ import subprocess
 from argparse import Namespace
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+from types import SimpleNamespace
 
 import pytest
 
 from floability import instance_lock_manager, workers_manager
+from floability.cleanup import CleanupManager
+from floability.ops import run as run_ops
 
 
 class _FactoryProcess:
@@ -41,6 +44,26 @@ def _prepare_instance(tmp_path):
             }
         ),
         encoding="utf-8",
+    )
+
+
+def _record_running_workers(tmp_path, factory_pid=43210, factory_pgid=54321):
+    assert instance_lock_manager.acquire_workers_lock(tmp_path) is True
+    assert instance_lock_manager.promote_workers_lock(
+        tmp_path,
+        factory_pid=factory_pid,
+        factory_pgid=factory_pgid,
+        manager_name="worker-lock-test-manager",
+    )
+    assert workers_manager._write_worker_metadata(
+        tmp_path,
+        {
+            "factory_pid": factory_pid,
+            "factory_pgid": factory_pgid,
+            "manager_name": "worker-lock-test-manager",
+            "status": "running",
+            "started_at": 1.0,
+        },
     )
 
 
@@ -231,3 +254,132 @@ def test_running_worker_lock_uses_factory_process_group(tmp_path, monkeypatch):
     monkeypatch.setattr(instance_lock_manager, "_process_alive", lambda _pid: False)
 
     assert instance_lock_manager.are_workers_running(tmp_path) is True
+
+
+def test_successful_cleanup_stops_worker_state_and_releases_matching_lock(tmp_path):
+    _prepare_instance(tmp_path)
+    _record_running_workers(tmp_path)
+
+    assert workers_manager.reconcile_workers_after_cleanup(
+        tmp_path,
+        cleanup_succeeded=True,
+        expected_factory_pid=43210,
+    )
+
+    worker_data = json.loads(
+        (tmp_path / "metadata" / "workers.json").read_text(encoding="utf-8")
+    )
+    assert worker_data["status"] == "stopped"
+    assert worker_data["stop_reason"] == "run_cleanup"
+    assert worker_data["stopped_at"] > 0
+    assert not (tmp_path / "metadata" / "workers.lock").exists()
+
+
+def test_incomplete_cleanup_retains_lock_and_retry_reconciles_state(tmp_path):
+    _prepare_instance(tmp_path)
+    _record_running_workers(tmp_path)
+
+    assert workers_manager.reconcile_workers_after_cleanup(
+        tmp_path,
+        cleanup_succeeded=False,
+        expected_factory_pid=43210,
+    )
+
+    worker_data = json.loads(
+        (tmp_path / "metadata" / "workers.json").read_text(encoding="utf-8")
+    )
+    assert worker_data["status"] == "cleanup_incomplete"
+    assert worker_data["cleanup_attempted_at"] > 0
+    assert "remained alive" in worker_data["cleanup_error"]
+    assert (tmp_path / "metadata" / "workers.lock").exists()
+
+    assert workers_manager.reconcile_workers_after_cleanup(
+        tmp_path,
+        cleanup_succeeded=True,
+        expected_factory_pid=43210,
+    )
+
+    worker_data = json.loads(
+        (tmp_path / "metadata" / "workers.json").read_text(encoding="utf-8")
+    )
+    assert worker_data["status"] == "stopped"
+    assert "cleanup_attempted_at" not in worker_data
+    assert "cleanup_error" not in worker_data
+    assert not (tmp_path / "metadata" / "workers.lock").exists()
+
+
+def test_cleanup_does_not_change_state_owned_by_another_factory(tmp_path):
+    _prepare_instance(tmp_path)
+    _record_running_workers(tmp_path, factory_pid=90001, factory_pgid=90002)
+    metadata_path = tmp_path / "metadata" / "workers.json"
+    original_worker_data = json.loads(metadata_path.read_text(encoding="utf-8"))
+
+    assert workers_manager.reconcile_workers_after_cleanup(
+        tmp_path,
+        cleanup_succeeded=True,
+        expected_factory_pid=43210,
+    )
+
+    assert json.loads(metadata_path.read_text(encoding="utf-8")) == original_worker_data
+    assert (tmp_path / "metadata" / "workers.lock").exists()
+
+
+def test_cleanup_callback_failure_keeps_cleanup_retryable():
+    outcomes = iter([False, True])
+    cleanup = CleanupManager()
+    cleanup.register_cleanup_callback(lambda _succeeded: next(outcomes))
+
+    assert cleanup.cleanup() is False
+    assert cleanup.cleanup_complete is False
+    assert cleanup.cleanup() is True
+    assert cleanup.cleanup_complete is True
+
+
+def test_run_registers_worker_state_reconciliation(tmp_path, monkeypatch):
+    class CleanupRegistration:
+        def __init__(self):
+            self.processes = []
+            self.callbacks = []
+
+        def register_subprocess(self, process):
+            self.processes.append(process)
+
+        def register_cleanup_callback(self, callback):
+            self.callbacks.append(callback)
+
+    factory_process = SimpleNamespace(pid=43210)
+    cleanup = CleanupRegistration()
+    reconcile_calls = []
+    context = SimpleNamespace(root=tmp_path)
+    environment = SimpleNamespace(env_dir="/tmp/env", instance_env={})
+
+    monkeypatch.setattr(
+        run_ops,
+        "start_workers_for_instance",
+        lambda **_kwargs: factory_process,
+    )
+    monkeypatch.setattr(
+        run_ops,
+        "reconcile_workers_after_cleanup",
+        lambda *args, **kwargs: reconcile_calls.append((args, kwargs)) or True,
+    )
+
+    assert run_ops._start_workers(
+        Namespace(no_worker=False),
+        context,
+        environment,
+        cleanup,
+    ) is factory_process
+    assert cleanup.processes == [factory_process]
+    assert len(cleanup.callbacks) == 1
+
+    assert cleanup.callbacks[0](False) is True
+    assert reconcile_calls == [
+        (
+            (tmp_path,),
+            {
+                "cleanup_succeeded": False,
+                "expected_factory_pid": 43210,
+            },
+        )
+    ]
