@@ -87,11 +87,14 @@ def test_persisted_run_identity_is_used_by_manager_and_factory(
 
     def capture_factory_start(**kwargs):
         factory_call.update(kwargs)
-        return SimpleNamespace(pid=12345)
 
-    monkeypatch.setattr(workers_manager, "are_workers_running", lambda _path: False)
+        def keep_running(timeout):
+            raise workers_manager.subprocess.TimeoutExpired("vine_factory", timeout)
+
+        return SimpleNamespace(pid=12345, wait=keep_running)
+
     monkeypatch.setattr(workers_manager, "_start_vine_factory", capture_factory_start)
-    monkeypatch.setattr(workers_manager, "acquire_workers_lock", lambda _path: True)
+    monkeypatch.setattr(workers_manager.os, "getpgid", lambda _pid: 12345)
 
     workers_manager.start_workers_for_instance(
         tmp_path,

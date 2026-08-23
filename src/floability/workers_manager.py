@@ -12,7 +12,9 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -20,9 +22,11 @@ import yaml
 from .utils import get_conda_executable, normalize_worker_transfer_ports
 from .instance_lock_manager import (
     acquire_workers_lock,
+    promote_workers_lock,
     release_workers_lock,
-    are_workers_running,
 )
+
+FACTORY_STARTUP_GRACE_SECONDS = 2
 
 
 # -----------------------------------------------------------------------------
@@ -82,43 +86,76 @@ def start_workers_for_instance(
     if worker_pack:
         print(f"[workers]   Worker env : {worker_pack}")
 
-    if are_workers_running(instance_path):
-        print("[workers] Workers already running (lock present). Aborting.")
-        return None
-
-    if worker_provider == "vine_factory":
-        proc = _start_vine_factory(
-            manager_name=manager_name,
-            cfg=cfg,
-            run_dir=logs_dir,
-            scratch_dir=logs_dir,
-            manager_env_dir=env_dir,
-            instance_env=instance_env,
-        )
-    else:
-        raise ValueError(
-            f"Unknown worker_provider: {worker_provider!r}. Currently only 'vine_factory' is supported."
-        )
-
     if not acquire_workers_lock(instance_path):
-        print("[workers] Failed to acquire workers lock; stopping launched factory.")
-        try:
-            os.kill(proc.pid, signal.SIGTERM)
-        except Exception:
-            pass
-        return None
+        raise RuntimeError("Workers are already starting or running for this instance.")
 
-    _write_worker_metadata(
-        instance_path,
-        {
-            "factory_pid": proc.pid,
-            "manager_name": manager_name,
-            "batch_type": cfg["batch_type"],
-            "workers": cfg["max_workers"],
-            "cores_per_worker": cfg["cores"],
-            "status": "running",
-        },
-    )
+    proc = None
+    factory_pgid = None
+    lock_promoted = False
+    try:
+        if worker_provider == "vine_factory":
+            proc = _start_vine_factory(
+                manager_name=manager_name,
+                cfg=cfg,
+                run_dir=logs_dir,
+                scratch_dir=logs_dir,
+                manager_env_dir=env_dir,
+                instance_env=instance_env,
+            )
+        else:
+            raise ValueError(
+                f"Unknown worker_provider: {worker_provider!r}. "
+                "Currently only 'vine_factory' is supported."
+            )
+
+        try:
+            returncode = proc.wait(timeout=FACTORY_STARTUP_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            returncode = None
+        if returncode is not None:
+            raise RuntimeError(
+                f"vine_factory exited immediately with status {returncode}."
+            )
+
+        factory_pgid = os.getpgid(proc.pid)
+        if not promote_workers_lock(
+            instance_path,
+            factory_pid=proc.pid,
+            factory_pgid=factory_pgid,
+            manager_name=manager_name,
+        ):
+            raise RuntimeError("Could not record vine_factory lock ownership.")
+        lock_promoted = True
+
+        started_at = time.time()
+        if not _write_worker_metadata(
+            instance_path,
+            {
+                "factory_pid": proc.pid,
+                "factory_pgid": factory_pgid,
+                "manager_name": manager_name,
+                "batch_type": cfg["batch_type"],
+                "workers": cfg["max_workers"],
+                "cores_per_worker": cfg["cores"],
+                "status": "running",
+                "started_at": started_at,
+            },
+        ):
+            raise RuntimeError("Could not record vine_factory metadata.")
+    except BaseException:
+        if proc is not None:
+            _terminate_failed_factory(proc, factory_pgid)
+        if lock_promoted:
+            release_workers_lock(
+                instance_path,
+                expected_factory_pgid=factory_pgid,
+            )
+        else:
+            release_workers_lock(
+                instance_path,
+                expected_launcher_pid=os.getpid(),
+            )
+        raise
 
     print(f"[workers] Workers started. PID={proc.pid}")
 
@@ -381,8 +418,7 @@ def _start_vine_factory(
     try:
         stdout_fh = open(stdout_file, "w")
     except OSError as e:
-        print(f"[workers] Could not open log file: {e}")
-        sys.exit(1)
+        raise RuntimeError(f"Could not open vine_factory log file: {e}") from e
 
     try:
         proc = subprocess.Popen(
@@ -394,11 +430,13 @@ def _start_vine_factory(
             env=instance_env or os.environ.copy(),
         )
     except FileNotFoundError:
-        print("[workers] Error: 'vine_factory' not found in PATH.")
-        sys.exit(1)
+        stdout_fh.close()
+        raise RuntimeError("'vine_factory' not found in PATH.")
     except Exception as e:
-        print(f"[workers] Unexpected error launching vine_factory: {e}")
-        sys.exit(1)
+        stdout_fh.close()
+        raise RuntimeError(f"Unexpected error launching vine_factory: {e}") from e
+
+    stdout_fh.close()
 
     threading.Thread(target=_stream_stderr, args=(proc,), daemon=True).start()
     return proc
@@ -407,6 +445,19 @@ def _start_vine_factory(
 def _stream_stderr(proc) -> None:
     for line in proc.stderr:
         print(f"[workers] vine_factory: {line.strip()}")
+
+
+def _terminate_failed_factory(proc, factory_pgid: Optional[int]) -> None:
+    """Best-effort cleanup when factory startup cannot be committed."""
+    try:
+        if factory_pgid and factory_pgid != os.getpgrp():
+            os.killpg(factory_pgid, signal.SIGTERM)
+        else:
+            proc.terminate()
+    except ProcessLookupError:
+        pass
+    except Exception as error:
+        print(f"[workers] Warning: could not stop failed factory launch: {error}")
 
 
 def _instance_metadata_file(instance_path: Path) -> Path:
@@ -430,13 +481,32 @@ def _read_instance_metadata(instance_path: Path) -> Optional[Dict]:
         return None
 
 
-def _write_worker_metadata(instance_path: Path, worker_data: Dict) -> None:
+def _write_worker_metadata(instance_path: Path, worker_data: Dict) -> bool:
     mf = _workers_metadata_file(instance_path)
+    temporary_path = None
     try:
-        with open(mf, "w") as f:
-            json.dump(worker_data, f, indent=2)
+        mf.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary_path = tempfile.mkstemp(
+            prefix=f".{mf.name}.",
+            suffix=".tmp",
+            dir=mf.parent,
+        )
+        with os.fdopen(fd, "w") as stream:
+            json.dump(worker_data, stream, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, mf)
+        temporary_path = None
+        return True
     except Exception as e:
         print(f"[workers] Warning: could not write worker metadata: {e}")
+        return False
+    finally:
+        if temporary_path:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
 
 
 def _read_worker_metadata(instance_path: Path) -> Optional[Dict]:

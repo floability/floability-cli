@@ -7,7 +7,6 @@ from ..workers_manager import (
     stop_workers_for_instance,
     print_worker_status,
 )
-from ..instance_lock_manager import are_workers_running
 from ..instance_registry import resolve_instance
 
 
@@ -22,11 +21,6 @@ def start_workers(args):
     instance_path = Path(resolved).resolve()
     if not instance_path.is_dir():
         print(f"[floability] Error: Instance directory not found: {instance_path}")
-        return 1
-    if are_workers_running(instance_path):
-        print(
-            "[floability] Workers already running (lock present). Use 'floability workers status' or 'workers stop'."
-        )
         return 1
     try:
         proc = start_workers_for_instance(

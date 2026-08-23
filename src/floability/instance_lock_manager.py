@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -21,13 +22,48 @@ def _lock_path(instance_path: Path, lock_name: str) -> Path:
     return instance_path / "metadata" / lock_name
 
 
-def _write_lock_file(lock_path: Path) -> None:
-    data = {
-        "pid": os.getpid(),
-        "timestamp": time.time(),
-    }
-    with open(lock_path, "w") as f:
-        json.dump(data, f)
+def _create_lock_file(lock_path: Path, data: dict) -> bool:
+    """Publish a complete lock file without exposing partially written JSON."""
+    fd, temporary_path = tempfile.mkstemp(
+        prefix=f".{lock_path.name}.",
+        suffix=".tmp",
+        dir=lock_path.parent,
+    )
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump(data, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary_path, lock_path)
+            return True
+        except FileExistsError:
+            return False
+    finally:
+        try:
+            os.unlink(temporary_path)
+        except FileNotFoundError:
+            pass
+
+
+def _replace_lock_file(lock_path: Path, data: dict) -> None:
+    """Atomically replace an existing lock with updated ownership data."""
+    fd, temporary_path = tempfile.mkstemp(
+        prefix=f".{lock_path.name}.",
+        suffix=".tmp",
+        dir=lock_path.parent,
+    )
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump(data, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, lock_path)
+    finally:
+        try:
+            os.unlink(temporary_path)
+        except FileNotFoundError:
+            pass
 
 
 def _read_lock_file(lock_path: Path) -> Optional[dict]:
@@ -48,6 +84,16 @@ def _process_alive(pid: int) -> bool:
         return False
 
 
+def _process_group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
 def acquire_lock(instance_path: Path, lock_name: str) -> bool:
     lock_path = _lock_path(instance_path, lock_name)
     metadata_dir = lock_path.parent
@@ -63,14 +109,13 @@ def acquire_lock(instance_path: Path, lock_name: str) -> bool:
                 lock_path.unlink()
             except OSError:
                 return False
-    # Atomic create
-    try:
-        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.close(fd)
-        _write_lock_file(lock_path)
-        return True
-    except FileExistsError:
-        return False
+    return _create_lock_file(
+        lock_path,
+        {
+            "pid": os.getpid(),
+            "timestamp": time.time(),
+        },
+    )
 
 
 def release_lock(instance_path: Path, lock_name: str) -> None:
@@ -110,12 +155,109 @@ def is_instance_running(instance_path: Path) -> bool:
 
 
 def acquire_workers_lock(instance_path: Path) -> bool:
-    return acquire_lock(instance_path, WORKERS_LOCK_NAME)
+    """Atomically reserve worker startup for the current Floability process."""
+    lock_path = _lock_path(instance_path, WORKERS_LOCK_NAME)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if lock_path.exists():
+        data = _read_lock_file(lock_path)
+        if data and _workers_lock_active(data):
+            return False
+        try:
+            lock_path.unlink()
+        except OSError:
+            return False
+
+    return _create_lock_file(
+        lock_path,
+        {
+            "state": "starting",
+            "launcher_pid": os.getpid(),
+            "created_at": time.time(),
+        },
+    )
 
 
-def release_workers_lock(instance_path: Path) -> None:
-    release_lock(instance_path, WORKERS_LOCK_NAME)
+def promote_workers_lock(
+    instance_path: Path,
+    factory_pid: int,
+    factory_pgid: int,
+    manager_name: str,
+) -> bool:
+    """Transfer a startup reservation to the launched factory process group."""
+    lock_path = _lock_path(instance_path, WORKERS_LOCK_NAME)
+    data = _read_lock_file(lock_path)
+    if not data:
+        return False
+    if data.get("state") != "starting":
+        return False
+    if data.get("launcher_pid") != os.getpid():
+        return False
+
+    _replace_lock_file(
+        lock_path,
+        {
+            "state": "running",
+            "factory_pid": factory_pid,
+            "factory_pgid": factory_pgid,
+            "manager_name": manager_name,
+            "created_at": data.get("created_at", time.time()),
+            "updated_at": time.time(),
+        },
+    )
+    return True
+
+
+def release_workers_lock(
+    instance_path: Path,
+    *,
+    expected_launcher_pid: Optional[int] = None,
+    expected_factory_pgid: Optional[int] = None,
+) -> bool:
+    """Release a worker lock, optionally only when ownership still matches."""
+    lock_path = _lock_path(instance_path, WORKERS_LOCK_NAME)
+    if not lock_path.exists():
+        return True
+
+    if expected_launcher_pid is not None or expected_factory_pgid is not None:
+        data = _read_lock_file(lock_path)
+        if not data:
+            return False
+        if (
+            expected_launcher_pid is not None
+            and data.get("launcher_pid") != expected_launcher_pid
+        ):
+            return False
+        if (
+            expected_factory_pgid is not None
+            and data.get("factory_pgid") != expected_factory_pgid
+        ):
+            return False
+
+    try:
+        lock_path.unlink()
+        return True
+    except OSError:
+        return False
 
 
 def are_workers_running(instance_path: Path) -> bool:
-    return is_lock_active(instance_path, WORKERS_LOCK_NAME)
+    data = _read_lock_file(_lock_path(instance_path, WORKERS_LOCK_NAME))
+    return bool(data and _workers_lock_active(data))
+
+
+def _workers_lock_active(data: dict) -> bool:
+    state = data.get("state")
+    if state == "starting":
+        launcher_pid = data.get("launcher_pid")
+        return bool(launcher_pid and _process_alive(launcher_pid))
+    if state == "running":
+        factory_pgid = data.get("factory_pgid")
+        if factory_pgid:
+            return _process_group_alive(factory_pgid)
+        factory_pid = data.get("factory_pid")
+        return bool(factory_pid and _process_alive(factory_pid))
+
+    # Backward compatibility with the original generic worker-lock format.
+    legacy_pid = data.get("pid")
+    return bool(legacy_pid and _process_alive(legacy_pid))
