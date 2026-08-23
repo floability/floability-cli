@@ -16,13 +16,19 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import yaml
-from .utils import get_conda_executable, normalize_worker_transfer_ports
+from .cleanup import CleanupManager
+from .utils import (
+    get_conda_executable,
+    normalize_manager_ports,
+    normalize_worker_transfer_ports,
+)
 from .instance_lock_manager import (
     acquire_workers_lock,
     promote_workers_lock,
+    read_workers_lock,
     release_workers_lock,
 )
 
@@ -40,6 +46,7 @@ def start_workers_for_instance(
     env_dir: Optional[str] = None,
     instance_env: Optional[Dict] = None,
     worker_provider: str = "vine_factory",
+    detached: bool = False,
 ) -> Optional[object]:
     """Start workers for an existing instance.
 
@@ -50,8 +57,10 @@ def start_workers_for_instance(
                        compute_spec, debug_workers.  Metadata fills any missing fields.
         env_dir:       Path to extracted manager conda env.  When provided,
                        vine_factory runs inside this env via ``conda run``.
-        instance_env:  Subprocess env dict (from ``_build_instance_env``).
+        instance_env:  Prepared subprocess environment for the factory.
         worker_provider:   Worker backend.  Currently only ``"vine_factory"``.
+        detached:      Write factory stderr to a durable log instead of a
+                       daemon console-streaming thread.
 
     Returns:
         Popen handle if started successfully, None otherwise.
@@ -73,7 +82,7 @@ def start_workers_for_instance(
         )
 
     logs_dir = str(instance_path / "logs")
-    
+
     # Normalize worker settings from all sources (defaults, metadata, compute spec, CLI)
     cfg = _normalize_compute_specs(cli_args, metadata, worker_pack)
 
@@ -101,6 +110,7 @@ def start_workers_for_instance(
                 scratch_dir=logs_dir,
                 manager_env_dir=env_dir,
                 instance_env=instance_env,
+                detached=detached,
             )
         else:
             raise ValueError(
@@ -160,6 +170,72 @@ def start_workers_for_instance(
     print(f"[workers] Workers started. PID={proc.pid}")
 
     return proc
+
+
+def resolve_instance_worker_runtime(instance_path: Path) -> Tuple[str, Dict]:
+    """Restore and validate the runtime needed by standalone worker startup."""
+    metadata = _read_instance_metadata(instance_path)
+    if not metadata:
+        raise RuntimeError("Could not read instance metadata.")
+
+    env_dir_value = metadata.get("env_dir")
+    if not env_dir_value:
+        raise RuntimeError(
+            "No prepared manager environment is recorded. Start the instance "
+            "with 'floability run' or 'floability execute' to prepare its runtime."
+        )
+
+    env_dir = Path(env_dir_value)
+    if not env_dir.is_dir():
+        raise RuntimeError(f"Recorded manager environment does not exist: {env_dir}")
+
+    vine_factory_path = env_dir / "bin" / "vine_factory"
+    if not vine_factory_path.is_file() or not os.access(vine_factory_path, os.X_OK):
+        raise RuntimeError(
+            "Prepared manager environment does not contain an executable "
+            f"vine_factory: {vine_factory_path}"
+        )
+
+    worker_pack = metadata.get("worker_environment_pack")
+    if worker_pack and not Path(worker_pack).is_file():
+        raise RuntimeError(
+            f"Recorded worker environment pack does not exist: {worker_pack}"
+        )
+
+    manager_name = metadata.get("manager_name")
+    if not manager_name:
+        raise RuntimeError("No manager_name found in instance metadata.")
+
+    saved_args = metadata.get("cli_args") or {}
+    manager_ports = metadata.get("manager_ports") or saved_args.get("manager_ports")
+    instance_env = os.environ.copy()
+    for key in (
+        "CONDA_PREFIX",
+        "CONDA_DEFAULT_ENV",
+        "CONDA_PROMPT_MODIFIER",
+        "CONDA_SHLVL",
+        "_CE_CONDA",
+        "_CE_M",
+    ):
+        instance_env.pop(key, None)
+
+    instance_env["PATH"] = (
+        str(env_dir / "bin") + os.pathsep + instance_env.get("PATH", "")
+    )
+    instance_env["VINE_MANAGER_NAME"] = str(manager_name)
+    instance_env["VINE_MANAGER_PORTS"] = normalize_manager_ports(
+        manager_ports or "9123:9150"
+    )
+    instance_env["FLOABILITY_WORKERS_ENABLED"] = "1"
+
+    saved_env_vars = saved_args.get("env_vars")
+    if saved_env_vars and saved_env_vars != "None":
+        for pair in str(saved_env_vars).split(","):
+            if "=" in pair:
+                key, value = pair.split("=", 1)
+                instance_env[key.strip()] = value.strip()
+
+    return str(env_dir), instance_env
 
 
 def reconcile_workers_after_cleanup(
@@ -237,31 +313,66 @@ def reconcile_workers_after_cleanup(
 
 
 def stop_workers_for_instance(instance_path: Path) -> bool:
-    """Send SIGTERM to the factory process and release the workers lock."""
+    """Stop the owned factory process group and reconcile terminal state."""
     data = _read_worker_metadata(instance_path)
     if not data:
         print("[workers] No worker metadata found. Workers may not be running.")
         return False
-    pid = data.get("factory_pid")
-    if not pid:
-        print("[workers] No factory PID found in worker metadata.")
+
+    lock_data = read_workers_lock(instance_path)
+    if data.get("status") == "stopped" and not lock_data:
+        print(f"[workers] Workers are already stopped for instance {instance_path}.")
+        return True
+
+    factory_pid = data.get("factory_pid")
+    factory_pgid = data.get("factory_pgid")
+    if not factory_pid or not factory_pgid:
+        print("[workers] Worker metadata has no verifiable factory PID/PGID.")
         return False
-    print(f"[workers] Stopping workers for instance {instance_path} (PID={pid})")
-    try:
-        os.kill(pid, signal.SIGTERM)
-        print(f"[workers] Sent SIGTERM to factory process {pid}.")
-    except ProcessLookupError:
-        print(f"[workers] Process {pid} not found; already stopped?")
-    except PermissionError:
-        print(f"[workers] Permission denied to kill process {pid}.")
+
+    if not lock_data:
+        print(
+            "[workers] Cannot safely stop workers because workers.lock is "
+            "missing or unreadable."
+        )
         return False
-    except Exception as e:
-        print(f"[workers] Error stopping workers: {e}")
+
+    if (
+        lock_data.get("state") != "running"
+        or lock_data.get("factory_pid") != factory_pid
+        or lock_data.get("factory_pgid") != factory_pgid
+    ):
+        print(
+            "[workers] Worker lock and metadata ownership do not match; "
+            "refusing to signal."
+        )
         return False
-    data["status"] = "stopped"
-    _write_worker_metadata(instance_path, data)
-    release_workers_lock(instance_path)
-    return True
+
+    stopping_data = dict(data)
+    stopping_data.update(
+        {
+            "status": "stopping",
+            "stop_requested_at": time.time(),
+        }
+    )
+    if not _write_worker_metadata(instance_path, stopping_data):
+        return False
+
+    print(
+        f"[workers] Stopping workers for instance {instance_path} "
+        f"(PID={factory_pid}, PGID={factory_pgid})"
+    )
+    cleanup_manager = CleanupManager()
+    cleanup_manager.register_process_group(factory_pgid)
+    cleanup_manager.register_cleanup_callback(
+        lambda cleanup_succeeded: reconcile_workers_after_cleanup(
+            instance_path,
+            cleanup_succeeded=cleanup_succeeded,
+            expected_factory_pid=factory_pid,
+            reason="workers_stop",
+        )
+    )
+    return cleanup_manager.cleanup()
 
 
 def get_worker_status(instance_path: Path) -> Dict:
@@ -438,6 +549,7 @@ def _start_vine_factory(
     scratch_dir: str = "/tmp/",
     manager_env_dir: Optional[str] = None,
     instance_env: Optional[Dict] = None,
+    detached: bool = False,
 ) -> object:
     """Launch vine_factory with settings from cfg. Returns a Popen handle."""
     vine_factory_args = [
@@ -489,30 +601,45 @@ def _start_vine_factory(
     print(f"[workers] Launching: {' '.join(cmd)}")
     print(f"[workers] stdout  : {os.path.abspath(stdout_file)}")
 
+    stderr_file = None
+    if detached:
+        stderr_file = os.path.join(run_dir, "vine_factory.stderr")
+        print(f"[workers] stderr  : {os.path.abspath(stderr_file)}")
+
     try:
         stdout_fh = open(stdout_file, "w")
     except OSError as e:
         raise RuntimeError(f"Could not open vine_factory log file: {e}") from e
 
+    stderr_fh = None
     try:
+        if stderr_file:
+            stderr_fh = open(stderr_file, "w")
         proc = subprocess.Popen(
             cmd,
             stdout=stdout_fh,
-            stderr=subprocess.PIPE,
+            stderr=stderr_fh if stderr_fh is not None else subprocess.PIPE,
             text=True,
             preexec_fn=os.setsid,
             env=instance_env or os.environ.copy(),
         )
     except FileNotFoundError:
         stdout_fh.close()
+        if stderr_fh is not None:
+            stderr_fh.close()
         raise RuntimeError("'vine_factory' not found in PATH.")
     except Exception as e:
         stdout_fh.close()
+        if stderr_fh is not None:
+            stderr_fh.close()
         raise RuntimeError(f"Unexpected error launching vine_factory: {e}") from e
 
     stdout_fh.close()
+    if stderr_fh is not None:
+        stderr_fh.close()
 
-    threading.Thread(target=_stream_stderr, args=(proc,), daemon=True).start()
+    if not detached:
+        threading.Thread(target=_stream_stderr, args=(proc,), daemon=True).start()
     return proc
 
 

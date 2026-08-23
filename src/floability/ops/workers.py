@@ -3,10 +3,12 @@
 from pathlib import Path
 
 from ..workers_manager import (
+    resolve_instance_worker_runtime,
     start_workers_for_instance,
     stop_workers_for_instance,
     print_worker_status,
 )
+from ..instance_lock_manager import is_instance_running
 from ..instance_registry import resolve_instance
 
 
@@ -22,10 +24,22 @@ def start_workers(args):
     if not instance_path.is_dir():
         print(f"[floability] Error: Instance directory not found: {instance_path}")
         return 1
+    if not is_instance_running(instance_path):
+        print(
+            "[floability] Error: Standalone workers can only attach to an "
+            "active instance run. Start the matching workflow first with "
+            "'floability run' or 'floability execute' using:\n"
+            f"[floability]   --instance {instance_path} --no-worker"
+        )
+        return 1
     try:
+        env_dir, instance_env = resolve_instance_worker_runtime(instance_path)
         proc = start_workers_for_instance(
             instance_path=instance_path,
             cli_args=args,
+            env_dir=env_dir,
+            instance_env=instance_env,
+            detached=True,
         )
         if proc:
             print(

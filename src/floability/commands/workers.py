@@ -95,6 +95,14 @@ class WorkersCommand(BaseCommand):
 
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> int:
         """Execute workers command."""
+        if args.workers_subcommand == "start":
+            from floability.sites import apply_site_defaults
+
+            apply_site_defaults(
+                args,
+                explicit_args=getattr(args, "_explicit_args", None),
+            )
+
         from ..ops.workers import run_workers_command
 
         return run_workers_command(args)

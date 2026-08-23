@@ -246,6 +246,11 @@ def are_workers_running(instance_path: Path) -> bool:
     return bool(data and _workers_lock_active(data))
 
 
+def read_workers_lock(instance_path: Path) -> Optional[dict]:
+    """Return worker lock ownership data, or ``None`` when unavailable."""
+    return _read_lock_file(_lock_path(instance_path, WORKERS_LOCK_NAME))
+
+
 def _workers_lock_active(data: dict) -> bool:
     state = data.get("state")
     if state == "starting":

@@ -28,6 +28,10 @@ class CleanupManager:
         self.subprocesses.append(proc)
         self.process_groups[id(proc)] = os.getpgid(proc.pid)
 
+    def register_process_group(self, pgid):
+        """Track an existing process group when no ``Popen`` handle exists."""
+        self.process_groups[("pgid", pgid)] = pgid
+
     def register_directory(self, directory):
         self.directories.append(directory)
 
