@@ -292,3 +292,160 @@ def test_worker_stop_is_idempotent_after_verified_stop(tmp_path):
     )
 
     assert workers_manager.stop_workers_for_instance(tmp_path) is True
+
+
+def test_worker_status_uses_live_factory_group_not_wrapper_pid(tmp_path, monkeypatch):
+    _write_instance_metadata(tmp_path)
+    _write_running_worker_state(tmp_path)
+    monkeypatch.setattr(workers_manager, "is_process_group_alive", lambda _pgid: True)
+    monkeypatch.setattr(
+        workers_manager,
+        "is_process_alive",
+        lambda _pid: pytest.fail("promoted locks must be checked by process group"),
+    )
+
+    status = workers_manager.get_worker_status(tmp_path)
+
+    assert status["lifecycle_state"] == "running"
+    assert status["process_running"] is True
+    assert status["liveness_source"] == "process_group"
+    assert status["consistent"] is True
+
+
+def test_worker_status_reconciles_dead_matching_group_as_stale(tmp_path, monkeypatch):
+    _write_instance_metadata(tmp_path)
+    _write_running_worker_state(tmp_path)
+    monkeypatch.setattr(workers_manager, "is_process_group_alive", lambda _pgid: False)
+
+    status = workers_manager.get_worker_status(tmp_path)
+
+    assert status["lifecycle_state"] == "stale"
+    assert status["consistent"] is True
+    worker_data = json.loads(
+        (tmp_path / "metadata" / "workers.json").read_text(encoding="utf-8")
+    )
+    assert worker_data["status"] == "stale"
+    assert worker_data["stale_detected_at"] > 0
+    assert "not running" in worker_data["stale_reason"]
+    assert not (tmp_path / "metadata" / "workers.lock").exists()
+
+
+def test_worker_status_preserves_clean_stopped_state(tmp_path):
+    _write_instance_metadata(tmp_path)
+    assert workers_manager._write_worker_metadata(
+        tmp_path,
+        {
+            "factory_pid": 43210,
+            "factory_pgid": 54321,
+            "status": "stopped",
+            "stopped_at": 2.0,
+        },
+    )
+
+    status = workers_manager.get_worker_status(tmp_path)
+
+    assert status["lifecycle_state"] == "stopped"
+    assert status["process_running"] is False
+    assert status["consistent"] is True
+
+
+def test_worker_status_preserves_mismatched_ownership(tmp_path, monkeypatch):
+    _write_instance_metadata(tmp_path)
+    _write_running_worker_state(tmp_path)
+    lock_path = tmp_path / "metadata" / "workers.lock"
+    lock_data = json.loads(lock_path.read_text(encoding="utf-8"))
+    lock_data["factory_pgid"] = 60000
+    lock_path.write_text(json.dumps(lock_data), encoding="utf-8")
+    original_worker_data = (tmp_path / "metadata" / "workers.json").read_text(
+        encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        workers_manager,
+        "is_process_group_alive",
+        lambda _pgid: pytest.fail("mismatched ownership must not be inspected"),
+    )
+
+    status = workers_manager.get_worker_status(tmp_path)
+
+    assert status["lifecycle_state"] == "unknown/inconsistent"
+    assert status["consistent"] is False
+    assert lock_path.exists()
+    assert (
+        tmp_path / "metadata" / "workers.json"
+    ).read_text(encoding="utf-8") == original_worker_data
+
+
+@pytest.mark.parametrize("filename", ["workers.json", "workers.lock"])
+def test_worker_status_preserves_malformed_state(tmp_path, filename):
+    _write_instance_metadata(tmp_path)
+    malformed_file = tmp_path / "metadata" / filename
+    malformed_file.write_text("{not-json", encoding="utf-8")
+
+    status = workers_manager.get_worker_status(tmp_path)
+
+    assert status["lifecycle_state"] == "unknown/inconsistent"
+    assert status["consistent"] is False
+    assert malformed_file.read_text(encoding="utf-8") == "{not-json"
+
+
+def test_worker_status_rejects_non_object_json(tmp_path):
+    _write_instance_metadata(tmp_path)
+    workers_file = tmp_path / "metadata" / "workers.json"
+    workers_file.write_text("[]", encoding="utf-8")
+
+    status = workers_manager.get_worker_status(tmp_path)
+
+    assert status["lifecycle_state"] == "unknown/inconsistent"
+    assert status["consistent"] is False
+    assert workers_file.read_text(encoding="utf-8") == "[]"
+
+
+def test_permission_denied_process_checks_are_treated_as_alive(monkeypatch):
+    def deny_process_access(_identifier, _signal):
+        raise PermissionError
+
+    monkeypatch.setattr(instance_lock_manager.os, "kill", deny_process_access)
+    monkeypatch.setattr(instance_lock_manager.os, "killpg", deny_process_access)
+
+    assert instance_lock_manager.is_process_alive(43210) is True
+    assert instance_lock_manager.is_process_group_alive(54321) is True
+
+
+def test_worker_status_supports_live_legacy_lock(tmp_path, monkeypatch):
+    _write_instance_metadata(tmp_path)
+    lock_path = tmp_path / "metadata" / "workers.lock"
+    lock_path.write_text(json.dumps({"pid": 43210}), encoding="utf-8")
+    monkeypatch.setattr(workers_manager, "is_process_alive", lambda _pid: True)
+
+    status = workers_manager.get_worker_status(tmp_path)
+
+    assert status["lifecycle_state"] == "running"
+    assert status["process_running"] is True
+    assert status["liveness_source"] == "legacy_pid"
+    assert status["consistent"] is True
+
+
+def test_worker_status_removes_dead_legacy_lock(tmp_path, monkeypatch):
+    _write_instance_metadata(tmp_path)
+    lock_path = tmp_path / "metadata" / "workers.lock"
+    lock_path.write_text(json.dumps({"pid": 43210}), encoding="utf-8")
+    monkeypatch.setattr(workers_manager, "is_process_alive", lambda _pid: False)
+
+    status = workers_manager.get_worker_status(tmp_path)
+
+    assert status["lifecycle_state"] == "stale"
+    assert status["consistent"] is True
+    assert not lock_path.exists()
+
+
+@pytest.mark.parametrize(("consistent", "expected"), [(True, 0), (False, 1)])
+def test_worker_status_command_exit_code(tmp_path, monkeypatch, consistent, expected):
+    _write_instance_metadata(tmp_path)
+    monkeypatch.setattr(worker_ops, "resolve_instance", lambda _value: str(tmp_path))
+    monkeypatch.setattr(
+        worker_ops,
+        "print_worker_status",
+        lambda _path: consistent,
+    )
+
+    assert worker_ops.status_workers(Namespace(instance=str(tmp_path))) == expected

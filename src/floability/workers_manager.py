@@ -19,17 +19,20 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 import yaml
+
 from .cleanup import CleanupManager
+from .instance_lock_manager import (
+    acquire_workers_lock,
+    is_process_alive,
+    is_process_group_alive,
+    promote_workers_lock,
+    read_workers_lock,
+    release_workers_lock,
+)
 from .utils import (
     get_conda_executable,
     normalize_manager_ports,
     normalize_worker_transfer_ports,
-)
-from .instance_lock_manager import (
-    acquire_workers_lock,
-    promote_workers_lock,
-    read_workers_lock,
-    release_workers_lock,
 )
 
 FACTORY_STARTUP_GRACE_SECONDS = 2
@@ -78,7 +81,8 @@ def start_workers_for_instance(
     worker_pack = metadata.get("worker_environment_pack")
     if not worker_pack:
         print(
-            "[workers] Warning: no worker environment pack in metadata — workers will use system Python."
+            "[workers] Warning: no worker environment pack in metadata — "
+            "workers will use system Python."
         )
 
     logs_dir = str(instance_path / "logs")
@@ -158,6 +162,7 @@ def start_workers_for_instance(
         if lock_promoted:
             release_workers_lock(
                 instance_path,
+                expected_factory_pid=proc.pid,
                 expected_factory_pgid=factory_pgid,
             )
         else:
@@ -304,6 +309,7 @@ def reconcile_workers_after_cleanup(
 
     if not release_workers_lock(
         instance_path,
+        expected_factory_pid=expected_factory_pid,
         expected_factory_pgid=factory_pgid,
     ):
         print("[workers] Warning: could not release the matching workers.lock.")
@@ -376,23 +382,194 @@ def stop_workers_for_instance(instance_path: Path) -> bool:
 
 
 def get_worker_status(instance_path: Path) -> Dict:
-    """Return a status dict with metadata, worker_data, and process_running."""
+    """Derive and safely reconcile worker status from metadata and ownership."""
+    workers_file = _workers_metadata_file(instance_path)
+    lock_file = instance_path / "metadata" / "workers.lock"
+    worker_data = _read_worker_metadata(instance_path)
+    lock_data = read_workers_lock(instance_path)
     status = {
         "metadata": _read_instance_metadata(instance_path),
-        "worker_data": _read_worker_metadata(instance_path),
+        "worker_data": worker_data,
+        "lock_data": lock_data,
+        "lifecycle_state": "not_started",
         "process_running": False,
+        "liveness_source": "none",
+        "consistent": True,
+        "diagnostics": [],
     }
-    wd = status["worker_data"]
-    if wd and wd.get("factory_pid"):
-        try:
-            os.kill(wd["factory_pid"], 0)
-            status["process_running"] = True
-        except (ProcessLookupError, PermissionError):
-            status["process_running"] = False
-    return status
+
+    def inconsistent(message: str) -> Dict:
+        status["lifecycle_state"] = "unknown/inconsistent"
+        status["consistent"] = False
+        status["diagnostics"].append(message)
+        return status
+
+    if worker_data is not None and not isinstance(worker_data, dict):
+        return inconsistent("workers.json must contain a JSON object.")
+    if lock_data is not None and not isinstance(lock_data, dict):
+        return inconsistent("workers.lock must contain a JSON object.")
+    if workers_file.exists() and worker_data is None:
+        return inconsistent("workers.json exists but is unreadable or malformed.")
+    if lock_file.exists() and lock_data is None:
+        return inconsistent("workers.lock exists but is unreadable or malformed.")
+
+    if lock_data is None:
+        if worker_data is None:
+            return status
+        recorded_state = worker_data.get("status", "unknown")
+        if recorded_state in {"stopped", "failed", "stale"}:
+            status["lifecycle_state"] = recorded_state
+            return status
+        return inconsistent(
+            f"workers.json records '{recorded_state}' but workers.lock is absent."
+        )
+
+    lock_state = lock_data.get("state")
+    if lock_state == "starting":
+        launcher_pid = lock_data.get("launcher_pid")
+        if not isinstance(launcher_pid, int) or launcher_pid <= 0:
+            return inconsistent("Starting worker lock has no valid launcher PID.")
+        status["liveness_source"] = "launcher_pid"
+        status["process_running"] = is_process_alive(launcher_pid)
+        if status["process_running"]:
+            status["lifecycle_state"] = "starting"
+            return status
+        if not release_workers_lock(
+            instance_path,
+            expected_launcher_pid=launcher_pid,
+        ):
+            return inconsistent(
+                "Dead startup reservation could not be released safely."
+            )
+        status["lock_data"] = None
+        status["lifecycle_state"] = "stale"
+        status["diagnostics"].append("Removed a dead worker startup reservation.")
+        return status
+
+    if lock_state == "running":
+        factory_pid = lock_data.get("factory_pid")
+        factory_pgid = lock_data.get("factory_pgid")
+        if not all(
+            isinstance(identifier, int) and identifier > 0
+            for identifier in (factory_pid, factory_pgid)
+        ):
+            return inconsistent("Running worker lock has no valid factory PID/PGID.")
+        if worker_data is None:
+            return inconsistent("Running workers.lock has no matching workers.json.")
+        if (
+            worker_data.get("factory_pid") != factory_pid
+            or worker_data.get("factory_pgid") != factory_pgid
+        ):
+            return inconsistent("workers.lock and workers.json ownership do not match.")
+
+        recorded_state = worker_data.get("status", "unknown")
+        status["liveness_source"] = "process_group"
+        status["process_running"] = is_process_group_alive(factory_pgid)
+        if status["process_running"]:
+            if recorded_state in {"running", "stopping", "cleanup_incomplete"}:
+                status["lifecycle_state"] = recorded_state
+                return status
+            return inconsistent(
+                f"Factory group is live but workers.json records '{recorded_state}'."
+            )
+
+        if recorded_state in {"stopped", "failed", "stale"}:
+            if not release_workers_lock(
+                instance_path,
+                expected_factory_pid=factory_pid,
+                expected_factory_pgid=factory_pgid,
+            ):
+                return inconsistent(
+                    "Dead terminal worker lock could not be released safely."
+                )
+            status["lock_data"] = None
+            status["lifecycle_state"] = recorded_state
+            return status
+
+        stale_data = dict(worker_data)
+        stale_data.update(
+            {
+                "status": "stale",
+                "stale_detected_at": time.time(),
+                "stale_reason": "Recorded factory process group is not running.",
+            }
+        )
+        if not _write_worker_metadata(instance_path, stale_data):
+            return inconsistent("Dead worker group could not be recorded as stale.")
+        status["worker_data"] = stale_data
+        status["lifecycle_state"] = "stale"
+        if not release_workers_lock(
+            instance_path,
+            expected_factory_pid=factory_pid,
+            expected_factory_pgid=factory_pgid,
+        ):
+            return inconsistent("Stale worker lock could not be released safely.")
+        status["lock_data"] = None
+        status["diagnostics"].append(
+            "Recorded the dead factory group as stale and removed its matching lock."
+        )
+        return status
+
+    # Backward compatibility with the original generic worker lock format.
+    if lock_state is None and "pid" in lock_data:
+        legacy_pid = lock_data.get("pid")
+        if not isinstance(legacy_pid, int) or legacy_pid <= 0:
+            return inconsistent("Legacy worker lock has no valid PID.")
+        if worker_data and worker_data.get("factory_pid") not in (None, legacy_pid):
+            return inconsistent(
+                "Legacy lock PID and workers.json ownership do not match."
+            )
+        status["liveness_source"] = "legacy_pid"
+        status["process_running"] = is_process_alive(legacy_pid)
+        recorded_state = (
+            worker_data.get("status", "running") if worker_data else "running"
+        )
+        if status["process_running"]:
+            if recorded_state in {
+                "running",
+                "starting",
+                "stopping",
+                "cleanup_incomplete",
+            }:
+                status["lifecycle_state"] = recorded_state
+                return status
+            return inconsistent(
+                "Legacy worker PID is live but workers.json records "
+                f"'{recorded_state}'."
+            )
+
+        if worker_data and recorded_state not in {"stopped", "failed", "stale"}:
+            stale_data = dict(worker_data)
+            stale_data.update(
+                {
+                    "status": "stale",
+                    "stale_detected_at": time.time(),
+                    "stale_reason": "Recorded legacy factory process is not running.",
+                }
+            )
+            if not _write_worker_metadata(instance_path, stale_data):
+                return inconsistent(
+                    "Dead legacy worker could not be recorded as stale."
+                )
+            status["worker_data"] = stale_data
+        if not release_workers_lock(
+            instance_path,
+            expected_legacy_pid=legacy_pid,
+        ):
+            return inconsistent("Dead legacy worker lock could not be released safely.")
+        status["lock_data"] = None
+        status["lifecycle_state"] = (
+            recorded_state
+            if recorded_state in {"stopped", "failed", "stale"}
+            else "stale"
+        )
+        status["diagnostics"].append("Removed a dead legacy worker lock.")
+        return status
+
+    return inconsistent(f"Unsupported workers.lock state: {lock_state!r}.")
 
 
-def print_worker_status(instance_path: Path) -> None:
+def print_worker_status(instance_path: Path) -> bool:
     """Print a human-readable worker status summary to stdout."""
     sep = "=" * 70
     print(f"[workers] Status for instance: {instance_path}")
@@ -408,13 +585,20 @@ def print_worker_status(instance_path: Path) -> None:
     if wd:
         print("\n  Worker configuration:")
         print(f"    Factory PID    : {wd.get('factory_pid', 'N/A')}")
-        print(f"    Status         : {wd.get('status', 'unknown')}")
+        print(f"    Factory PGID   : {wd.get('factory_pgid', 'N/A')}")
+        print(f"    Recorded status: {wd.get('status', 'unknown')}")
         print(f"    Batch type     : {wd.get('batch_type', 'N/A')}")
         print(f"    Workers        : {wd.get('workers', 'N/A')}")
         print(f"    Cores/worker   : {wd.get('cores_per_worker', 'N/A')}")
-        print(f"    Process running: {'Yes' if status['process_running'] else 'No'}")
     else:
         print("\n  No worker metadata found.")
+
+    print(f"\n  Lifecycle state : {status['lifecycle_state']}")
+    print(f"  Liveness source : {status['liveness_source']}")
+    print(f"  Process/group alive: {'Yes' if status['process_running'] else 'No'}")
+    print(f"  State consistent: {'Yes' if status['consistent'] else 'No'}")
+    for diagnostic in status["diagnostics"]:
+        print(f"  Note             : {diagnostic}")
 
     log_file = instance_path / "logs" / "vine_factory.stdout"
     if log_file.exists():
@@ -434,6 +618,7 @@ def print_worker_status(instance_path: Path) -> None:
     else:
         print(f"\n  Log file not found: {log_file}")
     print(sep)
+    return status["consistent"]
 
 
 # -----------------------------------------------------------------------------

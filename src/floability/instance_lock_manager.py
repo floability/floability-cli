@@ -80,8 +80,10 @@ def _process_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
         return True
-    except OSError:
+    except ProcessLookupError:
         return False
+    except PermissionError:
+        return True
 
 
 def _process_group_alive(pgid: int) -> bool:
@@ -92,6 +94,16 @@ def _process_group_alive(pgid: int) -> bool:
         return False
     except PermissionError:
         return True
+
+
+def is_process_alive(pid: int) -> bool:
+    """Return whether a process exists, including one owned by another user."""
+    return _process_alive(pid)
+
+
+def is_process_group_alive(pgid: int) -> bool:
+    """Return whether a process group exists, including an inaccessible one."""
+    return _process_group_alive(pgid)
 
 
 def acquire_lock(instance_path: Path, lock_name: str) -> bool:
@@ -212,14 +224,24 @@ def release_workers_lock(
     instance_path: Path,
     *,
     expected_launcher_pid: Optional[int] = None,
+    expected_factory_pid: Optional[int] = None,
     expected_factory_pgid: Optional[int] = None,
+    expected_legacy_pid: Optional[int] = None,
 ) -> bool:
     """Release a worker lock, optionally only when ownership still matches."""
     lock_path = _lock_path(instance_path, WORKERS_LOCK_NAME)
     if not lock_path.exists():
         return True
 
-    if expected_launcher_pid is not None or expected_factory_pgid is not None:
+    if any(
+        expected is not None
+        for expected in (
+            expected_launcher_pid,
+            expected_factory_pid,
+            expected_factory_pgid,
+            expected_legacy_pid,
+        )
+    ):
         data = _read_lock_file(lock_path)
         if not data:
             return False
@@ -229,8 +251,18 @@ def release_workers_lock(
         ):
             return False
         if (
+            expected_factory_pid is not None
+            and data.get("factory_pid") != expected_factory_pid
+        ):
+            return False
+        if (
             expected_factory_pgid is not None
             and data.get("factory_pgid") != expected_factory_pgid
+        ):
+            return False
+        if (
+            expected_legacy_pid is not None
+            and data.get("pid") != expected_legacy_pid
         ):
             return False
 

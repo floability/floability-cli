@@ -2,14 +2,14 @@
 
 from pathlib import Path
 
+from ..instance_lock_manager import is_instance_running
+from ..instance_registry import resolve_instance
 from ..workers_manager import (
+    print_worker_status,
     resolve_instance_worker_runtime,
     start_workers_for_instance,
     stop_workers_for_instance,
-    print_worker_status,
 )
-from ..instance_lock_manager import is_instance_running
-from ..instance_registry import resolve_instance
 
 
 def start_workers(args):
@@ -87,8 +87,7 @@ def status_workers(args):
     if not instance_path.is_dir():
         print(f"[floability] Error: Instance directory not found: {instance_path}")
         return 1
-    print_worker_status(instance_path)
-    return 0
+    return 0 if print_worker_status(instance_path) else 1
 
 
 def run_workers_command(args):
