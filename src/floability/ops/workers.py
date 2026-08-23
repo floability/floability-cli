@@ -14,20 +14,20 @@ from ..instance_registry import resolve_instance
 def start_workers(args):
     if not args.instance:
         print("[floability] Error: --instance is required for 'workers start'")
-        return
+        return 1
     resolved = resolve_instance(args.instance)
     if not resolved:
         print(f"[floability] Error: Instance reference not found: {args.instance}")
-        return
+        return 1
     instance_path = Path(resolved).resolve()
     if not instance_path.is_dir():
         print(f"[floability] Error: Instance directory not found: {instance_path}")
-        return
+        return 1
     if are_workers_running(instance_path):
         print(
             "[floability] Workers already running (lock present). Use 'floability workers status' or 'workers stop'."
         )
-        return
+        return 1
     try:
         proc = start_workers_for_instance(
             instance_path=instance_path,
@@ -42,39 +42,45 @@ def start_workers(args):
                 "[floability] To stop workers: floability workers stop --instance "
                 + str(instance_path)
             )
+            return 0
+        return 1
     except Exception as e:
         print(f"[floability] Error starting workers: {e}")
+        return 1
 
 
 def stop_workers(args):
     if not args.instance:
         print("[floability] Error: --instance is required for 'workers stop'")
-        return
+        return 1
     resolved = resolve_instance(args.instance)
     if not resolved:
         print(f"[floability] Error: Instance reference not found: {args.instance}")
-        return
+        return 1
     instance_path = Path(resolved).resolve()
     if not instance_path.is_dir():
         print(f"[floability] Error: Instance directory not found: {instance_path}")
-        return
+        return 1
     if not stop_workers_for_instance(instance_path):
         print("[floability] Failed to stop workers")
+        return 1
+    return 0
 
 
 def status_workers(args):
     if not args.instance:
         print("[floability] Error: --instance is required for 'workers status'")
-        return
+        return 1
     resolved = resolve_instance(args.instance)
     if not resolved:
         print(f"[floability] Error: Instance reference not found: {args.instance}")
-        return
+        return 1
     instance_path = Path(resolved).resolve()
     if not instance_path.is_dir():
         print(f"[floability] Error: Instance directory not found: {instance_path}")
-        return
+        return 1
     print_worker_status(instance_path)
+    return 0
 
 
 def run_workers_command(args):
@@ -87,10 +93,11 @@ def run_workers_command(args):
     - status: Show worker status and logs
     """
     if args.workers_subcommand == "start":
-        start_workers(args)
+        return start_workers(args)
     elif args.workers_subcommand == "stop":
-        stop_workers(args)
+        return stop_workers(args)
     elif args.workers_subcommand == "status":
-        status_workers(args)
+        return status_workers(args)
     else:
         print(f"[floability] Unknown workers subcommand: {args.workers_subcommand}")
+        return 1

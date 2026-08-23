@@ -22,7 +22,9 @@ class InstanceCommand(BaseCommand):
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         """Add instance command arguments."""
         instance_subparsers = parser.add_subparsers(
-            dest="instance_subcommand", help="Instance sub-commands"
+            dest="instance_subcommand",
+            help="Instance sub-commands",
+            required=True,
         )
 
         # instance create sub-command
@@ -139,13 +141,13 @@ class InstanceCommand(BaseCommand):
             help="Base directory to look for the latest symlink (default: ~/floability-base-dir).",
         )
 
-    def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
+    def execute(self, args: argparse.Namespace, cleanup_manager=None) -> int:
         """Execute instance command."""
         from floability.sites import apply_site_defaults
         from ..ops.instance import run_instance_command
 
         apply_site_defaults(args, explicit_args=getattr(args, "_explicit_args", None))
-        run_instance_command(args)
+        return run_instance_command(args)
 
     def get_examples(self) -> list:
         return [

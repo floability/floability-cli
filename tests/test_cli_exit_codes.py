@@ -113,6 +113,42 @@ def test_removed_workflow_options_are_rejected(removed_option):
     assert "unrecognized arguments" in result.stderr
 
 
+@pytest.mark.parametrize("command", ["instance", "workers"])
+def test_management_commands_require_a_subcommand(command):
+    result = _run_installed_cli(command)
+
+    assert result.returncode == 2
+    assert "the following arguments are required" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("instance", "stop", "missing-instance-for-exit-code-test"),
+        (
+            "workers",
+            "status",
+            "--instance",
+            "missing-instance-for-exit-code-test",
+        ),
+    ],
+)
+def test_management_commands_return_nonzero_for_a_missing_instance(args):
+    result = _run_installed_cli(*args)
+
+    assert result.returncode == 1
+    assert "Error" in result.stdout
+
+
+def test_workers_status_returns_zero_for_an_existing_instance_directory(tmp_path):
+    result = _run_installed_cli(
+        "workers", "status", "--instance", str(tmp_path)
+    )
+
+    assert result.returncode == 0
+    assert "Status for instance" in result.stdout
+
+
 def _run_installed_cli(*args):
     return subprocess.run(
         [str(Path(sys.executable).with_name("floability")), *args],

@@ -22,7 +22,9 @@ class WorkersCommand(BaseCommand):
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         """Add workers command arguments."""
         workers_subparsers = parser.add_subparsers(
-            dest="workers_subcommand", help="Workers sub-commands"
+            dest="workers_subcommand",
+            help="Workers sub-commands",
+            required=True,
         )
 
         # workers start sub-command
@@ -91,11 +93,11 @@ class WorkersCommand(BaseCommand):
             help="Path to the Floability instance directory (required).",
         )
 
-    def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
+    def execute(self, args: argparse.Namespace, cleanup_manager=None) -> int:
         """Execute workers command."""
         from ..ops.workers import run_workers_command
 
-        run_workers_command(args)
+        return run_workers_command(args)
 
     def get_examples(self) -> list:
         return [

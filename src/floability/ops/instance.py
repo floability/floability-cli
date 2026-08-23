@@ -43,11 +43,14 @@ def create_instance(args):
         _create_instance_impl(args)
     except ValueError as e:
         print(f"[floability] Error: {e}")
+        return 1
     except RuntimeError as e:
         print(f"[floability] Error: {e}")
+        return 1
     except Exception as e:
         print(f"[floability] Unexpected error: {e}")
         raise
+    return 0
 
 
 def _create_instance_impl(args):
@@ -209,12 +212,12 @@ def run_instance_command(args):
     """
     sub = getattr(args, "instance_subcommand", None)
     if sub == "create":
-        create_instance(args)
+        return create_instance(args)
     elif sub == "list":
         statuses = get_registered_instances_status()
         if not statuses:
             print("[floability] No registered instances.")
-            return
+            return 0
         print("[floability] Registered instances:")
         for name in sorted(statuses.keys()):
             st = statuses[name]
@@ -236,15 +239,17 @@ def run_instance_command(args):
         print(
             "[floability] Use: floability run --instance <name> or workers start --instance <name>"
         )
+        return 0
     elif sub == "stop":
-        stop_instance(args)
+        return stop_instance(args)
     elif sub == "latest":
-        go_to_latest_instance(args)
+        return go_to_latest_instance(args)
     else:
         print(f"[floability] Unknown instance subcommand: {sub}")
+        return 1
 
 
-def go_to_latest_instance(args) -> None:
+def go_to_latest_instance(args) -> int:
     """Print the path of the latest Floability instance.
 
     Resolution order:
@@ -261,14 +266,14 @@ def go_to_latest_instance(args) -> None:
 
     if symlink.is_symlink() and Path(symlink.resolve()).is_dir():
         print(str(symlink.resolve()))
-        return
+        return 0
 
     # Fallback: most recently created registry entry that still exists on disk
     prune_nonexistent_entries()
     entries = list_instances()
     if not entries:
         print("[floability] No instances found.", file=__import__("sys").stderr)
-        raise SystemExit(1)
+        return 1
 
     candidates = sorted(
         entries.values(),
@@ -279,10 +284,10 @@ def go_to_latest_instance(args) -> None:
         path = entry.get("path", "")
         if path and Path(path).is_dir():
             print(path)
-            return
+            return 0
 
     print("[floability] No instance paths found on disk.", file=__import__("sys").stderr)
-    raise SystemExit(1)
+    return 1
 
 
 def _read_lock_pid(lock_file: Path) -> int:
@@ -308,7 +313,7 @@ def _send_signal_to_pgid(pid: int, sig) -> bool:
             return False
 
 
-def stop_instance(args) -> None:
+def stop_instance(args) -> int:
     """Stop a running Floability instance.
 
     Behavior:
@@ -320,14 +325,14 @@ def stop_instance(args) -> None:
     ref = getattr(args, "instance", None)
     if not ref:
         print("[floability] Error: --instance is required for 'instance stop'")
-        return
+        return 1
 
     # Resolve short name to path
     resolved = resolve_instance(ref)
     instance_path = Path(resolved) if resolved else Path(ref)
     if not instance_path.is_dir():
         print(f"[floability] Error: Instance not found: {ref}")
-        return
+        return 1
 
     lock_file = instance_path / "metadata" / "instance.lock"
     pid = _read_lock_pid(lock_file) if lock_file.exists() else -1
@@ -362,3 +367,4 @@ def stop_instance(args) -> None:
     except Exception:
         pass
     print("[floability] Instance stop completed.")
+    return 0
