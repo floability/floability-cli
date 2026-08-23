@@ -1210,6 +1210,9 @@ def _build_instance_env(
     env["VINE_MANAGER_PORTS"] = normalize_manager_ports(
         getattr(args, "manager_ports", None) or "9123:9150"
     )
+    env["FLOABILITY_WORKERS_ENABLED"] = (
+        "0" if getattr(args, "no_worker", False) else "1"
+    )
 
     # -------------------------------------------------
     # PyUser overlay

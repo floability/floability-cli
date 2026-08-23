@@ -385,7 +385,26 @@ def test_instance_environment_puts_backpack_tools_first(monkeypatch, tmp_path):
     assert env["CONDA_EXE"] == "/opt/conda/bin/conda"
     assert env["VINE_MANAGER_NAME"] == "test-manager"
     assert env["VINE_MANAGER_PORTS"] == "9123,9150"
+    assert env["FLOABILITY_WORKERS_ENABLED"] == "1"
     assert env["WORKFLOW_SETTING"] == "enabled"
+
+
+def test_instance_environment_records_disabled_workers(monkeypatch, tmp_path):
+    ctx = _context(tmp_path)
+    monkeypatch.setattr(run_ops, "_get_env_python_version", lambda _prefix: "3.12")
+
+    env = run_ops._build_instance_env(
+        Namespace(
+            env_vars=None,
+            manager_name="test-manager",
+            manager_ports="9123:9150",
+            no_worker=True,
+        ),
+        ctx,
+        "/backpack/env",
+    )
+
+    assert env["FLOABILITY_WORKERS_ENABLED"] == "0"
 
 
 @pytest.mark.parametrize("exit_code, expected", [(0, True), (7, False)])
