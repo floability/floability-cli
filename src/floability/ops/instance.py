@@ -95,6 +95,7 @@ def _create_instance_impl(args):
     # Prepare instance structure & metadata via manager module
     instance_paths = prepare_instance(args, mode="instance")
     instance_root = str(instance_paths["root"])
+    instance_reference = instance_root
 
     # Register instance short name
     try:
@@ -103,6 +104,7 @@ def _create_instance_impl(args):
             args.manager_name,
             preferred_name=getattr(args, "name", None),
         )
+        instance_reference = short_name
         print(f"[floability] Registered instance short name: {short_name}")
     except Exception as e:
         print(f"[floability] Warning: could not register instance short name: {e}")
@@ -192,12 +194,8 @@ def _create_instance_impl(args):
     print("\n" + "=" * 70)
     print("[floability] Instance created successfully!")
     print(f"[floability] Instance path: {instance_root}")
-    print(f"[floability] Manager name: {args.manager_name}")
-    print("\n[floability] Next steps:")
-    print(
-        f"[floability]   1. Start workers: floability workers start --instance {instance_root}"
-    )
-    print(f"[floability]   2. Run workflow: cd {instance_root}/workflow && jupyter lab")
+    print("\n[floability] Next step:")
+    print(f"[floability]   floability run --instance {instance_reference}")
     print("=" * 70)
 
 

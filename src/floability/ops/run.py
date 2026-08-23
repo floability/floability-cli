@@ -3,6 +3,7 @@ Run and execute operations for Floability CLI.
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -93,11 +94,22 @@ def run_workflow(
         # Step 2: Determine instance source (new from backpack vs existing)
         new_instance_required = _is_new_instance_required(args)
 
+        # A TaskVine manager name identifies this execution attempt, not the
+        # reusable instance directory. Respect an explicit CLI name; otherwise
+        # give every run/execute attempt a fresh identity.
+        _select_run_manager_name(args)
+
         # Step 3: Prepare instance (new or existing)
         if new_instance_required:
             ctx = _prepare_new_instance(args, mode)
         else:
             ctx = _prepare_existing_instance(args)
+            _restore_existing_manager_ports(args, ctx.metadata_file)
+
+        # Workers may be started by a separate command and read their manager
+        # name from run.json, so publish the effective identity before any
+        # environment, catalog, factory, or workflow activity begins.
+        _persist_run_identity(args, ctx)
 
         # Initialize performance tracking
         perf = PerformanceTracker(
@@ -353,9 +365,6 @@ def _prepare_new_instance(args: argparse.Namespace, mode: str) -> InstanceContex
 
     print("[floability] Preparing new instance from backpack")
 
-    if getattr(args, "manager_name", None) is None:
-        args.manager_name = f"floability-{uuid.uuid4()}"
-
     resolve_backpack_args(args)
 
     if getattr(args, "backpack", None):
@@ -495,6 +504,60 @@ def _prepare_existing_instance(args: argparse.Namespace) -> InstanceContext:
         workflow_dir=workflow_dir,
         lock_acquired=True,
         is_new=False,
+    )
+
+
+def _select_run_manager_name(args: argparse.Namespace) -> str:
+    """Select the TaskVine manager name for one run/execute attempt."""
+    manager_name = getattr(args, "manager_name", None)
+    if not manager_name:
+        manager_name = f"floability-{uuid.uuid4()}"
+        args.manager_name = manager_name
+    return manager_name
+
+
+def _restore_existing_manager_ports(
+    args: argparse.Namespace,
+    metadata_file: Path,
+) -> None:
+    """Restore saved manager ports unless the user supplied them explicitly."""
+    explicit_args = set(getattr(args, "_explicit_args", ()) or ())
+    if "manager_ports" in explicit_args or not metadata_file.exists():
+        return
+
+    try:
+        with open(metadata_file) as metadata_stream:
+            metadata = json.load(metadata_stream)
+    except (OSError, json.JSONDecodeError):
+        return
+
+    saved_ports = metadata.get("manager_ports")
+    if saved_ports is None:
+        saved_ports = (metadata.get("cli_args") or {}).get("manager_ports")
+    if saved_ports and saved_ports != "None":
+        args.manager_ports = normalize_manager_ports(saved_ports)
+
+
+def _persist_run_identity(
+    args: argparse.Namespace,
+    ctx: InstanceContext,
+) -> None:
+    """Persist the effective TaskVine identity before runtime processes start."""
+    manager_ports = normalize_manager_ports(
+        getattr(args, "manager_ports", None) or "9123:9150"
+    )
+    args.manager_ports = manager_ports
+    update_instance_metadata(
+        ctx.metadata_file,
+        {
+            "manager_name": args.manager_name,
+            "manager_ports": manager_ports,
+            "cli_args": {
+                "manager_name": args.manager_name,
+                "manager_ports": manager_ports,
+            },
+        },
+        merge=True,
     )
 
 
@@ -988,8 +1051,6 @@ def _resolve_existing_instance_env(
     Reads per_instance_env and environment_spec from the saved run.json so
     the same env strategy that was used at creation time is applied on re-run.
     """
-    import json
-
     metadata: dict = {}
     if ctx.metadata_file.exists():
         try:
