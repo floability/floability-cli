@@ -427,11 +427,10 @@ def _create_conda_env(env_yml: str, env_path: str, is_worker_env: bool) -> None:
 def _pack_conda_env(env_path: str, tar_path: str) -> None:
     """Pack an existing conda environment into a tarball unconditionally.
 
-    Fixes file timestamps first (conda-pack fails on files with mtime=0/None).
+    Ensures conda-pack can derive a valid archive timestamp from Conda history.
     Raises subprocess.CalledProcessError on failure.
     """
     _ensure_conda_history_file(env_path)
-    _fix_file_timestamps(env_path)
     print(f"[environment] Packing '{env_path}' → '{tar_path}'")
     subprocess.run(
         ["conda-pack", "-p", env_path, "-o", tar_path, "--force"],
@@ -535,34 +534,6 @@ def _make_dir_writable(path: str) -> None:
         os.chmod(path, os.stat(path).st_mode | 0o200)
     except OSError:
         pass
-
-
-def _fix_file_timestamps(env_path: str) -> None:
-    """Fix files with invalid timestamps that cause conda-pack to fail.
-
-    conda-pack fails on files whose mtime is None or 0. This scans the
-    environment directory and resets any such timestamps to the current time.
-    """
-    current_time = time.time()
-    fixed_count = 0
-    for root, dirs, files in os.walk(env_path):
-        for file in files:
-            filepath = os.path.join(root, file)
-            try:
-                stat_info = os.stat(filepath)
-                if stat_info.st_mtime is None or stat_info.st_mtime == 0:
-                    os.utime(filepath, (current_time, current_time))
-                    fixed_count += 1
-            except (OSError, IOError) as e:
-                try:
-                    os.utime(filepath, (current_time, current_time))
-                    fixed_count += 1
-                except (OSError, IOError):
-                    print(
-                        f"[environment] Warning: Could not fix timestamp for {filepath}: {e}"
-                    )
-    if fixed_count > 0:
-        print(f"[environment] Fixed timestamps for {fixed_count} files")
 
 
 def _ensure_conda_history_file(env_path: str) -> None:

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from floability.environment_manager import _ensure_runtime_dependencies
+import os
+
+from floability.environment_manager import (
+    _ensure_runtime_dependencies,
+    _pack_conda_env,
+)
 
 
 def test_versioned_manager_dependencies_are_preserved():
@@ -61,3 +66,41 @@ def test_worker_environment_does_not_add_jupyter_or_ndcctools():
     assert dependencies == ["python=3.12", "cloudpickle"]
     assert any("ndcctools=7.17.1" in warning for warning in warnings)
     assert all("Floability added 'jupyter'" not in warning for warning in warnings)
+
+
+def test_pack_repairs_only_conda_history_and_ignores_dangling_symlinks(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    env_path = tmp_path / "environment"
+    history_file = env_path / "conda-meta" / "history"
+    history_file.parent.mkdir(parents=True)
+    history_file.touch()
+    os.utime(history_file, (0, 0))
+    (env_path / "dangling-documentation-link").symlink_to("missing-target")
+    tar_path = tmp_path / "environment.tar.gz"
+    calls = []
+
+    monkeypatch.setattr(
+        "floability.environment_manager.subprocess.run",
+        lambda command, check: calls.append((command, check)),
+    )
+
+    _pack_conda_env(str(env_path), str(tar_path))
+
+    assert history_file.stat().st_mtime > 0
+    assert calls == [
+        (
+            [
+                "conda-pack",
+                "-p",
+                str(env_path),
+                "-o",
+                str(tar_path),
+                "--force",
+            ],
+            True,
+        )
+    ]
+    assert "Could not fix timestamp" not in capsys.readouterr().out
