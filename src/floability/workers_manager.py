@@ -22,9 +22,13 @@ import yaml
 
 from .cleanup import CleanupManager
 from .instance_lock_manager import (
+    IDENTITY_GONE,
+    IDENTITY_OWNED,
     acquire_workers_lock,
+    capture_process_identity,
     is_process_alive,
     is_process_group_alive,
+    process_group_identity_status,
     promote_workers_lock,
     read_workers_lock,
     release_workers_lock,
@@ -104,6 +108,7 @@ def start_workers_for_instance(
 
     proc = None
     factory_pgid = None
+    factory_identity = None
     lock_promoted = False
     try:
         if worker_provider == "vine_factory":
@@ -132,11 +137,15 @@ def start_workers_for_instance(
             )
 
         factory_pgid = os.getpgid(proc.pid)
+        factory_identity = capture_process_identity(proc.pid)
+        if factory_identity is None:
+            raise RuntimeError("Could not capture vine_factory process identity.")
         if not promote_workers_lock(
             instance_path,
             factory_pid=proc.pid,
             factory_pgid=factory_pgid,
             manager_name=manager_name,
+            factory_identity=factory_identity,
         ):
             raise RuntimeError("Could not record vine_factory lock ownership.")
         lock_promoted = True
@@ -147,6 +156,7 @@ def start_workers_for_instance(
             {
                 "factory_pid": proc.pid,
                 "factory_pgid": factory_pgid,
+                "factory_owner": factory_identity,
                 "manager_name": manager_name,
                 "batch_type": cfg["batch_type"],
                 "workers": cfg["max_workers"],
@@ -164,6 +174,7 @@ def start_workers_for_instance(
                 instance_path,
                 expected_factory_pid=proc.pid,
                 expected_factory_pgid=factory_pgid,
+                expected_factory_owner=factory_identity,
             )
         else:
             release_workers_lock(
@@ -173,6 +184,7 @@ def start_workers_for_instance(
         raise
 
     print(f"[workers] Workers started. PID={proc.pid}")
+    proc.floability_identity = factory_identity
 
     return proc
 
@@ -248,6 +260,7 @@ def reconcile_workers_after_cleanup(
     *,
     cleanup_succeeded: bool,
     expected_factory_pid: int,
+    expected_factory_owner: dict | None = None,
     reason: str = "run_cleanup",
 ) -> bool:
     """Reconcile worker metadata and lock after a run cleanup attempt.
@@ -272,6 +285,16 @@ def reconcile_workers_after_cleanup(
             "belongs to a different factory."
         )
         return True
+
+    if (
+        expected_factory_owner is not None
+        and worker_data.get("factory_owner") != expected_factory_owner
+    ):
+        print(
+            "[workers] Skipping cleanup reconciliation because worker "
+            "process identity changed."
+        )
+        return False
 
     reconciled_data = dict(worker_data)
     if cleanup_succeeded:
@@ -311,6 +334,7 @@ def reconcile_workers_after_cleanup(
         instance_path,
         expected_factory_pid=expected_factory_pid,
         expected_factory_pgid=factory_pgid,
+        expected_factory_owner=expected_factory_owner,
     ):
         print("[workers] Warning: could not release the matching workers.lock.")
         return False
@@ -332,6 +356,7 @@ def stop_workers_for_instance(instance_path: Path) -> bool:
 
     factory_pid = data.get("factory_pid")
     factory_pgid = data.get("factory_pgid")
+    factory_owner = data.get("factory_owner")
     if not factory_pid or not factory_pgid:
         print("[workers] Worker metadata has no verifiable factory PID/PGID.")
         return False
@@ -347,12 +372,28 @@ def stop_workers_for_instance(instance_path: Path) -> bool:
         lock_data.get("state") != "running"
         or lock_data.get("factory_pid") != factory_pid
         or lock_data.get("factory_pgid") != factory_pgid
+        or lock_data.get("factory_owner") != factory_owner
     ):
         print(
             "[workers] Worker lock and metadata ownership do not match; "
             "refusing to signal."
         )
         return False
+    if not factory_owner:
+        if is_process_group_alive(factory_pgid):
+            print(
+                "[workers] Worker ownership predates process-identity "
+                "tracking; refusing to signal a live legacy process group."
+            )
+            return False
+    else:
+        ownership_state = process_group_identity_status(factory_owner)
+        if ownership_state not in {IDENTITY_OWNED, IDENTITY_GONE}:
+            print(
+                "[workers] Worker process-group ownership is "
+                f"{ownership_state}; refusing to signal."
+            )
+            return False
 
     stopping_data = dict(data)
     stopping_data.update(
@@ -369,12 +410,19 @@ def stop_workers_for_instance(instance_path: Path) -> bool:
         f"(PID={factory_pid}, PGID={factory_pgid})"
     )
     cleanup_manager = CleanupManager()
-    cleanup_manager.register_process_group(factory_pgid)
+    if factory_owner:
+        cleanup_manager.register_verified_process_group(
+            factory_pgid,
+            lambda: process_group_identity_status(factory_owner),
+        )
+    else:
+        cleanup_manager.register_process_group(factory_pgid)
     cleanup_manager.register_cleanup_callback(
         lambda cleanup_succeeded: reconcile_workers_after_cleanup(
             instance_path,
             cleanup_succeeded=cleanup_succeeded,
             expected_factory_pid=factory_pid,
+            expected_factory_owner=factory_owner,
             reason="workers_stop",
         )
     )
@@ -462,9 +510,30 @@ def get_worker_status(instance_path: Path) -> Dict:
         ):
             return inconsistent("workers.lock and workers.json ownership do not match.")
 
+        lock_owner = lock_data.get("factory_owner")
+        worker_owner = worker_data.get("factory_owner")
+        if lock_owner != worker_owner:
+            return inconsistent(
+                "workers.lock and workers.json process identities do not match."
+            )
+
         recorded_state = worker_data.get("status", "unknown")
         status["liveness_source"] = "process_group"
-        status["process_running"] = is_process_group_alive(factory_pgid)
+        if lock_owner:
+            ownership_state = process_group_identity_status(lock_owner)
+            if ownership_state not in {IDENTITY_OWNED, IDENTITY_GONE}:
+                return inconsistent(
+                    "Factory process-group ownership is "
+                    f"{ownership_state}; refusing reconciliation."
+                )
+            status["process_running"] = ownership_state == IDENTITY_OWNED
+        else:
+            status["process_running"] = is_process_group_alive(factory_pgid)
+            if status["process_running"]:
+                return inconsistent(
+                    "Live worker ownership predates process-identity tracking; "
+                    "refusing automatic reconciliation."
+                )
         if status["process_running"]:
             if recorded_state in {"running", "stopping", "cleanup_incomplete"}:
                 status["lifecycle_state"] = recorded_state
@@ -478,6 +547,7 @@ def get_worker_status(instance_path: Path) -> Dict:
                 instance_path,
                 expected_factory_pid=factory_pid,
                 expected_factory_pgid=factory_pgid,
+                expected_factory_owner=lock_owner,
             ):
                 return inconsistent(
                     "Dead terminal worker lock could not be released safely."
@@ -502,6 +572,7 @@ def get_worker_status(instance_path: Path) -> Dict:
             instance_path,
             expected_factory_pid=factory_pid,
             expected_factory_pgid=factory_pgid,
+            expected_factory_owner=lock_owner,
         ):
             return inconsistent("Stale worker lock could not be released safely.")
         status["lock_data"] = None

@@ -6,15 +6,17 @@ Handles creation and management of Floability instance directories.
     
 import json
 import os
-import signal
 import sys
-import time
 from pathlib import Path
 
 from ..backpack_manager import resolve_backpack_args, validate_backpack_structure
+from ..cleanup import CleanupManager
 from ..environment_manager import setup_manager_and_worker_envs
 from ..instance_lock_manager import (
-    is_instance_running,
+    IDENTITY_GONE,
+    IDENTITY_MISMATCHED,
+    get_instance_lock_status,
+    process_identity_status,
     release_instance_lock,
 )
 from ..instance_manager import get_registered_instances_status, prepare_instance
@@ -28,7 +30,10 @@ from ..instance_registry import (
 )
 from ..performance_tracker import PerformanceTracker
 from ..utils import normalize_cli_base_dir
-from ..workers_manager import stop_workers_for_instance
+from ..workers_manager import get_worker_status, stop_workers_for_instance
+
+
+INSTANCE_STOP_SIGINT_GRACE_SECONDS = 20
 
 
 def create_instance(args):
@@ -328,41 +333,71 @@ def go_to_latest_instance(args) -> int:
         return 1
 
 
-def _read_lock_pid(lock_file: Path) -> int:
+def _instance_metadata_is_terminal(instance_path: Path) -> bool:
+    metadata_file = instance_path / "metadata" / "run.json"
     try:
-        with open(lock_file, "r") as f:
-            data = json.load(f) or {}
-        return int(data.get("pid")) if data.get("pid") is not None else -1
-    except Exception:
-        return -1
+        with open(metadata_file) as stream:
+            metadata = json.load(stream)
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return False
+    state = (metadata.get("status") or {}).get("state")
+    return state in {"completed", "failed", "interrupted"}
 
 
-def _send_signal_to_pgid(pid: int, sig) -> bool:
-    try:
-        pgid = os.getpgid(pid)
-        os.killpg(pgid, sig)
+def _stop_and_verify_workers(instance_path: Path) -> bool:
+    status = get_worker_status(instance_path)
+    if not status.get("consistent"):
+        for diagnostic in status.get("diagnostics", []):
+            print(f"[floability] Worker state error: {diagnostic}")
+        return False
+
+    terminal_states = {"not_started", "stopped", "failed", "stale"}
+    if status.get("lifecycle_state") in terminal_states:
         return True
-    except Exception:
-        # Fallback: try direct process
-        try:
-            os.kill(pid, sig)
-            return True
-        except Exception:
-            return False
+    if not stop_workers_for_instance(instance_path):
+        return False
+
+    final_status = get_worker_status(instance_path)
+    if not final_status.get("consistent"):
+        return False
+    return final_status.get("lifecycle_state") in terminal_states
+
+
+def _release_verified_stale_instance_lock(
+    instance_path: Path,
+    status: dict,
+    *,
+    workers_stopped: bool,
+) -> bool:
+    lock_data = status.get("lock_data") or {}
+    owner = lock_data.get("owner")
+    if owner:
+        expected_owner = owner
+    else:
+        legacy_pid = lock_data.get("pid")
+        expected_owner = {"pid": legacy_pid} if legacy_pid else None
+    if expected_owner is None:
+        return False
+
+    safely_finalized = _instance_metadata_is_terminal(instance_path)
+    safely_reconciled = bool(
+        lock_data.get("state") == "cleanup_incomplete"
+        and lock_data.get("owned_processes_stopped")
+        and workers_stopped
+    )
+    if not safely_finalized and not safely_reconciled:
+        return False
+    return release_instance_lock(
+        instance_path,
+        expected_owner=expected_owner,
+    )
 
 
 def stop_instance(args) -> int:
-    """Stop a running Floability instance.
-
-    Behavior:
-    - Resolve short name to path if needed
-    - If instance.lock is active, send SIGINT to the run process group, then SIGTERM if needed
-    - Stop workers via workers manager (best-effort)
-    - Release instance lock file
-    """
+    """Stop only processes whose persisted ownership can be verified."""
     ref = getattr(args, "instance", None)
     if not ref:
-        print("[floability] Error: --instance is required for 'instance stop'")
+        print("[floability] Error: INSTANCE is required for 'instance stop'")
         return 1
 
     # Resolve short name to path
@@ -372,37 +407,62 @@ def stop_instance(args) -> int:
         print(f"[floability] Error: Instance not found: {ref}")
         return 1
 
-    lock_file = instance_path / "metadata" / "instance.lock"
-    pid = _read_lock_pid(lock_file) if lock_file.exists() else -1
-
-    # Try to gracefully stop the main run process so it can clean up Jupyter/others
-    if is_instance_running(instance_path) and pid > 0:
+    initial_status = get_instance_lock_status(instance_path)
+    initial_state = initial_status["state"]
+    instance_ownership_blocked = False
+    if initial_state == "active":
+        owner = initial_status["owner"]
+        pid = owner["pid"]
         print(
-            f"[floability] Stopping instance run process (pid={pid}) for {instance_path}"
+            "[floability] Stopping instance run process "
+            f"(pid={pid}) for {instance_path}"
         )
-        if _send_signal_to_pgid(pid, signal.SIGINT):
-            time.sleep(2)
-        # If still running, escalate
-        if is_instance_running(instance_path):
-            print("[floability] Instance still running; sending SIGTERM...")
-            _send_signal_to_pgid(pid, signal.SIGTERM)
-            time.sleep(1)
-    else:
-        if lock_file.exists():
-            print("[floability] Instance lock present but process not active. Cleaning up lock.")
+        cleanup_manager = CleanupManager(
+            process_sigint_grace_seconds=INSTANCE_STOP_SIGINT_GRACE_SECONDS
+        )
+        cleanup_manager.register_verified_process(
+            pid,
+            lambda: process_identity_status(owner),
+        )
+        cleanup_manager.cleanup()
+    elif initial_state in {"active_legacy", "corrupt", "unverifiable"}:
+        print(
+            "[floability] Error: Instance ownership is "
+            f"{initial_state}; refusing to signal or remove its lock."
+        )
+        instance_ownership_blocked = True
 
-    # Ensure workers are stopped (best-effort)
-    try:
-        stopped = stop_workers_for_instance(instance_path)
-        if stopped:
-            print("[floability] Workers stopped.")
-    except Exception as e:
-        print(f"[floability] Warning: could not stop workers: {e}")
+    workers_stopped = _stop_and_verify_workers(instance_path)
+    if not workers_stopped:
+        print("[floability] Error: Worker cleanup is incomplete.")
+        return 1
+    if instance_ownership_blocked:
+        return 1
 
-    # Release instance lock
-    try:
-        release_instance_lock(instance_path)
-    except Exception:
-        pass
+    final_status = get_instance_lock_status(instance_path)
+    final_state = final_status["state"]
+    if final_state != "missing":
+        identity_state = final_status.get("identity_state")
+        stale_states = {"stale", "stale_legacy", "mismatched"}
+        identity_is_gone = identity_state in {
+            None,
+            IDENTITY_GONE,
+            IDENTITY_MISMATCHED,
+        }
+        if (
+            final_state not in stale_states
+            or not identity_is_gone
+            or not _release_verified_stale_instance_lock(
+                instance_path,
+                final_status,
+                workers_stopped=workers_stopped,
+            )
+        ):
+            print(
+                "[floability] Error: Instance cleanup is incomplete; "
+                "retaining instance.lock for diagnosis and retry."
+            )
+            return 1
+
     print("[floability] Instance stop completed.")
     return 0

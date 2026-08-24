@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from floability import jupyter_runner
+from floability import instance_lock_manager, jupyter_runner
 from floability.cleanup import CleanupManager
 from floability.ops import run as run_ops
 
@@ -17,12 +17,14 @@ class _Cleanup:
     def __init__(self):
         self.calls = 0
         self.subprocesses = []
+        self.owned_processes_stopped = True
 
     def register_subprocess(self, process):
         self.subprocesses.append(process)
 
     def cleanup(self):
         self.calls += 1
+        return True
 
 
 class _Perf:
@@ -76,6 +78,31 @@ def _context(tmp_path: Path) -> run_ops.InstanceContext:
         lock_acquired=False,
         is_new=False,
     )
+
+
+def test_incomplete_cleanup_retains_instance_ownership(tmp_path):
+    ctx = _context(tmp_path)
+    ctx.metadata_file.write_text(
+        json.dumps({"status": {"state": "running"}}),
+        encoding="utf-8",
+    )
+    assert instance_lock_manager.acquire_instance_lock(ctx.root)
+    ctx.lock_acquired = True
+
+    run_ops._finalize_run(
+        Namespace(backpack=None),
+        ctx,
+        _Perf(),
+        cleanup_succeeded=False,
+        owned_processes_stopped=False,
+    )
+
+    status = json.loads(ctx.metadata_file.read_text(encoding="utf-8"))["status"]
+    lock_data = instance_lock_manager.read_instance_lock(ctx.root)
+    assert status["state"] == "cleanup_incomplete"
+    assert status["success"] is False
+    assert lock_data["state"] == "cleanup_incomplete"
+    assert lock_data["owned_processes_stopped"] is False
 
 
 @pytest.mark.parametrize("failure_type", [ValueError, RuntimeError])
@@ -185,6 +212,8 @@ def test_execute_batch_returns_and_finalizes_notebook_result(
     assert cleanup.calls == 1
     assert finalized == [
         {
+            "cleanup_succeeded": True,
+            "owned_processes_stopped": True,
             "sync_workflow": False,
             "success": notebook_success,
             "error": None
@@ -230,6 +259,8 @@ def test_interactive_interrupt_cleans_up_and_syncs_saved_workflow(
     assert cleanup.calls == 1
     assert finalized == [
         {
+            "cleanup_succeeded": True,
+            "owned_processes_stopped": True,
             "sync_workflow": True,
             "success": False,
             "error": "Interrupted by user",

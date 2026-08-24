@@ -95,6 +95,16 @@ def test_persisted_run_identity_is_used_by_manager_and_factory(
 
     monkeypatch.setattr(workers_manager, "_start_vine_factory", capture_factory_start)
     monkeypatch.setattr(workers_manager.os, "getpgid", lambda _pid: 12345)
+    monkeypatch.setattr(
+        workers_manager,
+        "capture_process_identity",
+        lambda pid: {
+            "pid": pid,
+            "pgid": 12345,
+            "start_ticks": 100,
+            "boot_id": "test-boot",
+        },
+    )
 
     workers_manager.start_workers_for_instance(
         tmp_path,

@@ -30,6 +30,15 @@ class _FactoryProcess:
         self.terminated = True
 
 
+def _factory_identity(pid=43210, pgid=43210):
+    return {
+        "pid": pid,
+        "pgid": pgid,
+        "start_ticks": pid + 1000,
+        "boot_id": "test-boot-id",
+    }
+
+
 def _prepare_instance(tmp_path):
     metadata_dir = tmp_path / "metadata"
     logs_dir = tmp_path / "logs"
@@ -47,19 +56,22 @@ def _prepare_instance(tmp_path):
     )
 
 
-def _record_running_workers(tmp_path, factory_pid=43210, factory_pgid=54321):
+def _record_running_workers(tmp_path, factory_pid=43210, factory_pgid=43210):
+    factory_owner = _factory_identity(factory_pid, factory_pgid)
     assert instance_lock_manager.acquire_workers_lock(tmp_path) is True
     assert instance_lock_manager.promote_workers_lock(
         tmp_path,
         factory_pid=factory_pid,
         factory_pgid=factory_pgid,
         manager_name="worker-lock-test-manager",
+        factory_identity=factory_owner,
     )
     assert workers_manager._write_worker_metadata(
         tmp_path,
         {
             "factory_pid": factory_pid,
             "factory_pgid": factory_pgid,
+            "factory_owner": factory_owner,
             "manager_name": "worker-lock-test-manager",
             "status": "running",
             "started_at": 1.0,
@@ -105,7 +117,13 @@ def test_worker_start_reserves_before_launch_and_records_factory_group(
         "_start_vine_factory",
         verify_reservation_before_launch,
     )
-    monkeypatch.setattr(workers_manager.os, "getpgid", lambda _pid: 54321)
+    factory_owner = _factory_identity(process.pid, process.pid)
+    monkeypatch.setattr(workers_manager.os, "getpgid", lambda _pid: process.pid)
+    monkeypatch.setattr(
+        workers_manager,
+        "capture_process_identity",
+        lambda _pid: factory_owner,
+    )
 
     result = workers_manager.start_workers_for_instance(
         tmp_path,
@@ -121,10 +139,12 @@ def test_worker_start_reserves_before_launch_and_records_factory_group(
     )
     assert lock_data["state"] == "running"
     assert lock_data["factory_pid"] == process.pid
-    assert lock_data["factory_pgid"] == 54321
+    assert lock_data["factory_pgid"] == process.pid
+    assert lock_data["factory_owner"] == factory_owner
     assert lock_data["manager_name"] == "worker-lock-test-manager"
     assert worker_data["factory_pid"] == process.pid
-    assert worker_data["factory_pgid"] == 54321
+    assert worker_data["factory_pgid"] == process.pid
+    assert worker_data["factory_owner"] == factory_owner
     assert worker_data["status"] == "running"
 
 
@@ -194,7 +214,13 @@ def test_metadata_failure_stops_factory_group_and_releases_lock(
         "_start_vine_factory",
         lambda **_kwargs: process,
     )
-    monkeypatch.setattr(workers_manager.os, "getpgid", lambda _pid: 54321)
+    factory_owner = _factory_identity(process.pid, process.pid)
+    monkeypatch.setattr(workers_manager.os, "getpgid", lambda _pid: process.pid)
+    monkeypatch.setattr(
+        workers_manager,
+        "capture_process_identity",
+        lambda _pid: factory_owner,
+    )
     monkeypatch.setattr(
         workers_manager.os,
         "killpg",
@@ -212,7 +238,7 @@ def test_metadata_failure_stops_factory_group_and_releases_lock(
             cli_args=Namespace(),
         )
 
-    assert signaled_groups == [(54321, workers_manager.signal.SIGTERM)]
+    assert signaled_groups == [(process.pid, workers_manager.signal.SIGTERM)]
     assert not (tmp_path / "metadata" / "workers.lock").exists()
 
 
@@ -239,17 +265,23 @@ def test_stale_worker_reservation_can_be_recovered(tmp_path, monkeypatch):
 
 
 def test_running_worker_lock_uses_factory_process_group(tmp_path, monkeypatch):
+    factory_owner = _factory_identity()
     assert instance_lock_manager.acquire_workers_lock(tmp_path) is True
     assert instance_lock_manager.promote_workers_lock(
         tmp_path,
         factory_pid=43210,
-        factory_pgid=54321,
+        factory_pgid=43210,
         manager_name="worker-lock-test-manager",
+        factory_identity=factory_owner,
     )
     monkeypatch.setattr(
         instance_lock_manager,
-        "_process_group_alive",
-        lambda pgid: pgid == 54321,
+        "process_group_identity_status",
+        lambda owner: (
+            instance_lock_manager.IDENTITY_OWNED
+            if owner == factory_owner
+            else instance_lock_manager.IDENTITY_MISMATCHED
+        ),
     )
     monkeypatch.setattr(instance_lock_manager, "_process_alive", lambda _pid: False)
 
@@ -310,7 +342,7 @@ def test_incomplete_cleanup_retains_lock_and_retry_reconciles_state(tmp_path):
 
 def test_cleanup_does_not_change_state_owned_by_another_factory(tmp_path):
     _prepare_instance(tmp_path)
-    _record_running_workers(tmp_path, factory_pid=90001, factory_pgid=90002)
+    _record_running_workers(tmp_path, factory_pid=90001, factory_pgid=90001)
     metadata_path = tmp_path / "metadata" / "workers.json"
     original_worker_data = json.loads(metadata_path.read_text(encoding="utf-8"))
 
@@ -380,6 +412,7 @@ def test_run_registers_worker_state_reconciliation(tmp_path, monkeypatch):
             {
                 "cleanup_succeeded": False,
                 "expected_factory_pid": 43210,
+                "expected_factory_owner": None,
             },
         )
     ]

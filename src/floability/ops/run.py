@@ -37,8 +37,9 @@ from ..utils import (
 from ..jupyter_runner import start_jupyterlab, execute_notebook
 from ..instance_lock_manager import (
     acquire_instance_lock,
-    release_instance_lock,
     is_instance_running,
+    mark_instance_cleanup_incomplete,
+    release_instance_lock,
 )
 from ..instance_registry import (
     record_instance_run,
@@ -768,6 +769,11 @@ def _start_workers(
                 ctx.root,
                 cleanup_succeeded=cleanup_succeeded,
                 expected_factory_pid=factory_proc.pid,
+                expected_factory_owner=getattr(
+                    factory_proc,
+                    "floability_identity",
+                    None,
+                ),
             )
         )
     return factory_proc
@@ -939,11 +945,13 @@ def _run_interactive(
         interrupted = True
         raise
     finally:
-        cleanup_manager.cleanup()
+        cleanup_succeeded = cleanup_manager.cleanup()
         _finalize_run(
             args,
             ctx,
             perf,
+            cleanup_succeeded=cleanup_succeeded,
+            owned_processes_stopped=cleanup_manager.owned_processes_stopped,
             sync_workflow=True,
             success=not interrupted,
             error="Interrupted by user" if interrupted else None,
@@ -1006,11 +1014,13 @@ def _execute_batch(
     if execution_success:
         _sync_workflow_if_needed(args, ctx)
 
-    cleanup_manager.cleanup()
+    cleanup_succeeded = cleanup_manager.cleanup()
     _finalize_run(
         args,
         ctx,
         perf,
+        cleanup_succeeded=cleanup_succeeded,
+        owned_processes_stopped=cleanup_manager.owned_processes_stopped,
         sync_workflow=False,
         success=execution_success,
         error=None if execution_success else "Workflow entrypoint execution failed",
@@ -1044,12 +1054,14 @@ def _finalize_run(
     args: argparse.Namespace,
     ctx: InstanceContext,
     perf: PerformanceTracker,
+    cleanup_succeeded: bool,
+    owned_processes_stopped: bool,
     sync_workflow: bool = False,
     success: bool = True,
     error: Optional[str] = None,
     state: Optional[str] = None,
 ) -> None:
-    """Finalize run: sync workflow files, save metrics, release lock."""
+    """Finalize metadata and release ownership only after complete cleanup."""
     if sync_workflow:
         _sync_workflow_if_needed(args, ctx)
 
@@ -1058,18 +1070,42 @@ def _finalize_run(
         perf.save_report()
         print(f"[floability] Performance report saved to {ctx.paths['metrics']}")
 
+    final_success = success and cleanup_succeeded
+    final_state = state
+    final_error = error
+    if not cleanup_succeeded:
+        final_state = "cleanup_incomplete"
+        final_error = (
+            f"{error}; cleanup incomplete"
+            if error
+            else "Cleanup incomplete; one or more owned processes remain."
+        )
+
     try:
         finalize_instance_metadata(
             ctx.metadata_file,
-            success=success,
-            error=error,
-            state=state,
+            success=final_success,
+            error=final_error,
+            state=final_state,
         )
     except Exception as e:
         print(f"[floability] Warning: Could not finalize metadata: {e}")
 
-    if ctx.lock_acquired:
-        release_instance_lock(ctx.root)
+    if not ctx.lock_acquired:
+        return
+    if not cleanup_succeeded:
+        if not mark_instance_cleanup_incomplete(
+            ctx.root,
+            error=final_error,
+            owned_processes_stopped=owned_processes_stopped,
+        ):
+            print(
+                "[floability] Warning: could not record incomplete instance "
+                "cleanup ownership."
+            )
+        return
+    if not release_instance_lock(ctx.root):
+        print("[floability] Warning: could not release the matching instance lock.")
 
 
 def _resolve_existing_instance_env(
@@ -1356,20 +1392,39 @@ def _cleanup_and_abort(
     error: str,
 ) -> None:
     """Clean up a failed run, finalize its metadata, and release its lock."""
+    cleanup_succeeded = False
     try:
-        cleanup_manager.cleanup()
+        cleanup_succeeded = cleanup_manager.cleanup()
     except Exception as cleanup_error:
         print(f"[floability] Warning: cleanup after failure was incomplete: {cleanup_error}")
 
+    final_state = "failed" if cleanup_succeeded else "cleanup_incomplete"
+    final_error = error if cleanup_succeeded else f"{error}; cleanup incomplete"
     try:
         finalize_instance_metadata(
             ctx.metadata_file,
             success=False,
-            error=error,
-            state="failed",
+            error=final_error,
+            state=final_state,
         )
     except Exception as metadata_error:
         print(f"[floability] Warning: Could not finalize failed metadata: {metadata_error}")
     finally:
         if ctx.lock_acquired:
-            release_instance_lock(ctx.root)
+            if cleanup_succeeded:
+                if not release_instance_lock(ctx.root):
+                    print(
+                        "[floability] Warning: could not release the matching "
+                        "instance lock."
+                    )
+            elif not mark_instance_cleanup_incomplete(
+                ctx.root,
+                error=final_error,
+                owned_processes_stopped=(
+                    cleanup_manager.owned_processes_stopped
+                ),
+            ):
+                print(
+                    "[floability] Warning: could not record incomplete "
+                    "instance cleanup ownership."
+                )

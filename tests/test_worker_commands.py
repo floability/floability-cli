@@ -33,24 +33,36 @@ def _write_instance_metadata(tmp_path: Path, **updates) -> dict:
     return metadata
 
 
+def _factory_identity(pid: int = 43210, pgid: int = 43210) -> dict:
+    return {
+        "pid": pid,
+        "pgid": pgid,
+        "start_ticks": pid + 1000,
+        "boot_id": "test-boot-id",
+    }
+
+
 def _write_running_worker_state(
     tmp_path: Path,
     *,
     factory_pid: int = 43210,
-    factory_pgid: int = 54321,
+    factory_pgid: int = 43210,
 ) -> None:
+    factory_owner = _factory_identity(factory_pid, factory_pgid)
     assert instance_lock_manager.acquire_workers_lock(tmp_path)
     assert instance_lock_manager.promote_workers_lock(
         tmp_path,
         factory_pid=factory_pid,
         factory_pgid=factory_pgid,
         manager_name="standalone-manager",
+        factory_identity=factory_owner,
     )
     assert workers_manager._write_worker_metadata(
         tmp_path,
         {
             "factory_pid": factory_pid,
             "factory_pgid": factory_pgid,
+            "factory_owner": factory_owner,
             "manager_name": "standalone-manager",
             "status": "running",
             "started_at": 1.0,
@@ -222,7 +234,7 @@ def test_worker_stop_waits_for_group_then_reconciles(tmp_path, monkeypatch):
 
     def fake_killpg(pgid, sig):
         nonlocal group_alive
-        assert pgid == 54321
+        assert pgid == 43210
         if sig == 0:
             if not group_alive:
                 raise ProcessLookupError
@@ -232,6 +244,15 @@ def test_worker_stop_waits_for_group_then_reconciles(tmp_path, monkeypatch):
             group_alive = False
 
     monkeypatch.setattr("floability.cleanup.os.killpg", fake_killpg)
+    monkeypatch.setattr(
+        workers_manager,
+        "process_group_identity_status",
+        lambda _owner: (
+            instance_lock_manager.IDENTITY_OWNED
+            if group_alive
+            else instance_lock_manager.IDENTITY_GONE
+        ),
+    )
 
     assert workers_manager.stop_workers_for_instance(tmp_path) is True
     assert signals == [signal.SIGINT]
@@ -250,6 +271,11 @@ def test_worker_stop_retains_lock_when_group_survives(tmp_path, monkeypatch):
     _zero_cleanup_grace_periods(monkeypatch)
 
     monkeypatch.setattr("floability.cleanup.os.killpg", lambda _pgid, _sig: None)
+    monkeypatch.setattr(
+        workers_manager,
+        "process_group_identity_status",
+        lambda _owner: instance_lock_manager.IDENTITY_OWNED,
+    )
 
     assert workers_manager.stop_workers_for_instance(tmp_path) is False
     worker_data = json.loads(
@@ -279,6 +305,37 @@ def test_worker_stop_refuses_mismatched_ownership(tmp_path, monkeypatch):
     assert lock_path.exists()
 
 
+def test_worker_stop_refuses_live_legacy_group(tmp_path, monkeypatch):
+    _write_instance_metadata(tmp_path)
+    metadata_dir = tmp_path / "metadata"
+    (metadata_dir / "workers.lock").write_text(
+        json.dumps(
+            {
+                "state": "running",
+                "factory_pid": 43210,
+                "factory_pgid": 43210,
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert workers_manager._write_worker_metadata(
+        tmp_path,
+        {
+            "factory_pid": 43210,
+            "factory_pgid": 43210,
+            "status": "running",
+        },
+    )
+    monkeypatch.setattr(workers_manager, "is_process_group_alive", lambda _pgid: True)
+    monkeypatch.setattr(
+        "floability.cleanup.os.killpg",
+        lambda _pgid, _sig: pytest.fail("legacy ownership must not be signaled"),
+    )
+
+    assert workers_manager.stop_workers_for_instance(tmp_path) is False
+    assert (metadata_dir / "workers.lock").exists()
+
+
 def test_worker_stop_is_idempotent_after_verified_stop(tmp_path):
     _write_instance_metadata(tmp_path)
     assert workers_manager._write_worker_metadata(
@@ -300,6 +357,11 @@ def test_worker_status_uses_live_factory_group_not_wrapper_pid(tmp_path, monkeyp
     monkeypatch.setattr(workers_manager, "is_process_group_alive", lambda _pgid: True)
     monkeypatch.setattr(
         workers_manager,
+        "process_group_identity_status",
+        lambda _owner: instance_lock_manager.IDENTITY_OWNED,
+    )
+    monkeypatch.setattr(
+        workers_manager,
         "is_process_alive",
         lambda _pid: pytest.fail("promoted locks must be checked by process group"),
     )
@@ -316,6 +378,11 @@ def test_worker_status_reconciles_dead_matching_group_as_stale(tmp_path, monkeyp
     _write_instance_metadata(tmp_path)
     _write_running_worker_state(tmp_path)
     monkeypatch.setattr(workers_manager, "is_process_group_alive", lambda _pgid: False)
+    monkeypatch.setattr(
+        workers_manager,
+        "process_group_identity_status",
+        lambda _owner: instance_lock_manager.IDENTITY_GONE,
+    )
 
     status = workers_manager.get_worker_status(tmp_path)
 
