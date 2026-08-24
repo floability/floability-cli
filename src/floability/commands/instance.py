@@ -98,6 +98,14 @@ class InstanceCommand(BaseCommand):
             help="Comma-separated list of KEY=VALUE pairs to set in conda environment.",
         )
         create_parser.add_argument(
+            "--per-instance-env",
+            action="store_true",
+            help=(
+                "Use a separate conda environment for this instance "
+                "(default: use the shared environment cache)."
+            ),
+        )
+        create_parser.add_argument(
             "--measure-performance",
             action="store_true",
             help="Enable performance measurements.",

@@ -5,6 +5,7 @@ import os
 import subprocess
 from argparse import Namespace
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Barrier
 from types import SimpleNamespace
 
@@ -87,7 +88,9 @@ def test_worker_reservation_is_atomic(tmp_path):
         return instance_lock_manager.acquire_workers_lock(tmp_path)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(lambda _index: reserve_at_the_same_time(), range(2)))
+        results = list(
+            executor.map(lambda _index: reserve_at_the_same_time(), range(2))
+        )
 
     assert sorted(results) == [False, True]
     lock_data = json.loads(
@@ -102,14 +105,22 @@ def test_worker_start_reserves_before_launch_and_records_factory_group(
     monkeypatch,
 ):
     _prepare_instance(tmp_path)
+    stale_scratch = tmp_path / "logs" / "vine_factory_scratch"
+    stale_scratch.mkdir()
+    stale_wrapper = stale_scratch / "poncho_package_run"
+    stale_wrapper.write_text("stale", encoding="utf-8")
+    stale_wrapper.chmod(0o555)
     process = _FactoryProcess()
 
-    def verify_reservation_before_launch(**_kwargs):
+    def verify_reservation_before_launch(**kwargs):
         lock_data = json.loads(
             (tmp_path / "metadata" / "workers.lock").read_text(encoding="utf-8")
         )
         assert lock_data["state"] == "starting"
         assert lock_data["launcher_pid"] == os.getpid()
+        scratch_dir = Path(kwargs["scratch_dir"])
+        assert scratch_dir == stale_scratch
+        assert list(scratch_dir.iterdir()) == []
         return process
 
     monkeypatch.setattr(

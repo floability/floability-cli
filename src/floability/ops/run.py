@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional, Any
 from ..cleanup import CleanupManager
 from ..performance_tracker import PerformanceTracker
-from ..environment_manager import setup_manager_and_worker_envs, ensure_shared_env
+from ..environment_manager import setup_manager_and_worker_envs
 from ..workers_manager import (
     reconcile_workers_after_cleanup,
     start_workers_for_instance,
@@ -47,7 +47,13 @@ from ..instance_registry import (
     register_instance,
 )
 from ..catalog import send_catalog_update
-from ..instance_metadata import finalize_instance_metadata, update_instance_metadata, add_data_cache_dirs
+from ..instance_metadata import (
+    add_data_cache_dirs,
+    finalize_instance_metadata,
+    persist_prepared_environment,
+    read_prepared_environment,
+    update_instance_metadata,
+)
 from ..data.data_handler import execute_default_data_operation
 
 # -----------------------------------------------------------------------------
@@ -496,6 +502,19 @@ def _prepare_existing_instance(args: argparse.Namespace) -> InstanceContext:
     if is_instance_running(instance_root):
         raise RuntimeError("Instance already running (lock present).")
 
+    metadata_file = instance_root / "metadata" / "run.json"
+    metadata = _read_reusable_instance_metadata(metadata_file)
+    preparation = metadata.get("preparation")
+    if isinstance(preparation, dict):
+        preparation_state = preparation.get("state")
+        if preparation_state != "ready":
+            detail = preparation.get("error")
+            detail_suffix = f": {detail}" if detail else "."
+            raise RuntimeError(
+                "Instance preparation is not ready "
+                f"(state={preparation_state or 'unknown'}){detail_suffix}"
+            )
+
     if not acquire_instance_lock(instance_root):
         raise RuntimeError("Failed to acquire instance run lock.")
 
@@ -510,10 +529,6 @@ def _prepare_existing_instance(args: argparse.Namespace) -> InstanceContext:
     }
     create_latest_symlink(str(instance_root.parent), str(instance_root))
 
-    metadata_file = instance_paths["metadata"] / "run.json"
-    if not metadata_file.exists():
-        print(f"[floability] Warning: Missing instance metadata at {metadata_file}")
-
     workflow_dir = instance_paths["workflow"]
     args.workflow_dir = str(workflow_dir)
 
@@ -525,6 +540,25 @@ def _prepare_existing_instance(args: argparse.Namespace) -> InstanceContext:
         lock_acquired=True,
         is_new=False,
     )
+
+
+def _read_reusable_instance_metadata(metadata_file: Path) -> dict:
+    """Return valid instance metadata or raise an actionable reuse error."""
+
+    if not metadata_file.is_file():
+        raise RuntimeError(f"Missing reusable instance metadata: {metadata_file}")
+    try:
+        with open(metadata_file) as metadata_stream:
+            metadata = json.load(metadata_stream)
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            f"Could not read reusable instance metadata at {metadata_file}: {error}"
+        ) from error
+    if not isinstance(metadata, dict):
+        raise RuntimeError(
+            f"Reusable instance metadata must be a JSON object: {metadata_file}"
+        )
+    return metadata
 
 
 def _select_run_manager_name(args: argparse.Namespace) -> str:
@@ -674,9 +708,7 @@ def _setup_environment(
       then persists the decision to metadata so future re-runs can reconstruct it.
     """
     if not ctx.is_new:
-        env_dir = _resolve_existing_instance_env(args, ctx)
-        instance_env = _build_instance_env(args, ctx, env_dir)
-        return EnvironmentContext(env_dir=env_dir, instance_env=instance_env)
+        return _restore_existing_instance_environment(args, ctx, perf)
 
     per_instance_env = getattr(args, "per_instance_env", False)
     env_spec = getattr(args, "environment", None)
@@ -697,8 +729,14 @@ def _setup_environment(
         perf=perf if perf.enabled else None,
     )
 
-    _persist_env_metadata(
-        ctx, env_dir, worker_tar, manager_tar, per_instance_env, env_spec
+    persist_prepared_environment(
+        ctx.metadata_file,
+        env_dir=env_dir,
+        worker_environment_pack=worker_tar,
+        manager_environment_pack=manager_tar,
+        environment_spec=env_spec,
+        worker_environment_spec=getattr(args, "worker_environment", None),
+        per_instance_env=per_instance_env,
     )
     instance_env = _build_instance_env(args, ctx, env_dir)
 
@@ -1108,103 +1146,96 @@ def _finalize_run(
         print("[floability] Warning: could not release the matching instance lock.")
 
 
-def _resolve_existing_instance_env(
+def _restore_existing_instance_environment(
     args: argparse.Namespace,
     ctx: InstanceContext,
-) -> Optional[str]:
-    """Resolve the correct conda env dir for an existing (reused) instance.
+    perf: PerformanceTracker,
+) -> EnvironmentContext:
+    """Validate or rebuild the prepared manager and worker environments."""
 
-    Reads per_instance_env and environment_spec from the saved run.json so
-    the same env strategy that was used at creation time is applied on re-run.
-    """
-    metadata: dict = {}
-    if ctx.metadata_file.exists():
-        try:
-            with open(ctx.metadata_file) as f:
-                metadata = json.load(f)
-        except Exception:
-            pass
-
-    per_instance_env: bool = metadata.get("per_instance_env", False)
-    env_spec: Optional[str] = metadata.get("environment_spec", None)
-
-    if per_instance_env:
-        env_dir = ctx.root / "current_conda_env"
-        if not env_dir.exists():
-            raise RuntimeError(
-                f"Per-instance env expected at {env_dir} but not found. "
-                "The environment directory may have been deleted."
-            )
-        print(f"[floability] Reusing per-instance environment: {env_dir}")
-        return str(env_dir)
-
-    # Shared env path: re-derive (or rebuild if cache was evicted).
-    if env_spec:
-        env_dir_str = _get_or_restore_shared_env(env_spec, args.base_dir)
-        if env_dir_str:
-            print(f"[floability] Using shared environment: {env_dir_str}")
-        else:
-            print(
-                "[floability] No shared environment found; proceeding without conda env."
-            )
-        return env_dir_str
-
-    # Fall back to the env_dir persisted directly in metadata (e.g. when the
-    # original run was created without --environment but env_dir was still
-    # recorded by _persist_env_metadata).
-    saved_env_dir: Optional[str] = metadata.get("env_dir", None)
-    if saved_env_dir and Path(saved_env_dir).exists():
-        print(f"[floability] Using saved environment: {saved_env_dir}")
-        return saved_env_dir
-
-    print("[floability] No environment found; proceeding without conda env.")
-    return None
-
-
-def _get_or_restore_shared_env(env_spec: str, base_dir: str) -> Optional[str]:
-    """Return the shared extracted env dir for a YAML env spec, rebuilding if needed.
-
-    Calls ensure_shared_env so the cache is warm on return.
-    Returns None if the env dir cannot be determined.
-    """
-    # YAML: warm the cache (no-op if already valid, rebuilds if evicted).
-    cache_info = ensure_shared_env(
-        env_spec, base_dir, is_worker_env=False, force=False, perf=None
-    )
-    return str(cache_info.shared_env_dir)
-
-
-def _persist_env_metadata(
-    ctx: InstanceContext,
-    env_dir: Optional[str],
-    worker_tar: Optional[str],
-    manager_tar: Optional[str],
-    per_instance_env: bool,
-    env_spec: Optional[str],
-) -> None:
-    """Persist environment setup results to instance metadata.
-
-    Stores per_instance_env and environment_spec so that _resolve_existing_instance_env
-    can reconstruct the correct env path when an existing instance is reused.
-    """
     try:
-        update_instance_metadata(
-            ctx.metadata_file,
-            {
-                **({"env_dir": str(env_dir)} if env_dir else {}),
-                **({"worker_environment_pack": str(worker_tar)} if worker_tar else {}),
-                **(
-                    {"manager_environment_pack": str(manager_tar)}
-                    if manager_tar
-                    else {}
-                ),
-                "per_instance_env": per_instance_env,
-                **({"environment_spec": str(env_spec)} if env_spec else {}),
-            },
-            merge=True,
+        with open(ctx.metadata_file) as metadata_stream:
+            metadata = json.load(metadata_stream)
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            f"Could not read reusable instance metadata at {ctx.metadata_file}: {error}"
+        ) from error
+
+    prepared = read_prepared_environment(metadata)
+    environment_spec = prepared["environment_spec"]
+    worker_environment_spec = prepared["worker_environment_spec"]
+    per_instance_env = prepared["per_instance_env"]
+
+    manager_spec_available = bool(
+        environment_spec and Path(environment_spec).is_file()
+    )
+    worker_spec_available = bool(
+        not worker_environment_spec or Path(worker_environment_spec).is_file()
+    )
+
+    if manager_spec_available and worker_spec_available:
+        env_dir, worker_pack, manager_pack = setup_manager_and_worker_envs(
+            environment_spec=environment_spec,
+            worker_environment_spec=worker_environment_spec,
+            base_dir=args.base_dir,
+            instance_root=str(ctx.root),
+            per_instance_env=per_instance_env,
+            perf=perf if perf.enabled else None,
         )
-    except Exception as e:
-        print(f"[floability] Warning: could not persist env metadata: {e}")
+        persist_prepared_environment(
+            ctx.metadata_file,
+            env_dir=env_dir,
+            worker_environment_pack=worker_pack,
+            manager_environment_pack=manager_pack,
+            environment_spec=environment_spec,
+            worker_environment_spec=worker_environment_spec,
+            per_instance_env=per_instance_env,
+        )
+    else:
+        env_dir = prepared["env_dir"]
+        worker_pack = prepared["worker_environment_pack"]
+        manager_pack = prepared["manager_environment_pack"]
+        missing = []
+        if not env_dir or not (Path(env_dir) / "bin" / "python").is_file():
+            missing.append("manager environment")
+        if not worker_pack or not Path(worker_pack).is_file():
+            missing.append("worker environment pack")
+        if not manager_pack or not Path(manager_pack).is_file():
+            missing.append("manager environment pack")
+        if missing:
+            unavailable_specs = []
+            if not manager_spec_available:
+                unavailable_specs.append(
+                    f"manager spec {environment_spec!r}"
+                    if environment_spec
+                    else "manager spec"
+                )
+            if not worker_spec_available:
+                unavailable_specs.append(
+                    f"worker spec {worker_environment_spec!r}"
+                )
+            raise RuntimeError(
+                "Reusable instance is missing "
+                + ", ".join(missing)
+                + "; cannot rebuild because "
+                + ", ".join(unavailable_specs)
+                + " is unavailable."
+            )
+        if not env_dir:
+            raise RuntimeError(
+                "Reusable instance has no prepared manager environment and no "
+                "rebuildable environment spec."
+            )
+        print(f"[floability] Using saved environment artifacts: {env_dir}")
+
+    instance_env = _build_instance_env(args, ctx, env_dir)
+    _display_env_info(env_dir, instance_env)
+    return EnvironmentContext(
+        env_dir=env_dir,
+        worker_pack=worker_pack,
+        manager_pack=manager_pack,
+        instance_env=instance_env,
+    )
 
 
 def _get_env_python_version(prefix: str) -> str:

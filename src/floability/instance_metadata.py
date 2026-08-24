@@ -3,12 +3,18 @@ Instance metadata management for Floability execution sandboxes.
 Captures comprehensive execution context for reproducibility and auditing.
 """
 
+import hashlib
 import json
 import subprocess
-import hashlib
+from datetime import UTC, datetime
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
+
+
+def _utc_timestamp() -> str:
+    """Return an ISO-8601 UTC timestamp using the existing trailing-Z format."""
+
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def get_git_commit(repo_path: Path) -> Optional[str]:
@@ -76,7 +82,7 @@ def create_instance_metadata(
         "schema_version": "1.0",
         "instance_id": instance_dir.name,
         "instance_path": str(instance_dir.resolve()),
-        "created_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": _utc_timestamp(),
         "execution_mode": execution_mode,
         "manager_name": manager_name,
     }
@@ -131,11 +137,19 @@ def create_instance_metadata(
     # Execution status (will be updated)
     metadata["status"] = {
         "state": "initializing",
-        "started_at": datetime.utcnow().isoformat() + "Z",
+        "started_at": _utc_timestamp(),
         "completed_at": None,
         "success": None,
         "error": None,
     }
+    if execution_mode == "instance":
+        metadata["preparation"] = {
+            "state": "preparing",
+            "started_at": _utc_timestamp(),
+            "completed_at": None,
+            "success": None,
+            "error": None,
+        }
 
     return metadata
 
@@ -199,7 +213,7 @@ def record_sync_manifest(
     """
     sync_manifest = {
         "schema_version": "1.0",
-        "synced_at": datetime.utcnow().isoformat() + "Z",
+        "synced_at": _utc_timestamp(),
         "source": str(source_dir),
         "target": str(target_dir),
         "files": synced_files,
@@ -257,9 +271,131 @@ def finalize_instance_metadata(
     updates = {
         "status": {
             "state": state or ("completed" if success else "failed"),
-            "completed_at": datetime.utcnow().isoformat() + "Z",
+            "completed_at": _utc_timestamp(),
             "success": success,
             "error": error,
         }
     }
     update_instance_metadata(metadata_path, updates, merge=True)
+
+
+def finalize_instance_preparation(
+    metadata_path: Path,
+    success: bool,
+    error: Optional[str] = None,
+) -> None:
+    """Finalize standalone instance preparation as ready or failed."""
+
+    completed_at = _utc_timestamp()
+    state = "ready" if success else "failed"
+    update_instance_metadata(
+        metadata_path,
+        {
+            "preparation": {
+                "state": state,
+                "completed_at": completed_at,
+                "success": success,
+                "error": error,
+            },
+            "status": {
+                "state": state,
+                "completed_at": completed_at,
+                "success": success,
+                "error": error,
+            },
+        },
+        merge=True,
+    )
+
+
+def persist_prepared_environment(
+    metadata_path: Path,
+    *,
+    env_dir: Optional[str],
+    worker_environment_pack: Optional[str],
+    manager_environment_pack: Optional[str],
+    environment_spec: Optional[str],
+    worker_environment_spec: Optional[str],
+    per_instance_env: bool,
+) -> None:
+    """Persist the complete, rebuildable environment preparation result.
+
+    The top-level fields remain for compatibility with worker and run code.
+    The nested ``environment`` object is the coherent record for newer
+    instances and includes both source specifications and resolved artifacts.
+    """
+
+    manager_spec = (
+        str(Path(environment_spec).expanduser().resolve())
+        if environment_spec
+        else None
+    )
+    worker_spec = (
+        str(Path(worker_environment_spec).expanduser().resolve())
+        if worker_environment_spec
+        else None
+    )
+    resolved_env_dir = str(Path(env_dir).expanduser().resolve()) if env_dir else None
+    resolved_worker_pack = (
+        str(Path(worker_environment_pack).expanduser().resolve())
+        if worker_environment_pack
+        else None
+    )
+    resolved_manager_pack = (
+        str(Path(manager_environment_pack).expanduser().resolve())
+        if manager_environment_pack
+        else None
+    )
+
+    update_instance_metadata(
+        metadata_path,
+        {
+            "env_dir": resolved_env_dir,
+            "worker_environment_pack": resolved_worker_pack,
+            "manager_environment_pack": resolved_manager_pack,
+            "environment_spec": manager_spec,
+            "worker_environment_spec": worker_spec,
+            "per_instance_env": bool(per_instance_env),
+            "environment": {
+                "strategy": "per-instance" if per_instance_env else "shared",
+                "manager_spec": manager_spec,
+                "manager_spec_hash": (
+                    compute_file_hash(Path(manager_spec)) if manager_spec else None
+                ),
+                "worker_spec": worker_spec,
+                "worker_spec_hash": (
+                    compute_file_hash(Path(worker_spec)) if worker_spec else None
+                ),
+                "env_dir": resolved_env_dir,
+                "manager_pack": resolved_manager_pack,
+                "worker_pack": resolved_worker_pack,
+            },
+        },
+        merge=True,
+    )
+
+
+def read_prepared_environment(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Read environment preparation fields with legacy-key fallbacks."""
+
+    environment = metadata.get("environment")
+    if not isinstance(environment, dict):
+        environment = {}
+
+    strategy = environment.get("strategy")
+    per_instance_env = metadata.get("per_instance_env")
+    if per_instance_env is None:
+        per_instance_env = strategy == "per-instance"
+
+    return {
+        "environment_spec": metadata.get("environment_spec")
+        or environment.get("manager_spec"),
+        "worker_environment_spec": metadata.get("worker_environment_spec")
+        or environment.get("worker_spec"),
+        "per_instance_env": bool(per_instance_env),
+        "env_dir": metadata.get("env_dir") or environment.get("env_dir"),
+        "manager_environment_pack": metadata.get("manager_environment_pack")
+        or environment.get("manager_pack"),
+        "worker_environment_pack": metadata.get("worker_environment_pack")
+        or environment.get("worker_pack"),
+    }

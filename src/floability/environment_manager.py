@@ -85,8 +85,20 @@ def setup_manager_and_worker_envs(
     manager_tar = str(cache_info.tar_path)
 
     if per_instance_env:
-        print("[floability] per-instance-env: extracting dedicated environment.")
-        env_dir = extract_env_to_instance(manager_tar, instance_root, perf)
+        instance_env_dir = Path(instance_root) / "current_conda_env"
+        if _is_shared_env_valid(instance_env_dir):
+            env_dir = str(instance_env_dir)
+            print(f"[floability] Reusing per-instance environment: {env_dir}")
+        else:
+            if instance_env_dir.exists():
+                print(
+                    "[floability] Removing incomplete per-instance environment: "
+                    f"{instance_env_dir}"
+                )
+                _make_dir_writable(str(instance_env_dir))
+                shutil.rmtree(instance_env_dir)
+            print("[floability] per-instance-env: extracting dedicated environment.")
+            env_dir = extract_env_to_instance(manager_tar, instance_root, perf)
     else:
         env_dir = str(cache_info.shared_env_dir)
         print(f"[floability] Using shared immutable environment: {env_dir}")

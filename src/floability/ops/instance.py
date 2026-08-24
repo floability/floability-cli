@@ -6,6 +6,7 @@ Handles creation and management of Floability instance directories.
     
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -20,7 +21,11 @@ from ..instance_lock_manager import (
     release_instance_lock,
 )
 from ..instance_manager import get_registered_instances_status, prepare_instance
-from ..instance_metadata import add_data_cache_dirs, update_instance_metadata
+from ..instance_metadata import (
+    add_data_cache_dirs,
+    finalize_instance_preparation,
+    persist_prepared_environment,
+)
 from ..instance_registry import (
     RegistryError,
     get_recent_base_directories,
@@ -56,6 +61,12 @@ def create_instance(args):
         return 1
     except RuntimeError as e:
         print(f"[floability] Error: {e}")
+        return 1
+    except subprocess.CalledProcessError as e:
+        print(
+            "[floability] Error: Environment preparation command failed "
+            f"with exit status {e.returncode}: {e.cmd}"
+        )
         return 1
     except Exception as e:
         print(f"[floability] Unexpected error: {e}")
@@ -107,7 +118,10 @@ def _create_instance_impl(args):
     instance_root = str(instance_paths["root"])
     instance_reference = instance_root
 
-    # Register instance short name
+    metadata_file = instance_paths["metadata"] / "run.json"
+
+    # Register immediately so a failed preparation remains discoverable for
+    # diagnosis. Creation does not update run history or `instance latest`.
     try:
         short_name = register_instance(
             Path(instance_root),
@@ -120,87 +134,91 @@ def _create_instance_impl(args):
     except Exception as e:
         print(f"[floability] Warning: could not register instance short name: {e}")
 
-    # Initialize performance tracking (metrics directory already created)
     perf_enabled = getattr(args, "measure_performance", False)
     perf = PerformanceTracker(
         output_dir=str(instance_paths["metrics"]), enabled=perf_enabled
     )
     perf.start_timer("instance_creation")
 
-    # Fetch data unless --skip-data is provided
-    skip_data = getattr(args, "skip_data", False)
+    try:
+        skip_data = getattr(args, "skip_data", False)
 
-    if args.data_spec and not skip_data:
-        print(f"[floability] Performing data operation from {args.data_spec}")
-        perf.start_timer("data_operation")
+        if args.data_spec and not skip_data:
+            print(f"[floability] Performing data operation from {args.data_spec}")
+            perf.start_timer("data_operation")
 
-        from ..data.data_handler import execute_default_data_operation
+            from ..data.data_handler import execute_default_data_operation
 
-        backpack_root_for_sources = args.backpack_root if getattr(args, "backpack_root", None) else None
-        target_root = instance_paths["workflow"]
+            backpack_root_for_sources = (
+                args.backpack_root if getattr(args, "backpack_root", None) else None
+            )
+            target_root = instance_paths["workflow"]
 
-        cache_dirs: list = []
-        data_success = execute_default_data_operation(
-            data_spec=args.data_spec,
-            backpack_root=backpack_root_for_sources,
-            verbose=True,
-            force=False,
-            data_profile=getattr(args, "data_profile", None),
-            data_cache_mode=getattr(args, "data_cache_mode", "off"),
-            force_data_cache=getattr(args, "force_data_cache", False),
-            base_dir=Path(args.base_dir),
-            cache_base_dir=Path(args.cache_base_dir),
-            target_root=target_root,
-            fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
-            perf=perf,
-            _out_cache_dirs=cache_dirs,
-        )
-        perf.end_timer("data_operation", "Time to perform data operation")
+            cache_dirs: list = []
+            data_success = execute_default_data_operation(
+                data_spec=args.data_spec,
+                backpack_root=backpack_root_for_sources,
+                verbose=True,
+                force=False,
+                data_profile=getattr(args, "data_profile", None),
+                data_cache_mode=getattr(args, "data_cache_mode", "off"),
+                force_data_cache=getattr(args, "force_data_cache", False),
+                base_dir=Path(args.base_dir),
+                cache_base_dir=Path(args.cache_base_dir),
+                target_root=target_root,
+                fingerprint_mode=getattr(args, "fingerprint_mode", "meta"),
+                perf=perf,
+                _out_cache_dirs=cache_dirs,
+            )
+            perf.end_timer("data_operation", "Time to perform data operation")
 
-        if cache_dirs:
-            try:
-                add_data_cache_dirs(instance_paths["metadata"] / "run.json", cache_dirs)
-            except Exception as e:
-                print(f"[floability] Warning: could not record data cache dirs: {e}")
+            if cache_dirs:
+                add_data_cache_dirs(metadata_file, cache_dirs)
 
-        if not data_success:
-            print("\n[floability] WARNING: Data operation failed!")
-            if not getattr(args, "continue_on_data_failure", False):
-                raise RuntimeError("Data materialization failed. Use --continue-on-data-failure to proceed anyway.")
-        else:
+            if not data_success:
+                print("\n[floability] WARNING: Data operation failed!")
+                raise RuntimeError("Data materialization failed.")
             print("[floability] Data operation completed successfully")
-    elif skip_data:
-        print("[floability] Skipping data operation (--skip-data enabled)")
+        elif skip_data:
+            print("[floability] Skipping data operation (--skip-data enabled)")
 
-    # Setup conda environments (manager + worker) via environment manager
-    per_instance_env = getattr(args, "per_instance_env", False)
-    env_dir, worker_environment_pack, manager_environment_pack = setup_manager_and_worker_envs(
-        environment_spec=env_spec,
-        worker_environment_spec=getattr(args, "worker_environment", None),
-        base_dir=args.base_dir,
-        instance_root=instance_root,
-        per_instance_env=per_instance_env,
-        perf=perf if perf_enabled else None,
-    )
+        per_instance_env = getattr(args, "per_instance_env", False)
+        worker_environment_spec = getattr(args, "worker_environment", None)
+        env_dir, worker_environment_pack, manager_environment_pack = (
+            setup_manager_and_worker_envs(
+                environment_spec=env_spec,
+                worker_environment_spec=worker_environment_spec,
+                base_dir=args.base_dir,
+                instance_root=instance_root,
+                per_instance_env=per_instance_env,
+                perf=perf if perf_enabled else None,
+            )
+        )
 
-    # Record environment paths in metadata
-    metadata_updates = {
-        **({"env_dir": str(env_dir)} if env_dir else {}),
-        **({"worker_environment_pack": str(worker_environment_pack)} if worker_environment_pack else {}),
-        **({"manager_environment_pack": str(manager_environment_pack)} if manager_environment_pack else {}),
-    }
-    if metadata_updates:
-        metadata_file = instance_paths["metadata"] / "run.json"
-        try:
-            update_instance_metadata(metadata_file, metadata_updates, merge=True)
-        except Exception as e:
-            print(f"[floability] Warning: Could not update metadata with environment info: {e}")
-
-    # Finalize performance tracking
-    if perf_enabled:
-        perf.end_timer("instance_creation", "Total instance creation time")
-        perf.save_report()
-        print(f"[floability] Performance report saved to {instance_paths['metrics']}")
+        persist_prepared_environment(
+            metadata_file,
+            env_dir=env_dir,
+            worker_environment_pack=worker_environment_pack,
+            manager_environment_pack=manager_environment_pack,
+            environment_spec=env_spec,
+            worker_environment_spec=worker_environment_spec,
+            per_instance_env=per_instance_env,
+        )
+        finalize_instance_preparation(metadata_file, success=True)
+    except BaseException as error:
+        finalize_instance_preparation(
+            metadata_file,
+            success=False,
+            error=str(error),
+        )
+        raise
+    finally:
+        if perf_enabled:
+            perf.end_timer("instance_creation", "Total instance creation time")
+            perf.save_report()
+            print(
+                f"[floability] Performance report saved to {instance_paths['metrics']}"
+            )
 
     print("\n" + "=" * 70)
     print("[floability] Instance created successfully!")

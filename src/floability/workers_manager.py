@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -111,12 +112,13 @@ def start_workers_for_instance(
     factory_identity = None
     lock_promoted = False
     try:
+        factory_scratch_dir = _reset_factory_scratch_directory(instance_path)
         if worker_provider == "vine_factory":
             proc = _start_vine_factory(
                 manager_name=manager_name,
                 cfg=cfg,
                 run_dir=logs_dir,
-                scratch_dir=logs_dir,
+                scratch_dir=str(factory_scratch_dir),
                 manager_env_dir=env_dir,
                 instance_env=instance_env,
                 detached=detached,
@@ -695,6 +697,41 @@ def print_worker_status(instance_path: Path) -> bool:
 # -----------------------------------------------------------------------------
 # Private Helpers
 # -----------------------------------------------------------------------------
+
+
+def _reset_factory_scratch_directory(instance_path: Path) -> Path:
+    """Create an empty scratch directory for one vine_factory start.
+
+    TaskVine copies read-only worker wrappers into its scratch directory. A
+    second factory start cannot overwrite those files, so a reusable instance
+    must begin with a fresh factory-owned scratch directory.
+    """
+
+    scratch_dir = instance_path / "logs" / "vine_factory_scratch"
+    if scratch_dir.is_symlink() or (
+        scratch_dir.exists() and not scratch_dir.is_dir()
+    ):
+        scratch_dir.unlink()
+    elif scratch_dir.exists():
+        for current_root, directory_names, file_names in os.walk(
+            scratch_dir,
+            topdown=False,
+            followlinks=False,
+        ):
+            current_path = Path(current_root)
+            for name in file_names:
+                path = current_path / name
+                if not path.is_symlink():
+                    path.chmod(path.stat().st_mode | 0o200)
+            for name in directory_names:
+                path = current_path / name
+                if not path.is_symlink():
+                    path.chmod(path.stat().st_mode | 0o700)
+        scratch_dir.chmod(scratch_dir.stat().st_mode | 0o700)
+        shutil.rmtree(scratch_dir)
+
+    scratch_dir.mkdir(parents=True, mode=0o755)
+    return scratch_dir
 
 
 def _normalize_compute_specs(

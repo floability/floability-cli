@@ -42,6 +42,11 @@ Create an instance without starting Jupyter/workers:
 floability instance create --backpack <backpack-root>
 ```
 
+Creation prepares both the manager environment and worker environment pack.
+The instance metadata finishes in `ready` state only after data and environment
+preparation succeed. A failed preparation is retained with a diagnostic
+`failed` state but cannot be passed to `run` or `execute`.
+
 Use this when you want to prepare an instance now and run it later.
 
 ### Run (existing instance)
@@ -123,6 +128,8 @@ Purpose of each directory:
 
 - `workflow/`: execution sandbox (copied workflow files and outputs)
 - `logs/`: Jupyter execution logs and worker logs
+- `logs/vine_factory_scratch/`: reset before each factory start so generated
+  TaskVine wrapper files cannot break a repeated run
 - `metrics/`: performance reports (when enabled)
 - `metadata/`: run metadata and lock files
 

@@ -139,6 +139,8 @@ Options:
 - `--fingerprint-mode meta|sample|strict` (default: `meta`)
 - `--environment PATH`: manager environment spec
 - `--worker-environment PATH`: worker environment spec
+- `--per-instance-env`: extract a private environment inside the instance
+  instead of using the shared environment cache
 - `--manager-name NAME`: TaskVine manager name (auto-generated if omitted)
 - `--manager-ports A:B` (default: `9123:9150`; legacy `A,B` is accepted)
 - `--env-vars KEY=VALUE,...`
