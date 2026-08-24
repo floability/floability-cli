@@ -1,18 +1,18 @@
-import os
-import time
 import datetime
-import socket
 import getpass
-import logging
 import ipaddress
-import threading
-import urllib.request
-from collections import namedtuple
-
+import os
+import re
+import socket
 import tarfile
+import threading
+import time
+import unicodedata
+import urllib.request
+import uuid
+from collections import namedtuple
 from pathlib import Path
- 
- 
+
 # --- module-level caches (each expensive lookup runs at most once) -----------
 _FQDN_CACHE = None
 _CANDIDATES_CACHE = None
@@ -243,17 +243,62 @@ def get_system_information():
         }
     return SYSTEM_INFORMATION
 
-def create_unique_directory(
-    base_dir=".", prefix="fi", max_attempts=10
-):
+INSTANCE_SLUG_MAX_LENGTH = 20
+INSTANCE_DIRECTORY_MAX_BYTES = 64
+
+
+def _format_instance_directory_name(prefix="fi", when=None, random_suffix=None):
+    """Return a short, portable, and recognizable instance directory name."""
+    raw_prefix = str(prefix).strip()
+    if raw_prefix == "fi":
+        raw_slug = ""
+    elif raw_prefix.startswith("fi_"):
+        raw_slug = raw_prefix[3:]
+    else:
+        raw_slug = raw_prefix
+
+    ascii_slug = (
+        unicodedata.normalize("NFKD", raw_slug)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .lower()
+    )
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_slug).strip("-")
+    if len(slug) > INSTANCE_SLUG_MAX_LENGTH:
+        truncated_slug = slug[:INSTANCE_SLUG_MAX_LENGTH].rstrip("-")
+        word_boundary = truncated_slug.rpartition("-")[0]
+        slug = (
+            word_boundary
+            if len(word_boundary) >= INSTANCE_SLUG_MAX_LENGTH // 2
+            else truncated_slug
+        )
+    if raw_slug and not slug:
+        slug = "workflow"
+
+    current_time = when or datetime.datetime.now(datetime.UTC)
+    timestamp = current_time.astimezone(datetime.UTC).strftime("%Y%m%d-%H%M%S")
+    suffix = random_suffix or uuid.uuid4().hex[:8]
+    if not re.fullmatch(r"[a-f0-9]{8}", suffix):
+        raise ValueError(
+            "Instance random suffix must contain eight hexadecimal digits."
+        )
+
+    readable_prefix = f"fi_{slug}" if slug else "fi"
+    name = f"{readable_prefix}_{timestamp}_{suffix}"
+    if len(os.fsencode(name)) > INSTANCE_DIRECTORY_MAX_BYTES:
+        raise RuntimeError("Generated instance directory name exceeds its size limit.")
+    return name
+
+
+def create_unique_directory(base_dir=".", prefix="fi", max_attempts=10):
     base_dir = os.path.expanduser(base_dir)
     attempt = 0
 
     while attempt < max_attempts:
         attempt += 1
         try:
-            timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S%f")
-            unique_dir = os.path.join(base_dir, f"{prefix}_{timestamp}")
+            directory_name = _format_instance_directory_name(prefix)
+            unique_dir = os.path.join(base_dir, directory_name)
             os.makedirs(unique_dir, exist_ok=False)
 
             return unique_dir

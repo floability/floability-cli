@@ -67,25 +67,29 @@ floability instance stop <name-or-path>
 
 ## Instance Naming
 
-Instance directories are named after the backpack they were created from:
+Instance directories use a shortened form of the backpack name:
 
 ```
-fi_<backpack-name>_<timestamp>
+fi_<backpack-slug>_<UTC-time>_<random-id>
 ```
 
 For example, running with `--backpack cms-physics` produces:
 
 ```
-fi_cms-physics_20260410104122618078
+fi_cms-physics_20260410-104122_a1b2c3d4
 ```
 
-The timestamp is a compact UTC datetime with microseconds (`YYYYMMDDHHMMSSffffff`), making instances sortable and unique.
+The normalized backpack slug is limited to 20 ASCII characters, while the
+complete backpack name remains in `metadata/run.json`. The UTC time
+(`YYYYMMDD-HHMMSS`) keeps names readable and approximately sortable; the
+eight-character random ID prevents collisions. Generated directory names are
+limited to 64 bytes for safer use inside longer HPC filesystem paths.
 
 If `--backpack .` is used, the name of the current directory is used as the backpack name.
 
 ## Navigating to the Latest Instance
 
-To print the path of the most recently created instance:
+To print the path of the most recently run instance:
 
 ```bash
 floability instance latest
@@ -94,10 +98,14 @@ floability instance latest
 Use it directly in your shell to navigate there:
 
 ```bash
-cd $(floability instance latest)
+cd "$(floability instance latest)"
 ```
 
-This resolves via the `latest_floability_instance` symlink in the base directory, falling back to the most recently registered instance in the registry.
+Floability remembers the last 10 base directories used by `run` or `execute`.
+Without `--base-dir`, `instance latest` selects the most recently run instance
+in the most recently used base directory. Use `--base-dir DIR` to restrict the
+lookup to a specific existing base directory. Instances that were only created
+with `instance create` do not become latest until they are run.
 
 ## Directory Layout
 
@@ -234,7 +242,7 @@ floability instance create --backpack <backpack-root>
 
 # 2) Discover short name or navigate to latest
 floability instance list
-cd $(floability instance latest)
+cd "$(floability instance latest)"
 
 # 3) Re-run later without rebuilding from scratch
 floability run --instance <short-name>

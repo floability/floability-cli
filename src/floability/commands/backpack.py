@@ -121,7 +121,7 @@ class BackpackCommand(BaseCommand):
             "floability backpack init --name my-workflow --from-template taskvine-data --script",
             "floability backpack init --name my-workflow --from-workflow ./my-notebook.ipynb",
             "floability backpack validate ./my-workflow",
-            "floability backpack update-env --from-instance fi_20260410_104122_618078",
+            "floability backpack update-env --from-instance fi_20260410-104122_a1b2c3d4",
             "floability backpack update-env --from-instance /path/to/instance ./my-workflow",
-            "floability backpack update-env --from-instance fi_20260410_104122_618078 --versions-only",
+            "floability backpack update-env --from-instance fi_20260410-104122_a1b2c3d4 --versions-only",
         ]

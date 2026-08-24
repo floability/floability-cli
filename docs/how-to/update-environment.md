@@ -30,7 +30,7 @@ floability backpack update-env --from-instance <name-or-path>
 Run from inside the backpack directory, or pass an explicit path:
 
 ```bash
-floability backpack update-env --from-instance fi_cms-physics_20260410104122618078 ./cms-physics
+floability backpack update-env --from-instance fi_cms-physics_20260410-104122_a1b2c3d4 ./cms-physics
 ```
 
 ### Versions-only
@@ -49,10 +49,10 @@ Pass either a registered short name or a full path:
 
 ```bash
 # by short name (from `floability instance list`)
-floability backpack update-env --from-instance fi_cms-physics_20260410104122618078
+floability backpack update-env --from-instance fi_cms-physics_20260410-104122_a1b2c3d4
 
 # by path
-floability backpack update-env --from-instance /path/to/floability-base-dir/fi_cms-physics_20260410104122618078
+floability backpack update-env --from-instance /path/to/floability-base-dir/fi_cms-physics_20260410-104122_a1b2c3d4
 ```
 
 To find the latest instance quickly:

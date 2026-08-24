@@ -138,15 +138,23 @@ class InstanceCommand(BaseCommand):
         latest_parser.add_argument(
             "--base-dir",
             default=None,
-            help="Base directory to look for the latest symlink (default: ~/floability-base-dir).",
+            help=(
+                "Restrict lookup to this base directory "
+                "(default: the most recently used base directory)."
+            ),
         )
 
     def execute(self, args: argparse.Namespace, cleanup_manager=None) -> int:
         """Execute instance command."""
-        from floability.sites import apply_site_defaults
         from ..ops.instance import run_instance_command
 
-        apply_site_defaults(args, explicit_args=getattr(args, "_explicit_args", None))
+        if args.instance_subcommand == "create":
+            from floability.sites import apply_site_defaults
+
+            apply_site_defaults(
+                args,
+                explicit_args=getattr(args, "_explicit_args", None),
+            )
         return run_instance_command(args)
 
     def get_examples(self) -> list:

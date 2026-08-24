@@ -4,25 +4,30 @@ Instance operations for Floability CLI.
 Handles creation and management of Floability instance directories.
 """
     
-import argparse
-
 import json
 import os
 import signal
+import sys
 import time
 from pathlib import Path
 
-from ..performance_tracker import PerformanceTracker
 from ..backpack_manager import resolve_backpack_args, validate_backpack_structure
-from ..instance_manager import prepare_instance, get_registered_instances_status
 from ..environment_manager import setup_manager_and_worker_envs
-from ..instance_metadata import update_instance_metadata, add_data_cache_dirs
-from ..utils import normalize_cli_base_dir
-from ..instance_registry import register_instance, resolve_instance, list_instances, prune_nonexistent_entries
 from ..instance_lock_manager import (
-    release_instance_lock,
     is_instance_running,
+    release_instance_lock,
 )
+from ..instance_manager import get_registered_instances_status, prepare_instance
+from ..instance_metadata import add_data_cache_dirs, update_instance_metadata
+from ..instance_registry import (
+    RegistryError,
+    get_recent_base_directories,
+    register_instance,
+    resolve_instance,
+    seed_base_directories_from_instances,
+)
+from ..performance_tracker import PerformanceTracker
+from ..utils import normalize_cli_base_dir
 from ..workers_manager import stop_workers_for_instance
 
 
@@ -103,6 +108,7 @@ def _create_instance_impl(args):
             Path(instance_root),
             args.manager_name,
             preferred_name=getattr(args, "name", None),
+            base_dir=Path(args.base_dir),
         )
         instance_reference = short_name
         print(f"[floability] Registered instance short name: {short_name}")
@@ -212,13 +218,16 @@ def run_instance_command(args):
     if sub == "create":
         return create_instance(args)
     elif sub == "list":
-        statuses = get_registered_instances_status()
+        try:
+            statuses = get_registered_instances_status()
+        except RegistryError as error:
+            print(f"[floability] Error: {error}", file=sys.stderr)
+            return 1
         if not statuses:
             print("[floability] No registered instances.")
             return 0
         print("[floability] Registered instances:")
-        for name in sorted(statuses.keys()):
-            st = statuses[name]
+        for name, st in statuses.items():
             running_flag = "RUNNING" if st.get("running") else "idle"
             line = f"  {name:25} {running_flag:7}"
             if getattr(args, "show_paths", False):
@@ -227,16 +236,16 @@ def run_instance_command(args):
             if getattr(args, "all_details", False):
                 print(f"      created:   {st.get('created_at','-')}")
                 print(f"      last_seen: {st.get('last_seen','-')}")
+                print(f"      last_run:  {st.get('last_run_at') or 'never'}")
                 print(f"      manager:   {st.get('manager_name','-')}")
+                print(f"      base:      {st.get('base_dir','-')}")
                 print(f"      path:      {st.get('path','-')}")
                 tags = st.get("tags") or []
                 if tags:
                     print(f"      tags:      {', '.join(tags)}")
 
         print()
-        print(
-            "[floability] Use: floability run --instance <name> or workers start --instance <name>"
-        )
+        print("[floability] Use: floability run --instance <name>")
         return 0
     elif sub == "stop":
         return stop_instance(args)
@@ -248,44 +257,75 @@ def run_instance_command(args):
 
 
 def go_to_latest_instance(args) -> int:
-    """Print the path of the latest Floability instance.
+    """Print the most recently run instance in the selected recent base."""
+    try:
+        statuses = get_registered_instances_status()
+        valid_bases = {
+            status["base_dir"]
+            for status in statuses.values()
+            if status.get("last_run_at")
+            and status.get("base_dir")
+            and status.get("exists")
+        }
 
-    Resolution order:
-      1. latest_floability_instance symlink in base_dir
-      2. Most recently created entry in the instance registry
+        explicit_base = "base_dir" in getattr(args, "_explicit_args", set())
+        if explicit_base:
+            base_dir = Path(args.base_dir).expanduser().resolve()
+            if not base_dir.is_dir():
+                print(
+                    f"[floability] Base directory not found: {base_dir}",
+                    file=sys.stderr,
+                )
+                return 1
+        else:
+            # Reconcile first so a legacy registry or an interrupted two-file
+            # update cannot make an older base look current.
+            seed_base_directories_from_instances(statuses)
+            recent_bases = get_recent_base_directories(valid_bases)
+            if not recent_bases:
+                print(
+                    "[floability] No previously run instances found.",
+                    file=sys.stderr,
+                )
+                return 1
+            base_dir = Path(recent_bases[0]["path"])
 
-    Prints only the resolved path to stdout so the caller can use it with:
-        cd $(floability instance latest)
-    """
-    from ..utils import normalize_cli_base_dir
+        selected = next(
+            (
+                status
+                for status in statuses.values()
+                if status.get("last_run_at")
+                and status.get("exists")
+                and Path(status["base_dir"]).resolve() == base_dir
+            ),
+            None,
+        )
+        if selected is None:
+            print(
+                f"[floability] No previously run instances found in {base_dir}.",
+                file=sys.stderr,
+            )
+            return 1
 
-    base_dir = normalize_cli_base_dir(getattr(args, "base_dir", None))
-    symlink = base_dir / "latest_floability_instance"
+        instance_path = Path(selected["path"]).resolve()
+        try:
+            from ..instance_manager import create_latest_symlink
 
-    if symlink.is_symlink() and Path(symlink.resolve()).is_dir():
-        print(str(symlink.resolve()))
+            create_latest_symlink(
+                str(base_dir),
+                str(instance_path),
+                verbose=False,
+            )
+        except OSError as error:
+            print(
+                f"[floability] Warning: could not update latest symlink: {error}",
+                file=sys.stderr,
+            )
+        print(instance_path)
         return 0
-
-    # Fallback: most recently created registry entry that still exists on disk
-    prune_nonexistent_entries()
-    entries = list_instances()
-    if not entries:
-        print("[floability] No instances found.", file=__import__("sys").stderr)
+    except RegistryError as error:
+        print(f"[floability] Error: {error}", file=sys.stderr)
         return 1
-
-    candidates = sorted(
-        entries.values(),
-        key=lambda v: v.get("created_at", ""),
-        reverse=True,
-    )
-    for entry in candidates:
-        path = entry.get("path", "")
-        if path and Path(path).is_dir():
-            print(path)
-            return 0
-
-    print("[floability] No instance paths found on disk.", file=__import__("sys").stderr)
-    return 1
 
 
 def _read_lock_pid(lock_file: Path) -> int:

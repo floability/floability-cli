@@ -61,7 +61,8 @@ floability run --instance <instance-name-or-path>
 **Directory and instance:**
 
 - `--base-dir DIR` (default: `~/floability-base-dir`)
-- `--instance-prefix PREFIX`: prefix for the instance directory name
+- `--instance-prefix PREFIX`: readable instance-name prefix; normalized to
+  portable ASCII and limited to 20 characters
 - `--backpack-root DIR` (default: `.`): root path for resolving backpack-relative paths
 
 **Data:**
@@ -168,16 +169,22 @@ Arguments:
 
 ### instance latest
 
-Print the path of the most recently created instance. Useful for shell navigation.
+Print the path of the most recently run instance. Useful for shell navigation.
 
 ```bash
 floability instance latest [--base-dir DIR]
-cd $(floability instance latest)
+cd "$(floability instance latest)"
 ```
 
 Options:
 
-- `--base-dir DIR` (default: `~/floability-base-dir`): where to look for the `latest_floability_instance` symlink
+- `--base-dir DIR`: restrict lookup to this existing base directory. If omitted,
+  Floability uses the most recently used base directory recorded by `run` or
+  `execute`.
+
+The successful command writes only the resolved instance path to stdout, so it
+is safe to use in command substitution. An instance created by `instance
+create` is not considered latest until it has been run.
 
 ---
 

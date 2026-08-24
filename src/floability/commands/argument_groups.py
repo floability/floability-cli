@@ -72,7 +72,11 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--instance-prefix",
         default=None,
-        help="Optional prefix for the instance directory name (always starts with 'fi_'; e.g., 'experiment1' creates fi_experiment1_<timestamp>).",
+        help=(
+            "Optional readable prefix for the instance directory name. It is "
+            "normalized and limited to 20 characters; generated names always "
+            "start with 'fi_'."
+        ),
     )
     parser.add_argument(
         "--data-spec",

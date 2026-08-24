@@ -41,7 +41,7 @@ from ..instance_lock_manager import (
     is_instance_running,
 )
 from ..instance_registry import (
-    refresh_instance_registry_entry,
+    record_instance_run,
     resolve_instance,
     register_instance,
 )
@@ -89,13 +89,18 @@ def run_workflow(
     or by reusing an existing instance (via --instance).
     """
     try:
-        # Step 1: Normalize base_dir before anything else — both new and existing
-        # instance paths need it (e.g. create_latest_symlink).
-        raw_base = getattr(args, "base_dir", None) if hasattr(args, "base_dir") else None
-        args.base_dir = str(normalize_cli_base_dir(raw_base))
-
-        # Step 2: Determine instance source (new from backpack vs existing)
+        # Resolve the instance source before choosing the effective base. An
+        # existing instance with no explicit --base-dir belongs to its parent,
+        # not automatically to ~/floability-base-dir.
+        raw_base = (
+            getattr(args, "base_dir", None) if hasattr(args, "base_dir") else None
+        )
         new_instance_required = _is_new_instance_required(args)
+        explicit_base = "base_dir" in getattr(args, "_explicit_args", set())
+        if new_instance_required or explicit_base:
+            args.base_dir = str(normalize_cli_base_dir(raw_base))
+        else:
+            args.base_dir = str(Path(args.instance).resolve().parent)
 
         # A TaskVine manager name identifies this execution attempt, not the
         # reusable instance directory. Respect an explicit CLI name; otherwise
@@ -124,6 +129,18 @@ def run_workflow(
         # Register new instance in global registry
         if ctx.is_new:
             _register_new_instance(ctx.root, args.manager_name)
+
+        # Reaching this point means the instance is resolved, locked, and has a
+        # durable execution identity. Failed setup and interrupted runs still
+        # count as the most recent accepted run attempt.
+        try:
+            record_instance_run(
+                ctx.root,
+                ctx.root.parent,
+                manager_name=args.manager_name,
+            )
+        except Exception as error:
+            print(f"[floability] Warning: could not record run history: {error}")
 
         # Step 3: Materialize data
         _materialize_data(args, ctx, perf)
@@ -351,7 +368,6 @@ def _is_new_instance_required(args: argparse.Namespace) -> bool:
         if not resolved:
             raise ValueError(f"Instance reference not found: {args.instance}")
         args.instance = resolved
-        refresh_instance_registry_entry(args.instance)
         return False
     return True
 
@@ -392,7 +408,7 @@ def _prepare_new_instance(args: argparse.Namespace, mode: str) -> InstanceContex
 
     instance_paths = create_instance_structure(args.base_dir, prefix=instance_prefix)
     instance_root = Path(instance_paths["root"])
-    create_latest_symlink(args.base_dir, str(instance_root))
+    create_latest_symlink(str(instance_root.parent), str(instance_root))
 
     if not acquire_instance_lock(instance_root):
         raise RuntimeError("Failed to acquire instance run lock for new instance.")
@@ -491,7 +507,7 @@ def _prepare_existing_instance(args: argparse.Namespace) -> InstanceContext:
         "metrics": instance_root / "metrics",
         "metadata": instance_root / "metadata",
     }
-    create_latest_symlink(args.base_dir, str(instance_root))
+    create_latest_symlink(str(instance_root.parent), str(instance_root))
 
     metadata_file = instance_paths["metadata"] / "run.json"
     if not metadata_file.exists():
@@ -567,7 +583,11 @@ def _persist_run_identity(
 def _register_new_instance(instance_root: Path, manager_name: str) -> None:
     """Register a newly created instance in global registry."""
     try:
-        short_name = register_instance(instance_root, manager_name)
+        short_name = register_instance(
+            instance_root,
+            manager_name,
+            base_dir=instance_root.parent,
+        )
         print(f"[floability] Registered instance short name: {short_name}")
     except Exception as e:
         print(f"[floability] Warning: could not register instance short name: {e}")

@@ -51,14 +51,23 @@ def create_instance_structure(
     return paths
 
 
-def create_latest_symlink(base_dir: str, target_dir: str) -> None:
+def create_latest_symlink(
+    base_dir: str,
+    target_dir: str,
+    *,
+    verbose: bool = True,
+) -> None:
     base_dir = os.path.expanduser(base_dir)
     target_dir = os.path.expanduser(target_dir)
     latest = Path(base_dir) / "latest_floability_instance"
     if latest.is_symlink() or latest.exists():
         latest.unlink()
     latest.symlink_to(target_dir)
-    print(f"[floability] Created symlink to latest instance: {os.path.abspath(latest)}")
+    if verbose:
+        print(
+            "[floability] Created symlink to latest instance: "
+            f"{os.path.abspath(latest)}"
+        )
 
 
 def copy_workflow_directory(
@@ -189,27 +198,6 @@ def get_registered_instances_status() -> Dict[str, Dict]:
     manager_name, tags. Instances with missing status (e.g., record corrupted)
     are skipped.
     """
-    try:
-        from .instance_registry import (
-            list_instances,
-            instance_status,
-            prune_nonexistent_entries,
-        )
-    except Exception:
-        return {}
-    # Prune stale entries first (paths that no longer exist)
-    try:
-        prune_nonexistent_entries()
-    except Exception:
-        pass
-    entries = list_instances()
-    results: Dict[str, Dict] = {}
-    for name in entries.keys():
-        try:
-            st = instance_status(name)
-            if st:
-                results[name] = st
-        except Exception:
-            # Skip problematic entries silently; could log later
-            continue
-    return results
+    from .instance_registry import get_registered_instances_status as get_statuses
+
+    return get_statuses()

@@ -139,6 +139,7 @@ def test_run_workflow_persists_identity_before_environment_setup(
         is_new=False,
     )
     args = Namespace(
+        instance=str(tmp_path),
         base_dir=str(tmp_path),
         manager_name=None,
         manager_ports="9123,9150",
@@ -152,6 +153,18 @@ def test_run_workflow_persists_identity_before_environment_setup(
     monkeypatch.setattr(run_ops, "_send_catalog_event", lambda *_args: None)
     monkeypatch.setattr(run_ops, "_start_workers", lambda *_args: None)
     monkeypatch.setattr(run_ops, "_execute_batch", lambda *_args: True)
+    recorded_run = {}
+
+    def capture_run(instance_path, base_dir, manager_name=None):
+        persisted = json.loads(metadata_file.read_text(encoding="utf-8"))
+        assert persisted["manager_name"] == manager_name
+        recorded_run.update(
+            instance_path=instance_path,
+            base_dir=base_dir,
+            manager_name=manager_name,
+        )
+
+    monkeypatch.setattr(run_ops, "record_instance_run", capture_run)
 
     def verify_identity_before_setup(current_args, *_args):
         persisted = json.loads(metadata_file.read_text(encoding="utf-8"))
@@ -168,3 +181,8 @@ def test_run_workflow_persists_identity_before_environment_setup(
     )
 
     assert result == 0
+    assert recorded_run == {
+        "instance_path": tmp_path,
+        "base_dir": tmp_path.parent,
+        "manager_name": args.manager_name,
+    }
