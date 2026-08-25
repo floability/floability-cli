@@ -342,52 +342,85 @@ Utility tools for managing Floability cache and instance data.
 
 ### tools clean
 
-Delete cache directories and/or instance directories under a base directory. Prompts for confirmation before deleting unless `--yes` is given.
+Remove unreferenced cache entries and, when explicitly requested, inactive
+instance directories. Floability always prints a compact cleanup plan before
+deleting. It prompts for confirmation unless `--yes` is given.
 
-**Default behavior** (no scope flag): removes data cache and env cache, leaves instances untouched.
+**Default behavior:** select the most recently used existing base directory
+found in Floability's recent-base registry and remove only data-cache entries
+that are not referenced by any retained instance. Environment caches and
+instance directories are retained unless their scope is explicitly selected.
+The registry contains recently recorded bases, not necessarily every
+Floability base that exists.
 
 ```bash
-floability tools clean [--base-dir DIR] [scope] [--yes] [--parallel]
+floability tools clean [base selection] [scope] [--dry-run] [--yes] [--jobs N]
 ```
 
 Options:
 
-- `--base-dir DIR` (default: `~/floability-base-dir`): base directory containing Floability data
+- `--base-dir DIR`: clean this exact base directory
+- `--all-registered-bases`: clean every existing base currently recorded in
+  the recent-base registry
 - `--data-cache-dir DIR`: override default `<base-dir>/floability-data-cache`
 
-**Scope** (mutually exclusive; default is `--data-and-env`):
+`--base-dir` and `--all-registered-bases` are mutually exclusive. A custom
+data-cache directory can be used only with one selected base.
+
+**Scope** (mutually exclusive; default is reference-aware `--data-only`):
 
 | Flag | What is removed |
 |---|---|
-| `--data-only` | Data cache only (`floability-data-cache/`) |
-| `--env-only` | Conda env cache only (`flo_common_env/`) |
-| `--data-and-env` | Data cache + env cache (explicit default) |
-| `--instances-only` | Instance directories (`fi_*/`) and latest symlink |
-| `--all` | Everything: data cache, env cache, and instances |
-| `--keep-last` | Everything **except** the latest instance and the env/data cache entries it depends on |
+| `--data-only` | Unreferenced entries in `floability-data-cache/`; the default |
+| `--env-only` | Unreferenced extracted environments and archives in `flo_common_env/` |
+| `--data-and-env` | Both unreferenced cache types |
+| `--instances-only` | Inactive `fi_*/` instance directories; caches remain |
+| `--all` | All inactive instances and cache entries not needed by retained instances |
+| `--keep-last` | Everything except the most recently run instance and its recorded data/environment dependencies |
+
+`--keep-last` uses registry `last_run_at`, the same definition used by
+`floability instance latest`; it does not use directory modification time or
+the legacy latest symlink. Cleanup refuses to run if a selected base contains
+active or unverifiable instance/worker ownership. Missing or corrupt metadata
+for a retained instance also stops cleanup instead of guessing.
 
 **Flags:**
 
+- `--dry-run`: print the complete cleanup plan and change nothing
 - `--yes`, `-y`: skip the confirmation prompt
-- `--parallel`: use `find | xargs rm` for faster deletion of large directories (e.g. conda envs). Requires `find`, `xargs`, and `rm` on `PATH`. Falls back to Python `shutil.rmtree` by default.
+- `--jobs N`: number of parallel file-deletion jobs; defaults to the smaller
+  of four or the available CPU count. Use `--jobs 1` for serial deletion.
+
+Parallel deletion requires `find`, `xargs`, and `rm`. Selected entries are
+first renamed within their cache/base filesystem, then removed. If deletion is
+interrupted, a later cleanup recognizes and removes the staged entry.
 
 **Examples:**
 
 ```bash
-# Remove data and env cache (default)
+# Preview unreferenced data entries in the latest used base
+floability tools clean --dry-run
+
+# Remove unreferenced data entries
 floability tools clean
 
-# Remove only the conda env cache
-floability tools clean --env-only
+# Remove only unreferenced environment entries using two deletion jobs
+floability tools clean --env-only --jobs 2
 
-# Remove everything except the latest instance
+# Remove unreferenced data and environment entries
+floability tools clean --data-and-env
+
+# Remove everything except the most recently run instance and its dependencies
 floability tools clean --keep-last --yes
 
-# Remove all instances on a custom base dir
+# Remove inactive instances from one explicit base
 floability tools clean --instances-only --base-dir /scratch/myuser
 
-# Remove everything, fast, no prompt
-floability tools clean --all --yes --parallel
+# Clean every base currently recorded in the recent-base registry
+floability tools clean --all-registered-bases --dry-run
+
+# Remove all inactive instances and unreferenced caches without prompting
+floability tools clean --all --yes --jobs 4
 ```
 
 ---

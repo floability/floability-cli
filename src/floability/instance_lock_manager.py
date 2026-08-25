@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 import time
@@ -18,6 +19,7 @@ except ImportError:  # pragma: no cover - Floability targets Linux HPC systems.
 INSTANCE_LOCK_NAME = "instance.lock"
 WORKERS_LOCK_NAME = "workers.lock"
 LOCK_SCHEMA_VERSION = 2
+LEGACY_TIME_TOLERANCE_SECONDS = 2.0
 
 IDENTITY_OWNED = "owned"
 IDENTITY_GONE = "gone"
@@ -122,6 +124,18 @@ def _read_boot_id() -> str | None:
     return value or None
 
 
+def _read_boot_time() -> float | None:
+    """Read the current Linux boot time as Unix seconds."""
+    try:
+        with open("/proc/stat", encoding="utf-8") as stream:
+            for line in stream:
+                if line.startswith("btime "):
+                    return float(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 def _read_process_stat(pid: int) -> tuple[str, int, int] | None:
     """Return process state, process group, and Linux start ticks."""
     try:
@@ -205,6 +219,42 @@ def _process_alive(pid: int) -> bool:
         return True
 
 
+def _legacy_pid_was_reused(lock_data: dict, pid: int) -> bool:
+    """Prove that a live PID cannot be the owner recorded by a legacy lock.
+
+    Legacy locks stored only ``pid`` and ``timestamp``. A live but reused PID
+    must not keep an instance permanently locked. We downgrade the lock only
+    when Linux boot/process timing proves reuse; missing or ambiguous timing
+    remains active and therefore fails closed.
+    """
+    timestamp = lock_data.get("timestamp")
+    if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)):
+        return False
+    timestamp = float(timestamp)
+    if timestamp <= 0 or not math.isfinite(timestamp):
+        return False
+
+    boot_time = _read_boot_time()
+    if boot_time is None:
+        return False
+    if boot_time > timestamp + LEGACY_TIME_TOLERANCE_SECONDS:
+        return True
+
+    try:
+        process_stat = _read_process_stat(pid)
+        clock_ticks = os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError):
+        return False
+    if process_stat is None:
+        return True
+    if not isinstance(clock_ticks, int) or clock_ticks <= 0:
+        return False
+
+    _state, _pgid, start_ticks = process_stat
+    process_started_at = boot_time + (start_ticks / clock_ticks)
+    return process_started_at > timestamp + LEGACY_TIME_TOLERANCE_SECONDS
+
+
 def _process_group_alive(pgid: int) -> bool:
     try:
         os.killpg(pgid, 0)
@@ -272,7 +322,11 @@ def _instance_lock_status_unlocked(instance_path: Path) -> dict:
     if not isinstance(legacy_pid, int) or legacy_pid <= 0:
         result["state"] = "corrupt"
     elif _process_alive(legacy_pid):
-        result["state"] = "active_legacy"
+        result["state"] = (
+            "stale_legacy"
+            if _legacy_pid_was_reused(data, legacy_pid)
+            else "active_legacy"
+        )
     else:
         result["state"] = "stale_legacy"
     return result

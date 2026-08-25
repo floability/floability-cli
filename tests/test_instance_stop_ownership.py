@@ -141,6 +141,54 @@ def test_stop_refuses_live_legacy_lock(tmp_path, monkeypatch):
     assert lock_path.exists()
 
 
+def test_legacy_lock_detects_pid_reuse_from_process_start_time(
+    tmp_path,
+    monkeypatch,
+):
+    metadata_dir = _prepare_instance(tmp_path)
+    lock_path = metadata_dir / "instance.lock"
+    lock_path.write_text(
+        json.dumps({"pid": 43210, "timestamp": 1_000.0}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(instance_lock_manager, "_process_alive", lambda _pid: True)
+    monkeypatch.setattr(instance_lock_manager, "_read_boot_time", lambda: 900.0)
+    monkeypatch.setattr(
+        instance_lock_manager,
+        "_read_process_stat",
+        lambda _pid: ("S", 43210, 20_000),
+    )
+    monkeypatch.setattr(instance_lock_manager.os, "sysconf", lambda _name: 100)
+
+    status = instance_lock_manager.get_instance_lock_status(tmp_path)
+
+    assert status["state"] == "stale_legacy"
+
+
+def test_legacy_lock_remains_active_when_process_timing_matches(
+    tmp_path,
+    monkeypatch,
+):
+    metadata_dir = _prepare_instance(tmp_path)
+    lock_path = metadata_dir / "instance.lock"
+    lock_path.write_text(
+        json.dumps({"pid": 43210, "timestamp": 1_000.0}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(instance_lock_manager, "_process_alive", lambda _pid: True)
+    monkeypatch.setattr(instance_lock_manager, "_read_boot_time", lambda: 900.0)
+    monkeypatch.setattr(
+        instance_lock_manager,
+        "_read_process_stat",
+        lambda _pid: ("S", 43210, 5_000),
+    )
+    monkeypatch.setattr(instance_lock_manager.os, "sysconf", lambda _name: 100)
+
+    status = instance_lock_manager.get_instance_lock_status(tmp_path)
+
+    assert status["state"] == "active_legacy"
+
+
 def test_stop_does_not_signal_mismatched_owner_and_releases_terminal_lock(
     tmp_path,
     monkeypatch,
