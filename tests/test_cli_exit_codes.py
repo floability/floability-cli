@@ -195,6 +195,7 @@ def test_backpack_init_returns_nonzero_without_overwriting_existing_backpack(
 
     first = _run_installed_cli(*init_args)
     assert first.returncode == 0
+    assert "floability run --backpack" in first.stdout
 
     workflow = destination / "workflow" / "duplicate.ipynb"
     original_workflow = workflow.read_bytes()
@@ -219,6 +220,38 @@ def test_backpack_init_returns_nonzero_for_missing_workflow(tmp_path):
     assert result.returncode == 1
     assert "Workflow source file not found" in result.stdout
     assert not destination.exists()
+
+
+def test_script_template_recommends_execute(tmp_path):
+    result = _run_installed_cli(
+        "backpack",
+        "init",
+        "--name",
+        str(tmp_path / "script-template"),
+        "--from-template",
+        "taskvine",
+        "--script",
+    )
+
+    assert result.returncode == 0
+    assert "floability execute --backpack" in result.stdout
+
+
+def test_shell_workflow_recommends_execute(tmp_path):
+    workflow = tmp_path / "workflow.sh"
+    workflow.write_text("#!/bin/sh\necho test\n", encoding="utf-8")
+    result = _run_installed_cli(
+        "backpack",
+        "init",
+        "--name",
+        str(tmp_path / "shell-workflow"),
+        "--from-workflow",
+        str(workflow),
+        input_text="3\nn\n",
+    )
+
+    assert result.returncode == 0
+    assert "floability execute --backpack" in result.stdout
 
 
 def test_backpack_validate_preserves_success_and_failure_statuses(tmp_path):
@@ -284,10 +317,11 @@ profiles:
     return backpack
 
 
-def _run_installed_cli(*args):
+def _run_installed_cli(*args, input_text=None):
     return subprocess.run(
         [str(Path(sys.executable).with_name("floability")), *args],
         capture_output=True,
         text=True,
+        input=input_text,
         check=False,
     )

@@ -62,9 +62,8 @@ class AuditCommand(BaseCommand):
             required=True,
             default=None,
             help=(
-                "If provided, generate a complete backpack directory with this name "
-                "in the current directory. Creates workflow/, software/, and compute/ "
-                "from audit outputs."
+                "Required name or path for the complete backpack generated from "
+                "the audit outputs."
             ),
         )
         parser.add_argument(
@@ -105,10 +104,9 @@ class AuditCommand(BaseCommand):
 
     def get_examples(self) -> list:
         return [
-            "floability audit --notebook example/matrix-multiplication/workflow/matrix-multiplication.ipynb",
-            "floability audit --notebook mynotebook.ipynb --cell-level",
-            "floability audit --notebook mynotebook.ipynb --conda-env /path/to/conda/env",
             "floability audit --notebook mynotebook.ipynb --backpack-name my-workflow",
+            "floability audit --notebook mynotebook.ipynb --backpack-name my-workflow --cell-level",
+            "floability audit --notebook mynotebook.ipynb --conda-env /path/to/conda/env --backpack-name my-workflow",
             "floability audit --notebook mynotebook.ipynb --conda-env /path/to/conda/env --backpack-name my-workflow --force",
             "floability audit --notebook mynotebook.ipynb --data-dirs ./data ./inputs --backpack-name my-workflow",
             "floability audit --notebook mynotebook.ipynb --no-worker --conda-env /path/to/env --backpack-name my-workflow",

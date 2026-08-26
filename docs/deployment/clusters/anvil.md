@@ -34,7 +34,7 @@ Example:
 
 ```bash
 floability run --backpack <backpack-root> --batch-type slurm \
-	--data-cache-dir /anvil/scratch/<username>/floability-cache-base-dir
+  --base-dir /anvil/scratch/<username>/floability-base-dir
 ```
 
 ## Slurm Partition (Queue) Selection
@@ -46,7 +46,7 @@ Example:
 
 ```bash
 floability run --backpack <backpack-root> --batch-type slurm \
-	--batch-options "-p wide"
+  --batch-options "-p wide"
 ```
 
 For other partition/queue options, see:

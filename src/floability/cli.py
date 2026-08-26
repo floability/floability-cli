@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Floability CLI: main entry point for running distributed Jupyter-based workflows.
-"""
+"""Floability CLI entry point for portable distributed workflows."""
 
 import argparse
 import sys
@@ -21,7 +19,10 @@ def main():
 
     # Parse arguments
     parser = argparse.ArgumentParser(
-        description="Floability CLI: run distributed Jupyter-based workflows with TaskVine.",
+        description=(
+            "Floability CLI: run portable notebook, Python, and shell workflows "
+            "with TaskVine."
+        ),
         epilog="Use 'floability <command> --help' for more information on a specific command.",
     )
 

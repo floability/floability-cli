@@ -24,7 +24,8 @@ floability backpack --help
 A **backpack** is a self-contained directory bundle that contains everything
 needed to run a reproducible workflow:
 
-- **Workflow**: A Jupyter notebook or Python script that defines the computation
+- **Workflow**: A Jupyter notebook, Python script, or shell script that defines
+  the computation
 - **Software**: A `conda` environment file specifying all dependencies
 - **Compute**: Resource requirements (number of workers, cores, memory)
 - **Data** (optional): Input datasets and their source locations
@@ -127,12 +128,12 @@ Creating a backpack manually gives you full control. The required layout is:
 
 ```
 my-analysis/
-├── compute/
-│   └── compute.yml        # Worker resource specifications
 ├── software/
 │   └── environment.yml    # Conda dependencies
-└── workflow/
-    └── my-analysis.ipynb  # Your workflow (notebook, .py, or .sh)
+├── workflow/
+│   └── my-analysis.ipynb  # Your workflow (notebook, .py, or .sh)
+└── compute/               # Recommended; optional for execution preflight
+    └── compute.yml        # Worker resource specifications
 ```
 
 Create the directories:
@@ -150,9 +151,9 @@ name: my-analysis
 channels:
   - conda-forge
 dependencies:
-  - python=3.13
-  - numpy=2.6.4
-  - ndcctools=7.16.4       # required for TaskVine
+  - python=3.12
+  - numpy=2.2
+  - ndcctools=7.17.1       # include when the workflow uses TaskVine
 ```
 
 Make sure include proper versions if your workflow relies on specific versions of packages.
@@ -212,8 +213,13 @@ import os
 import ndcctools.taskvine as vine
 
 manager_name = os.environ.get('VINE_MANAGER_NAME')
-manager_ports = os.environ.get('VINE_MANAGER_PORTS', '9123,9150')
-m = vine.Manager(port=int(manager_ports.split(',')[0]))
+ports_text = os.environ.get('VINE_MANAGER_PORTS', '9123,9150')
+manager_ports = [
+    int(value.strip())
+    for value in ports_text.replace(':', ',').split(',')
+    if value.strip()
+]
+m = vine.Manager(manager_ports, name=manager_name)
 ```
 
 **2. Task definition** — Structure a worker function:
@@ -275,11 +281,21 @@ This also creates a `data/data.yml` file where you specify input sources (S3, HT
 
 ### Option 4: From an Existing Workflow
 
-If you already have a notebook or script, the `--from-workflow` flag
+If you already have a notebook, Python script, or shell script, the
+`--from-workflow` flag
 scaffolds the full backpack structure around it automatically.
 
 ```bash
 floability backpack init --name my-analysis --from-workflow /path/to/your/notebook.ipynb
+```
+
+The command accepts `.ipynb`, `.py`, and `.sh`. Its final guidance uses
+`floability run` for a notebook and `floability execute` for Python or shell.
+To start from a built-in Python template instead, add `--script`:
+
+```bash
+floability backpack init --name my-analysis \
+  --from-template taskvine --script
 ```
 
 This prompts you through two quick questions:
@@ -394,17 +410,25 @@ After creating your backpack, validate the structure:
 floability backpack validate my-first-analysis
 ```
 
-This checks:
-- ✓ Required directories exist (workflow, software, compute)
-- ✓ Workflow file is present (.ipynb, .py, or .sh)
-- ✓ All YAML files are valid and parseable
+This conventional structure check requires `workflow/`,
+`software/environment.yml`, and `compute/compute.yml`; validates the YAML; and
+looks for a top-level `.ipynb`, `.py`, or `.sh` workflow file. Add `--strict`
+to parse the entrypoint and perform live metadata checks for data sources.
+
+`run`, `execute`, and `instance create` also perform execution preflight before
+creating instance state. That preflight searches recursively, requires a
+mode-compatible entrypoint and environment, and permits `compute.yml` to be
+absent.
 
 Output:
 ```
-[floability] Validating backpack: my-first-analysis
-[floability] Status: VALID
-[floability] Workflow: my-first-analysis.ipynb
-[floability] Has data specification: no
+======================================================================
+[floability] Backpack Validation: VALID
+======================================================================
+[floability] ✓ Backpack structure is valid
+[floability]   Path: /path/to/my-first-analysis
+[floability]   Workflow: my-first-analysis.ipynb
+======================================================================
 ```
 
 If validation fails, read the errors carefully — they point to missing files or invalid YAML.

@@ -68,7 +68,10 @@ Stop a running instance:
 floability instance stop <name-or-path>
 ```
 
-`instance stop` sends `SIGINT` first, then `SIGTERM` if needed, and performs worker shutdown as best effort.
+`instance stop` verifies recorded process ownership, requests staged shutdown,
+and confirms both the run and worker lifecycle before reporting success. If
+cleanup cannot be verified, it returns nonzero and retains diagnostic lock
+state instead of claiming the instance stopped.
 
 ## Instance Naming
 
@@ -151,7 +154,7 @@ matrix-multiplication/
 ├── software/
 │   └── environment.yml
 └── workflow/
-	└── matrix-multiplication.ipynb
+    └── matrix-multiplication.ipynb
 ```
 
 After materialization and run preparation, an instance looks like:
@@ -170,11 +173,11 @@ latest_floability_instance/
 ├── metrics/
 ├── pyuser/
 └── workflow/
-	├── data/
-	│   └── matrices/
-	│       ├── matrix_dense_00.csv -> <base-dir>/floability-data-cache/<hash>/cached_data/data/matrices/matrix_dense_00.csv
-	│       └── ...
-	└── matrix-multiplication.ipynb
+    ├── data/
+    │   └── matrices/
+    │       ├── matrix_dense_00.csv -> <base-dir>/floability-data-cache/<hash>/cached_data/data/matrices/matrix_dense_00.csv
+    │       └── ...
+    └── matrix-multiplication.ipynb
 ```
 
 One-to-one mapping summary:
@@ -203,16 +206,20 @@ You can override cache location with `--data-cache-dir`.
 
 ## Locks and Safety
 
-Floability uses PID-based lock files in `metadata/`:
+Floability uses ownership lock files in `metadata/`:
 
 - `instance.lock`: protects the main run path
 - `workers.lock`: protects worker factory lifecycle
 
 Behavior:
 
-- lock files are created atomically
-- if a lock exists but the PID is dead, Floability treats it as stale and cleans it up
-- active locks prevent duplicate concurrent runs for the same instance
+- lock files are created atomically;
+- new locks record PID/process-group identity, process start time, and Linux
+  boot identity so a reused PID is not treated as the owner;
+- active or unverifiable legacy ownership prevents unsafe signaling and
+  duplicate concurrent use; and
+- a matching dead owner can be reconciled as stale, while corrupt or
+  mismatched state is retained for diagnosis.
 
 ## Registry and Short Names
 
@@ -247,12 +254,14 @@ During execution, Floability may also write:
 # 1) Create once
 floability instance create --backpack <backpack-root>
 
-# 2) Discover short name or navigate to latest
+# 2) Discover the registered short name
 floability instance list
-cd "$(floability instance latest)"
 
 # 3) Re-run later without rebuilding from scratch
 floability run --instance <short-name>
+
+# After the first accepted run, latest resolves from run history
+cd "$(floability instance latest)"
 
 # 4) Update backpack environment from what was installed
 floability backpack update-env --from-instance $(floability instance latest) ./my-backpack

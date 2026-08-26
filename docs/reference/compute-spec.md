@@ -6,11 +6,11 @@
 
 ```yaml
 vine_factory_config:
-	min-workers: 1
-	max-workers: 5
-	cores: 2
-	memory: 2048
-	disk: 4000
+  min-workers: 1
+  max-workers: 5
+  cores: 2
+  memory: 2048
+  disk: 4000
 ```
 
 Use it during run/execute:
@@ -26,7 +26,8 @@ The compute spec section used by Floability is:
 
 ```yaml
 vine_factory_config:
-	...
+  min-workers: 1
+  max-workers: 5
 ```
 
 ## Supported Keys (`vine_factory_config`)
@@ -47,16 +48,16 @@ Example with more options:
 
 ```yaml
 vine_factory_config:
-	min-workers: 1
-	max-workers: 10
-	cores: 1
-	memory: 1024
-	disk: 2000
-	workers-per-cycle: 1
-	tasks-per-worker: 1
-	timeout: 0
-	worker-extra-options: ""
-	condor-requirements: ""
+  min-workers: 1
+  max-workers: 10
+  cores: 1
+  memory: 1024
+  disk: 2000
+  workers-per-cycle: 1
+  tasks-per-worker: 1
+  timeout: 0
+  worker-extra-options: ""
+  condor-requirements: ""
 ```
 
 ## Precedence (Important)
@@ -75,15 +76,15 @@ Examples:
 ```bash
 # Override workers and cores from CLI
 floability run --backpack <backpack-root> \
-	--compute-spec <path-to-compute.yml> \
-	--workers 20 \
-	--cores-per-worker 2
+  --compute-spec <path-to-compute.yml> \
+  --workers 20 \
+  --cores-per-worker 2
 
 # Override scheduler type and scheduler options
 floability run --backpack <backpack-root> \
-	--compute-spec <path-to-compute.yml> \
-	--batch-type slurm \
-	--batch-options "-p wide -t 02:00:00"
+  --compute-spec <path-to-compute.yml> \
+  --batch-type slurm \
+  --batch-options "-p wide -t 02:00:00"
 ```
 
 ## Related Options (CLI)

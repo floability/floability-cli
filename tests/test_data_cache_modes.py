@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from floability.ops.data import run_data_command
+from floability.ops import data as data_ops
 
 
 def _make_local_data_backpack(root: Path) -> Path:
@@ -65,7 +65,7 @@ def test_data_fetch_respects_cache_mode(
     base_dir = tmp_path / f"base-{cache_mode}"
     cache_dir = tmp_path / f"cache-{cache_mode}"
 
-    assert run_data_command(
+    assert data_ops.run_data_command(
         _data_args(backpack, base_dir, cache_dir, cache_mode)
     )
 
@@ -92,5 +92,39 @@ def test_cache_off_never_creates_default_cache_directory(
     )
     args.mode = operation
 
-    assert run_data_command(args)
+    assert data_ops.run_data_command(args)
     assert not (base_dir / "floability-data-cache").exists()
+
+
+@pytest.mark.parametrize(
+    ("operation", "handler_name"),
+    [
+        ("fetch", "fetch_data_from_spec"),
+        ("verify", "verify_data_from_spec"),
+    ],
+)
+def test_data_command_forwards_cache_lookup_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    handler_name: str,
+):
+    backpack = _make_local_data_backpack(tmp_path)
+    args = _data_args(
+        backpack,
+        tmp_path / f"base-{operation}",
+        tmp_path / f"cache-{operation}",
+        "off",
+    )
+    args.mode = operation
+    args.cache_lookup_mode = "local"
+    received = {}
+
+    def record_call(*_args, **kwargs):
+        received["cache_lookup_mode"] = kwargs["cache_lookup_mode"]
+        return True
+
+    monkeypatch.setattr(data_ops, handler_name, record_call)
+
+    assert data_ops.run_data_command(args)
+    assert received == {"cache_lookup_mode": "local"}

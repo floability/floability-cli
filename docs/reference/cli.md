@@ -54,6 +54,13 @@ floability run --instance <instance-name-or-path>
 - `--worker-environment PATH`: worker environment spec (optional; auto-resolved from `software/worker-environment.yml` if present)
 - `--entrypoint FILENAME`: explicitly select the file that runs first from `workflow/`; normally unnecessary unless automatic selection is ambiguous
 
+Entrypoint discovery is recursive. `run` considers only `.ipynb` files;
+`execute` considers `.ipynb`, `.py`, and `.sh`. Floability selects the only
+eligible file automatically. If several are eligible, the single file whose
+stem matches the backpack directory name is preferred; otherwise use
+`--entrypoint`. The explicit value is a filename, not a path, and must be
+unique within `workflow/`.
+
 **Session:**
 
 - `--jupyter-port INT` (default: `8888`)
@@ -77,6 +84,7 @@ floability run --instance <instance-name-or-path>
 - `--data-cache-dir DIR`: override default `<base-dir>/floability-data-cache`
 - `--force-data-cache`: rebuild cache entries even if they already exist
 - `--fingerprint-mode meta|sample|strict` (default: `meta`)
+- `--cache-lookup-mode strict|local` (default: `strict`)
 - `--continue-on-data-failure`: proceed even if data operations fail
 
 **Workers/factory:**
@@ -102,6 +110,11 @@ backpack's `workflow/` directory. This includes saved notebook changes when an
 interactive run is stopped with `Ctrl+C`. Staged data and newly generated files
 are not copied unless their relative paths are selected with `--sync-path`.
 
+The displayed `9123:9150` manager range is the generic parser default. A
+detected site may replace an option that the user did not explicitly supply.
+Explicit CLI values always take precedence; see the relevant deployment page
+for configured site defaults.
+
 ---
 
 ## execute
@@ -113,9 +126,11 @@ floability execute --backpack <backpack-root>
 ```
 
 `execute` accepts the same options as `run`. The difference in behavior:
+
 - No JupyterLab is started
 - The notebook or script runs to completion, then exits
-- Original workflow files are copied back to the backpack on success
+- Original workflow files are synchronized back during finalization unless
+  `--no-update-backpack` is selected
 
 New `execute` instances receive the same preflight validation, but their
 `workflow/` entrypoint may be `.ipynb`, `.py`, or `.sh`.
@@ -149,7 +164,8 @@ Options:
 - `--per-instance-env`: extract a private environment inside the instance
   instead of using the shared environment cache
 - `--manager-name NAME`: TaskVine manager name (auto-generated if omitted)
-- `--manager-ports A:B` (default: `9123:9150`; legacy `A,B` is accepted)
+- `--manager-ports A:B` (generic default: `9123:9150`; legacy `A,B` is accepted;
+  detected site defaults may replace an unspecified value)
 - `--env-vars KEY=VALUE,...`
 - `--measure-performance`
 
@@ -166,7 +182,9 @@ Options:
 
 ### instance stop
 
-Stop a running instance (sends SIGINT/SIGTERM to the run process, stops workers, releases lock).
+Stop a running instance using ownership-verified staged shutdown. Floability
+releases locks only after the matching run and workers reach a terminal state;
+incomplete cleanup returns nonzero and retains diagnostic ownership.
 
 ```bash
 floability instance stop <instance-name-or-path>
@@ -216,6 +234,8 @@ Options:
 - `--batch-options STRING`: raw options passed directly to vine_factory
 - `--compute-spec FILE`: path to `compute.yml`
 - `--debug-workers`: enable debug logging in workers
+- `--worker-transfer-ports A:B`: worker-to-worker transfer range; legacy
+  `A,B` is accepted and the normalized value is passed to `vine_factory`
 
 ### workers stop
 
@@ -261,7 +281,13 @@ Options:
 - `--data-cache-dir DIR`: override default `<base-dir>/floability-data-cache`
 - `--force-data-cache`: rebuild cache entries even if they already exist
 - `--fingerprint-mode meta|sample|strict` (default: `meta`)
+- `--cache-lookup-mode strict|local` (default: `strict`)
 - `--base-dir DIR` (default: `~/floability-base-dir`)
+
+`check` does not create an instance. Direct `fetch` and `verify` create a
+data-only instance under `--base-dir` and update its
+`latest_floability_instance` symlink. With cache mode `off`, no shared cache
+directory is created or consulted.
 
 ---
 
@@ -270,7 +296,8 @@ Options:
 Generate environment and data dependency information from a notebook.
 
 ```bash
-floability audit --notebook <notebook.ipynb>
+floability audit --notebook <notebook.ipynb> \
+  --backpack-name <generated-backpack>
 ```
 
 Options:
@@ -286,6 +313,12 @@ Options:
 - `--force` : Overwrite existing backpack directory
 - `--cell-level`: generate dependencies at cell level instead of notebook level
 
+Audit executes the notebook under tracing, writes intermediate dependency
+reports in the current directory, and assembles a backpack at
+`--backpack-name`. Review the generated workflow, environment, compute, and
+data specifications before running it. Audit behavior and arguments are kept
+compatible during the 0.3 structural rewrite.
+
 ---
 
 ## backpack
@@ -298,6 +331,7 @@ Bootstrap a new Floability backpack directory structure.
 
 ```bash
 floability backpack init --name <name> --from-template taskvine
+floability backpack init --name <name> --from-template taskvine --script
 floability backpack init --name <name> --from-workflow <notebook-or-script>
 ```
 
@@ -305,8 +339,15 @@ Options:
 
 - `--name NAME` (required): backpack name or path; the leaf directory becomes the backpack name
 - `--from-template taskvine|taskvine-data` (mutually exclusive with `--from-workflow`): bootstrap from a built-in template
-- `--from-workflow PATH` (mutually exclusive with `--from-template`): use an existing notebook (`.ipynb`) or Python script (`.py`) as the workflow entrypoint
+- `--from-workflow PATH` (mutually exclusive with `--from-template`): use an
+  existing notebook (`.ipynb`), Python script (`.py`), or shell script (`.sh`)
+  as the workflow entrypoint
+- `--script`: with `--from-template`, generate a Python entrypoint instead of
+  a notebook
 - `--force`: overwrite an existing backpack directory
+
+The generated next-step message recommends `run` for notebooks and `execute`
+for Python or shell entrypoints.
 
 ### backpack validate
 
@@ -322,11 +363,21 @@ Arguments:
 
 Options:
 
-- `--strict`: reserved for future run-readiness checks (not yet implemented)
+- `--strict`: additionally parse the selected top-level workflow file and
+  perform live metadata checks for configured data sources
+
+This command checks the conventional backpack layout and currently requires
+`compute/compute.yml`; it looks for a top-level workflow entrypoint. Execution
+preflight is a separate contract: `run`, `execute`, and `instance create`
+search recursively, require a compatible workflow plus an environment, and
+allow compute configuration to be omitted.
 
 ### backpack update-env
 
-Update a backpack's `environment.yml` from a completed instance's conda environment.
+Update a backpack's `environment.yml` from an instance with recorded, usable
+environment metadata. The instance may be prepared (`ready`), completed, or
+interrupted after environment preparation; a creation-only or failed instance
+without a usable environment is rejected.
 
 ```bash
 floability backpack update-env --from-instance <instance-name-or-path> [path]

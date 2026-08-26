@@ -63,6 +63,12 @@ Keep workflow code portable:
 - avoid hardcoded cluster hostnames and ports
 - use relative paths or data targets from `data.yml`
 
+Floability searches recursively for entrypoints. Interactive `run` considers
+only `.ipynb`; batch `execute` considers `.ipynb`, `.py`, and `.sh`. One
+eligible file is selected automatically. With several candidates, the single
+file whose stem matches the backpack directory name is preferred; otherwise
+select a unique filename with `--entrypoint`.
+
 ### Software (`software/environment.yml`)
 
 Defines the execution environment.
@@ -88,7 +94,8 @@ See [Compute Specification](../reference/compute-spec.md).
 2. Create `software/environment.yml` with required dependencies.
 3. Add `data/data.yml` if your workflow needs input data.
 4. Add `compute/compute.yml` with sensible defaults.
-5. Test with `floability run --backpack <backpack-root>`.
+5. Test a notebook with `floability run --backpack <backpack-root>`, or a
+   Python/shell workflow with `floability execute --backpack <backpack-root>`.
 
 `run`, `execute`, and `instance create` validate these minimum files before
 creating a base directory, instance directory, latest symlink, lock, or
@@ -96,7 +103,10 @@ registry entry.
 
 ## Updating the Environment from a Run
 
-After running a backpack, the installed conda environment may resolve to different versions than what is written in `software/environment.yml`. Use `update-env` to export the actual versions from a completed instance back into the backpack:
+After preparing or running a backpack, the installed conda environment may
+resolve to different versions than what is written in
+`software/environment.yml`. Use `update-env` with an instance that has usable
+recorded environment metadata:
 
 ```bash
 # Replace the full dependency list with what was actually installed

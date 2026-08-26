@@ -1,8 +1,9 @@
-# Update environment.yml from a Completed Instance
+# Update environment.yml from a Prepared Instance
 
 After running a backpack, the conda environment that was actually built and used may differ from what is written in `software/environment.yml` — packages may have been resolved to different versions, transitive dependencies may have been pulled in, or you may have installed extra packages during an interactive session.
 
-`floability backpack update-env` exports the environment that was used in a completed instance and writes the concrete, pinned versions back into the backpack.
+`floability backpack update-env` exports the Conda environment recorded by an
+instance and writes concrete versions back into the backpack.
 
 > **See also:** [Create Your First Backpack](../getting-started/create-first-backpack.md) for how to set up the initial `environment.yml`.
 
@@ -14,7 +15,10 @@ After running a backpack, the conda environment that was actually built and used
 
 ## Prerequisites
 
-- A completed instance (created by `floability run` or `floability instance create`).
+- An instance with usable recorded environment metadata. This includes a
+  successfully prepared (`ready`) instance and a completed or interrupted run
+  whose environment preparation succeeded. A failed or incomplete instance
+  without that metadata is rejected.
 - `conda` available on `PATH`.
 
 ## Two modes

@@ -78,7 +78,8 @@ def init_backpack(args: argparse.Namespace) -> int:
                 template_variant=args.from_template,  # taskvine or taskvine-data
                 use_script=getattr(args, "script", False),
             )
-            print_success_message(backpack_path)
+            next_command = "execute" if getattr(args, "script", False) else "run"
+            print_success_message(backpack_path, next_command)
         except Exception as e:
             print(f"[floability] Error initializing from template: {e}")
             return 1
@@ -91,7 +92,9 @@ def init_backpack(args: argparse.Namespace) -> int:
                 backpack_name=backpack_name,
                 workflow_source=Path(args.from_workflow),
             )
-            print_success_message(backpack_path)
+            workflow_suffix = Path(args.from_workflow).suffix.lower()
+            next_command = "run" if workflow_suffix == ".ipynb" else "execute"
+            print_success_message(backpack_path, next_command)
         except Exception as e:
             print(f"[floability] Error initializing from workflow: {e}")
             return 1
@@ -152,7 +155,7 @@ def validate_backpack_cmd(args: argparse.Namespace) -> int:
         return 1
 
 
-def print_success_message(backpack_path: Path) -> None:
+def print_success_message(backpack_path: Path, execution_command: str) -> None:
     """Print success message with next steps."""
     sep = "=" * 70
     print(f"\n{sep}")
@@ -161,7 +164,10 @@ def print_success_message(backpack_path: Path) -> None:
     print(f"\n[floability] Next steps:")
     print(f"[floability]   1. Review and edit the backpack files as needed")
     print(f"[floability]   2. Run: floability backpack validate {backpack_path}")
-    print(f"[floability]   3. Then: floability run --backpack {backpack_path}")
+    print(
+        f"[floability]   3. Then: floability {execution_command} "
+        f"--backpack {backpack_path}"
+    )
     print(sep + "\n")
 
 

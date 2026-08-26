@@ -44,7 +44,10 @@ class BackpackCommand(BaseCommand):
         mode_group.add_argument(
             "--from-workflow",
             "-w",
-            help="Path to existing notebook (.ipynb) or Python script (.py) to use as the workflow entrypoint",
+            help=(
+                "Path to an existing notebook (.ipynb), Python script (.py), "
+                "or shell script (.sh) to use as the workflow entrypoint"
+            ),
         )
 
         init_parser.add_argument(
@@ -77,13 +80,19 @@ class BackpackCommand(BaseCommand):
         validate_parser.add_argument(
             "--strict",
             action="store_true",
-            help="(Not yet implemented) Reserved for strict validation including run-readiness checks",
+            help=(
+                "Also parse the entrypoint and perform live checks of configured "
+                "data sources"
+            ),
         )
 
         # backpack update-env sub-command
         update_env_parser = backpack_subparsers.add_parser(
             "update-env",
-            help="Update backpack environment.yml from a completed instance's conda environment",
+            help=(
+                "Update backpack environment.yml from an instance with a prepared "
+                "conda environment"
+            ),
         )
         update_env_parser.add_argument(
             "--from-instance",

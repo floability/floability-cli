@@ -2,7 +2,9 @@
 
 ## Prerequisites
 
-Floability requires **Conda 24.0 or later**. We recommend
+Floability requires a current Conda installation with `conda env create` and
+`conda run`. The CLI does not currently enforce a specific minimum Conda
+version. We recommend
 [Miniforge](https://github.com/conda-forge/miniforge) — it uses
 conda-forge by default and gives the best compatibility with Floability's
 dependencies. [Miniconda](https://docs.conda.io/en/latest/miniconda.html)
@@ -44,11 +46,18 @@ dependencies. Source changes are immediately available through the
 ## Verify
 ```bash
 floability --version
+floability --version --verbose
 ```
 
-If this command is not found, make sure the `floability-env` environment is
+The verbose output identifies the Python executable, package location, source
+commit when available, and required runtime tools. A source checkout derives
+its development version from Git. A tagged Conda build records the supplied
+release version in package metadata and does not require Git at runtime.
+
+If the command is not found, make sure the `floability-env` environment is
 active (`conda activate floability-env`) and that environment creation
-completed without errors.
+completed without errors. Floability is not documented as a standalone pip
+installation because `ndcctools` is supplied through Conda rather than PyPI.
 
 ---
 

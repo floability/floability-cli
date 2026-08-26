@@ -8,10 +8,9 @@ This page is a quick FAQ for common Floability deployment issues.
 
 Use this checklist:
 
-1. Check whether your manager is visible in the catalog:
-	https://catalog.cse.nd.edu/
-2. Check TaskVine status tools:
-	https://ccl.cse.nd.edu/software/taskvine/status/
+1. Check whether your manager is visible in the
+   [TaskVine catalog](https://catalog.cse.nd.edu/).
+2. Check the [TaskVine status tools](https://ccl.cse.nd.edu/software/taskvine/status/).
 3. Verify manager port range policy for your cluster.
 
 In many environments, the root cause is socket/port policy.
@@ -40,7 +39,7 @@ https://github.com/floability/floability-cli/issues
 
 Common fixes:
 
-1. Use the domain name you SSH into, not the raw IP printed by Jupyter.
+1. Use the domain name you SSH into, not an automatically detected private IP.
 2. Ensure local port is free (use another local port if needed).
 3. Confirm you are tunneling to the same login node where Jupyter is running.
 4. Check VPN/firewall/jump-host requirements at your site.
