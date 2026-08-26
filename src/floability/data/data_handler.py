@@ -36,6 +36,28 @@ from .fs_file_utils import fs_file_metadata, fs_file_copy
 from floability.performance_tracker import NullPerf as _NullPerf
 
 
+def _prepare_cache_base_dir(
+    data_cache_mode: str,
+    base_dir: Path | None,
+    cache_base_dir: Path | None,
+) -> Path | None:
+    """Resolve and create the shared cache root only when caching is enabled."""
+    if data_cache_mode == "off":
+        return None
+
+    if cache_base_dir is not None:
+        resolved_cache_dir = Path(cache_base_dir)
+    else:
+        base_path = Path(base_dir) if base_dir else Path.cwd()
+        resolved_cache_dir = base_path / "floability-data-cache"
+
+    try:
+        resolved_cache_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return resolved_cache_dir
+
+
 # --------------------------- Public API ---------------------------
 def execute_default_data_operation(
     data_spec: str,
@@ -209,16 +231,9 @@ def check_data_from_spec(
 
     normalized_items = items
 
-    # Use explicit cache_base_dir if provided, otherwise fall back to base_dir/floability-data-cache
-    if cache_base_dir is not None:
-        cache_base_dir = Path(cache_base_dir)
-    else:
-        base_path = Path(base_dir) if base_dir else Path.cwd()
-        cache_base_dir = base_path / "floability-data-cache"
-    try:
-        cache_base_dir.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
+    cache_base_dir = _prepare_cache_base_dir(
+        data_cache_mode, base_dir, cache_base_dir
+    )
 
     results: List[Dict[str, Any]] = []
     for item in normalized_items:
@@ -317,16 +332,9 @@ def fetch_data_from_spec(
 
     normalized_items = items
 
-    # Use explicit cache_base_dir if provided, otherwise fall back to base_dir/floability-data-cache
-    if cache_base_dir is not None:
-        cache_base_dir = Path(cache_base_dir)
-    else:
-        base_path = Path(base_dir) if base_dir else Path.cwd()
-        cache_base_dir = base_path / "floability-data-cache"
-    try:
-        cache_base_dir.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
+    cache_base_dir = _prepare_cache_base_dir(
+        data_cache_mode, base_dir, cache_base_dir
+    )
 
     # Determine target_prefix for materializing data
     if target_root:
@@ -463,16 +471,9 @@ def verify_data_from_spec(
 
     normalized_items = items
 
-    # Use explicit cache_base_dir if provided, otherwise fall back to base_dir/floability-data-cache
-    if cache_base_dir is not None:
-        cache_base_dir = Path(cache_base_dir)
-    else:
-        base_path = Path(base_dir) if base_dir else Path.cwd()
-        cache_base_dir = base_path / "floability-data-cache"
-    try:
-        cache_base_dir.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
+    cache_base_dir = _prepare_cache_base_dir(
+        data_cache_mode, base_dir, cache_base_dir
+    )
 
     # Determine target_prefix for materializing data
     if target_root:

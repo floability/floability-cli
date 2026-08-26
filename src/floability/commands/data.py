@@ -56,7 +56,11 @@ class DataCommand(BaseCommand):
             "--data-cache-mode",
             default="off",
             choices=["off", "symlink", "hardlink", "copy"],
-            help="Data caching mode: off (no cache), symlink (default, read-only), hardlink (shared inode), copy (independent copy).",
+            help=(
+                "Data caching mode: off (default, no shared cache), "
+                "symlink (read-only), hardlink (shared inode), "
+                "copy (independent copy)."
+            ),
         )
         parser.add_argument(
             "--data-cache-dir",

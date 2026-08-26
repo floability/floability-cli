@@ -5,7 +5,6 @@ Data operations for Floability CLI.
 import uuid
 from datetime import datetime
 from pathlib import Path
-import os
 from ..data.data_handler import (
     check_data_from_spec,
     fetch_data_from_spec,
@@ -65,27 +64,14 @@ def run_data_command(args):
     raw_base = getattr(args, "base_dir", None) if hasattr(args, "base_dir") else None
     base_dir = normalize_cli_base_dir(raw_base)
 
-    # Determine data cache directory: allow CLI override, else use base_dir/floability-data-cache
-    raw_cache_override = getattr(args, "data_cache_dir", None) if hasattr(args, "data_cache_dir") else None
-    if raw_cache_override:
-        cache_base_dir = Path(os.path.expanduser(raw_cache_override)).resolve()
-        try:
-            cache_base_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
+    data_cache_mode = getattr(args, "data_cache_mode", "off")
+    raw_cache_override = getattr(args, "data_cache_dir", None)
+    if data_cache_mode == "off":
+        cache_base_dir = None
+    elif raw_cache_override:
+        cache_base_dir = Path(raw_cache_override).expanduser().resolve()
     else:
         cache_base_dir = (base_dir / "floability-data-cache").resolve()
-        try:
-            cache_base_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-
-    # Enable data cache by default for all operations
-    data_cache_mode = getattr(args, "data_cache_mode", "symlink")
-    if data_cache_mode == "off":
-        # Override 'off' to use symlink by default
-        data_cache_mode = "symlink"
-        print("[floability] Enabling data cache (mode: symlink)")
 
     # Get backpack_root for source resolution
     backpack_root = Path(args.backpack) if args.backpack else None
