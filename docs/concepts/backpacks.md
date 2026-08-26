@@ -28,6 +28,11 @@ Notes:
 - `data/` is optional for workflows without external inputs.
 - `workflow/` can contain supporting Python modules or helper files.
 - `compute.yml` can be tuned for local runs or batch schedulers.
+- The minimum executable backpack has a `workflow/` directory containing a
+  supported entrypoint and a `software/environment.yml`. The environment may
+  instead be supplied explicitly with `--environment`.
+- `floability run` requires a notebook entrypoint. `floability execute`
+  accepts notebook, Python, and shell entrypoints.
 
 ## How Floability Uses a Backpack
 
@@ -79,11 +84,15 @@ See [Compute Specification](../reference/compute-spec.md).
 
 ## Minimal Checklist for a New Backpack
 
-1. Place your notebook or script in `workflow/`.
+1. Place your notebook, Python script, or shell script in `workflow/`.
 2. Create `software/environment.yml` with required dependencies.
 3. Add `data/data.yml` if your workflow needs input data.
 4. Add `compute/compute.yml` with sensible defaults.
 5. Test with `floability run --backpack <backpack-root>`.
+
+`run`, `execute`, and `instance create` validate these minimum files before
+creating a base directory, instance directory, latest symlink, lock, or
+registry entry.
 
 ## Updating the Environment from a Run
 

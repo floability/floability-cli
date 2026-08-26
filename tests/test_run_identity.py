@@ -136,6 +136,8 @@ def test_run_workflow_persists_identity_before_environment_setup(
         json.dumps({"manager_name": "previous-run-manager"}),
         encoding="utf-8",
     )
+    entrypoint = workflow_dir / "workflow.py"
+    entrypoint.touch()
     ctx = run_ops.InstanceContext(
         root=tmp_path,
         paths={
@@ -146,6 +148,8 @@ def test_run_workflow_persists_identity_before_environment_setup(
         },
         metadata_file=metadata_file,
         workflow_dir=workflow_dir,
+        entrypoint_path=entrypoint,
+        entrypoint_message="[floability] Auto-detected entrypoint: workflow.py",
         is_new=False,
     )
     args = Namespace(
@@ -158,8 +162,11 @@ def test_run_workflow_persists_identity_before_environment_setup(
     )
 
     monkeypatch.setattr(run_ops, "_is_new_instance_required", lambda _args: False)
-    monkeypatch.setattr(run_ops, "_prepare_existing_instance", lambda _args: ctx)
-    monkeypatch.setattr(run_ops, "_resolve_entrypoint", lambda *_args: "workflow.py")
+    monkeypatch.setattr(
+        run_ops,
+        "_prepare_existing_instance",
+        lambda *_args: ctx,
+    )
     monkeypatch.setattr(run_ops, "_send_catalog_event", lambda *_args: None)
     monkeypatch.setattr(run_ops, "_start_workers", lambda *_args: None)
     monkeypatch.setattr(run_ops, "_execute_batch", lambda *_args: True)

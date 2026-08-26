@@ -34,6 +34,10 @@ Run a workflow in interactive mode (starts JupyterLab).
 floability run --backpack <backpack-root>
 ```
 
+For a new instance, Floability validates the source before creating any
+instance state. The backpack must contain a notebook under `workflow/` and an
+environment must come from `software/environment.yml` or `--environment`.
+
 Run on an existing instance instead of creating a new one:
 
 ```bash
@@ -112,6 +116,9 @@ floability execute --backpack <backpack-root>
 - No JupyterLab is started
 - The notebook or script runs to completion, then exits
 - Original workflow files are copied back to the backpack on success
+
+New `execute` instances receive the same preflight validation, but their
+`workflow/` entrypoint may be `.ipynb`, `.py`, or `.sh`.
 
 ---
 

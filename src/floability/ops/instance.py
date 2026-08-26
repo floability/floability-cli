@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ..backpack_manager import resolve_backpack_args, validate_backpack_structure
+from ..backpack_manager import require_executable_backpack, resolve_backpack_args
 from ..cleanup import CleanupManager
 from ..environment_manager import setup_manager_and_worker_envs
 from ..instance_lock_manager import (
@@ -78,20 +78,12 @@ def _create_instance_impl(args):
     """Internal implementation for create_instance — raises on error."""
     # Resolve backpack arguments
     resolve_backpack_args(args)
-    # Validate backpack structure with stricter workflow requirement for instance creation
-    if getattr(args, "backpack", None):
-        validate_backpack_structure(args.backpack, require_workflow=True)
 
     if not args.backpack:
         raise ValueError("--backpack is required for 'instance create'")
 
-    # Validate environment spec early — same pattern as run.py _setup_environment
     env_spec = getattr(args, "environment", None)
-    if not env_spec:
-        raise ValueError(
-            "No environment spec provided. "
-            "Use --environment to specify a path to environment.yml."
-        )
+    require_executable_backpack(args.backpack, env_spec)
 
     # Normalize base_dir and data cache dir
     raw_base = getattr(args, "base_dir", None) if hasattr(args, "base_dir") else None

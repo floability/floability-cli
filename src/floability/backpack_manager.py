@@ -13,9 +13,12 @@ import os
 import shutil
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from .instance_metadata import compute_file_hash, record_sync_manifest
+
+
+SUPPORTED_WORKFLOW_SUFFIXES = {".ipynb", ".py", ".sh"}
 
 
 def sync_workflow_to_backpack(
@@ -228,7 +231,7 @@ def validate_backpack_structure(
     """Validate common Floability backpack structure and report findings.
 
     Checks for the presence of standard subdirectories/files:
-      - workflow/ (at least one .ipynb or .py if require_workflow=True)
+      - workflow/ (at least one .ipynb, .py, or .sh if require_workflow=True)
       - software/environment.yml (optional)
       - software/worker-environment.yml (optional)
       - compute/compute.yml (optional)
@@ -270,11 +273,19 @@ def validate_backpack_structure(
         result["problems"].append(msg)
         print(f"[floability] Warning: {msg}")
     else:
-        notebooks = list(wf_dir.glob("*.ipynb"))
-        scripts = list(wf_dir.glob("*.py"))
-        result["workflow_files"] = notebooks + scripts
-        if require_workflow and not (notebooks or scripts):
-            msg = "workflow/ has no .ipynb or .py entrypoints"
+        result["workflow_files"] = sorted(
+            (
+                path
+                for path in wf_dir.rglob("*")
+                if path.is_file()
+                and path.suffix in SUPPORTED_WORKFLOW_SUFFIXES
+                and ".ipynb_checkpoints" not in path.parts
+                and "__pycache__" not in path.parts
+            ),
+            key=lambda path: str(path.relative_to(wf_dir)),
+        )
+        if require_workflow and not result["workflow_files"]:
+            msg = "workflow/ has no .ipynb, .py, or .sh entrypoints"
             result["problems"].append(msg)
             print(f"[floability] Warning: {msg}")
 
@@ -304,4 +315,36 @@ def validate_backpack_structure(
     else:
         print("[floability] Info: No data/ directory found (data ops may be skipped)")
 
+    return result
+
+
+def require_executable_backpack(
+    backpack_dir: str | Path,
+    environment_spec: str | Path | None,
+) -> Dict[str, Any]:
+    """Require the minimum files needed to create an executable instance.
+
+    Validation is intentionally performed before a base directory, instance,
+    symlink, lock, or registry entry is created. Data and compute specifications
+    remain optional. The environment may come from the canonical backpack path
+    or an explicit ``--environment`` override resolved by the caller.
+    """
+    root = Path(backpack_dir).expanduser().resolve()
+    result = validate_backpack_structure(str(root), require_workflow=True)
+    problems = list(result["problems"])
+
+    if not environment_spec:
+        problems.append(
+            "missing environment specification; expected "
+            "software/environment.yml or --environment PATH"
+        )
+    else:
+        environment_path = Path(environment_spec).expanduser().resolve()
+        if not environment_path.is_file():
+            problems.append(
+                f"environment specification is not a file: {environment_path}"
+            )
+
+    if problems:
+        raise ValueError("Invalid Floability backpack: " + "; ".join(problems))
     return result

@@ -20,8 +20,8 @@ from ..workers_manager import (
     start_workers_for_instance,
 )
 from ..backpack_manager import (
+    require_executable_backpack,
     resolve_backpack_args,
-    validate_backpack_structure,
     sync_workflow_to_backpack,
 )
 from ..instance_manager import (
@@ -69,6 +69,8 @@ class InstanceContext:
     paths: dict
     metadata_file: Path
     workflow_dir: Path
+    entrypoint_path: Path | None = None
+    entrypoint_message: str | None = None
     copied_workflow_paths: tuple[Path, ...] = field(default_factory=tuple)
     lock_acquired: bool = False
     is_new: bool = True
@@ -104,7 +106,12 @@ def run_workflow(
         )
         new_instance_required = _is_new_instance_required(args)
         explicit_base = "base_dir" in getattr(args, "_explicit_args", set())
-        if new_instance_required or explicit_base:
+        if new_instance_required:
+            # Preserve the raw value until backpack preflight succeeds. The
+            # normalizer creates directories and therefore belongs after all
+            # source validation for a new instance.
+            args.base_dir = raw_base
+        elif explicit_base:
             args.base_dir = str(normalize_cli_base_dir(raw_base))
         else:
             args.base_dir = str(Path(args.instance).resolve().parent)
@@ -118,7 +125,7 @@ def run_workflow(
         if new_instance_required:
             ctx = _prepare_new_instance(args, mode)
         else:
-            ctx = _prepare_existing_instance(args)
+            ctx = _prepare_existing_instance(args, mode)
             _restore_existing_manager_ports(args, ctx.metadata_file)
 
         # Workers may be started by a separate command and read their manager
@@ -155,8 +162,8 @@ def run_workflow(
         # Step 4: Setup environment
         env_ctx = _setup_environment(args, ctx, perf)
 
-        # Step 5: Resolve the workflow entrypoint before starting remote work.
-        entrypoint_path = _resolve_entrypoint(args, ctx, mode)
+        # Step 5: Use the entrypoint selected before instance mutation.
+        entrypoint_path = _prepared_entrypoint(ctx)
 
         # Step 6: Send catalog event
         _send_catalog_event(args, ctx, mode, entrypoint_path)
@@ -269,7 +276,7 @@ def execute_python_script(
             returncode = proc.returncode
 
         if returncode == 0:
-            print(f"[floability] Script completed successfully (exit 0)")
+            print("[floability] Script completed successfully (exit 0)")
         else:
             print(f"[floability] Script exited with code {returncode}")
         print(f"[floability] Full output saved to: {log_file}")
@@ -389,12 +396,23 @@ def _prepare_new_instance(args: argparse.Namespace, mode: str) -> InstanceContex
         RuntimeError: If instance creation fails.
     """
 
-    print("[floability] Preparing new instance from backpack")
-
     resolve_backpack_args(args)
 
-    if getattr(args, "backpack", None):
-        validate_backpack_structure(args.backpack, require_workflow=False)
+    backpack_root = _source_backpack_root(args)
+    require_executable_backpack(
+        backpack_root,
+        getattr(args, "environment", None),
+    )
+    source_entrypoint, entrypoint_message = _select_workflow_entrypoint(
+        args,
+        backpack_root / "workflow",
+        mode,
+    )
+    entrypoint_relative_path = source_entrypoint.relative_to(
+        backpack_root / "workflow"
+    )
+
+    print("[floability] Preparing new instance from backpack")
 
     _normalize_base_and_cache_directories(args)
 
@@ -450,10 +468,20 @@ def _prepare_new_instance(args: argparse.Namespace, mode: str) -> InstanceContex
         paths=instance_paths,
         metadata_file=metadata_file,
         workflow_dir=workflow_dir,
+        entrypoint_path=workflow_dir / entrypoint_relative_path,
+        entrypoint_message=entrypoint_message,
         copied_workflow_paths=tuple(copied_workflow_paths),
         lock_acquired=True,
         is_new=True,
     )
+
+
+def _source_backpack_root(args: argparse.Namespace) -> Path:
+    """Resolve the source root without falling back from a bad --backpack."""
+    requested_backpack = getattr(args, "backpack", None)
+    if requested_backpack:
+        return Path(requested_backpack).expanduser().resolve()
+    return Path(getattr(args, "backpack_root", ".") or ".").expanduser().resolve()
 
 
 def _normalize_base_and_cache_directories(args: argparse.Namespace) -> None:
@@ -486,7 +514,10 @@ def _normalize_base_and_cache_directories(args: argparse.Namespace) -> None:
     args.cache_base_dir = str(cache_base_dir)
 
 
-def _prepare_existing_instance(args: argparse.Namespace) -> InstanceContext:
+def _prepare_existing_instance(
+    args: argparse.Namespace,
+    mode: str = "run",
+) -> InstanceContext:
     """Prepare to use an existing instance.
 
     Returns:
@@ -515,11 +546,6 @@ def _prepare_existing_instance(args: argparse.Namespace) -> InstanceContext:
                 f"(state={preparation_state or 'unknown'}){detail_suffix}"
             )
 
-    if not acquire_instance_lock(instance_root):
-        raise RuntimeError("Failed to acquire instance run lock.")
-
-    print(f"[floability] Running on existing instance: {instance_root}")
-
     instance_paths = {
         "root": instance_root,
         "workflow": instance_root / "workflow",
@@ -527,9 +553,20 @@ def _prepare_existing_instance(args: argparse.Namespace) -> InstanceContext:
         "metrics": instance_root / "metrics",
         "metadata": instance_root / "metadata",
     }
+    workflow_dir = instance_paths["workflow"]
+    entrypoint_path, entrypoint_message = _select_workflow_entrypoint(
+        args,
+        workflow_dir,
+        mode,
+    )
+
+    if not acquire_instance_lock(instance_root):
+        raise RuntimeError("Failed to acquire instance run lock.")
+
+    print(f"[floability] Running on existing instance: {instance_root}")
+
     create_latest_symlink(str(instance_root.parent), str(instance_root))
 
-    workflow_dir = instance_paths["workflow"]
     args.workflow_dir = str(workflow_dir)
 
     return InstanceContext(
@@ -537,6 +574,8 @@ def _prepare_existing_instance(args: argparse.Namespace) -> InstanceContext:
         paths=instance_paths,
         metadata_file=metadata_file,
         workflow_dir=workflow_dir,
+        entrypoint_path=entrypoint_path,
+        entrypoint_message=entrypoint_message,
         lock_acquired=True,
         is_new=False,
     )
@@ -826,8 +865,6 @@ def _run_entrypoint_error(args: argparse.Namespace, entrypoint: Path) -> Runtime
         f"'{entrypoint.name}' is a {entrypoint.suffix} script. "
         f"Use 'floability execute{backpack_hint}' instead."
     )
-    print(f"[floability] For direct script execution, use:")
-    print(f"[floability]   floability execute{backpack_hint}\n")
 
 
 def _resolve_entrypoint(
@@ -851,6 +888,21 @@ def _resolve_entrypoint(
     Raises:
         RuntimeError: If selection is missing, ambiguous, or incompatible.
     """
+    entrypoint, message = _select_workflow_entrypoint(
+        args,
+        ctx.workflow_dir,
+        mode,
+    )
+    print(message)
+    return str(entrypoint)
+
+
+def _select_workflow_entrypoint(
+    args: argparse.Namespace,
+    workflow_dir: Path,
+    mode: str,
+) -> tuple[Path, str]:
+    """Select a mode-compatible entrypoint from one workflow directory."""
     requested_entrypoint = getattr(args, "entrypoint", None)
 
     if mode not in {"run", "execute"}:
@@ -858,21 +910,26 @@ def _resolve_entrypoint(
 
     # Collect all supported candidates from the workflow directory.
     all_notebooks = [
-        p for p in ctx.workflow_dir.rglob("*.ipynb")
-        if ".ipynb_checkpoints" not in str(p)
+        path
+        for path in workflow_dir.rglob("*.ipynb")
+        if path.is_file() and ".ipynb_checkpoints" not in path.parts
     ]
     all_scripts = [
-        p for p in ctx.workflow_dir.rglob("*.py")
-        if "__pycache__" not in str(p)
+        path
+        for path in workflow_dir.rglob("*.py")
+        if path.is_file() and "__pycache__" not in path.parts
     ]
-    all_shell_scripts = list(ctx.workflow_dir.rglob("*.sh"))
+    all_shell_scripts = [
+        path for path in workflow_dir.rglob("*.sh") if path.is_file()
+    ]
     all_candidates = sorted(
         all_notebooks + all_scripts + all_shell_scripts,
-        key=lambda path: str(path.relative_to(ctx.workflow_dir)),
+        key=lambda path: str(path.relative_to(workflow_dir)),
     )
     eligible = all_notebooks if mode == "run" else all_candidates
 
-    entrypoint: Optional[Path] = None
+    entrypoint: Path | None = None
+    message: str | None = None
 
     # ── Priority 1: --entrypoint ─────────────────────────────────────────────
     if requested_entrypoint:
@@ -890,13 +947,15 @@ def _resolve_entrypoint(
         entrypoint = matches[0]
         if mode == "run" and entrypoint.suffix != ".ipynb":
             raise _run_entrypoint_error(args, entrypoint)
-        print(f"[floability] Using entrypoint: {entrypoint.name}")
+        message = f"[floability] Using entrypoint: {entrypoint.name}"
 
     # ── Priority 2: auto-detect one eligible entrypoint ──────────────────────
     if entrypoint is None:
         if len(eligible) == 1:
             entrypoint = eligible[0]
-            print(f"[floability] Auto-detected entrypoint: {entrypoint.name}")
+            message = (
+                f"[floability] Auto-detected entrypoint: {entrypoint.name}"
+            )
         elif len(eligible) > 1:
             backpack_name = (
                 Path(args.backpack).resolve().name
@@ -908,7 +967,7 @@ def _resolve_entrypoint(
             ]
             if len(named_matches) == 1:
                 entrypoint = named_matches[0]
-                print(
+                message = (
                     "[floability] Auto-detected backpack-named entrypoint: "
                     f"{entrypoint.name}"
                 )
@@ -929,6 +988,21 @@ def _resolve_entrypoint(
             f"Expected {expected}."
         )
 
+    assert message is not None
+    return entrypoint, message
+
+
+def _prepared_entrypoint(ctx: InstanceContext) -> str:
+    """Return the preflight-selected instance path without rescanning."""
+    entrypoint = ctx.entrypoint_path
+    if entrypoint is None:
+        raise RuntimeError("Instance context has no preflight-selected entrypoint.")
+    if not entrypoint.is_file():
+        raise RuntimeError(
+            f"Preflight-selected entrypoint is missing from the instance: {entrypoint}"
+        )
+    if ctx.entrypoint_message:
+        print(ctx.entrypoint_message)
     return str(entrypoint)
 
 
