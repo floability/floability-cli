@@ -6,7 +6,6 @@ Handles backpack initialization (from templates or custom workflows) and validat
 
 import argparse
 import shutil
-import sys
 from pathlib import Path
 
 from floability.backpack_bootstrap import (
@@ -18,7 +17,7 @@ from floability.backpack_bootstrap import (
 )
 
 
-def run_backpack_command(args: argparse.Namespace) -> None:
+def run_backpack_command(args: argparse.Namespace) -> int:
     """
     Entry point for 'floability backpack' command.
 
@@ -29,16 +28,17 @@ def run_backpack_command(args: argparse.Namespace) -> None:
     sub = getattr(args, "backpack_subcommand", None)
 
     if sub == "init":
-        init_backpack(args)
-    elif sub == "validate":
-        validate_backpack_cmd(args)
-    elif sub == "update-env":
-        update_env_backpack_cmd(args)
-    else:
-        print(f"[floability] Unknown backpack subcommand: {sub}")
+        return init_backpack(args)
+    if sub == "validate":
+        return validate_backpack_cmd(args)
+    if sub == "update-env":
+        return update_env_backpack_cmd(args)
+
+    print(f"[floability] Error: Unknown backpack subcommand: {sub}")
+    return 1
 
 
-def init_backpack(args: argparse.Namespace) -> None:
+def init_backpack(args: argparse.Namespace) -> int:
     """
     Initialize a new backpack.
 
@@ -53,7 +53,7 @@ def init_backpack(args: argparse.Namespace) -> None:
         backpack_path, backpack_name = resolve_backpack_target(args.name)
     except ValueError as e:
         print(f"[floability] Error: {e}")
-        return
+        return 1
 
     # Check if backpack already exists
     if backpack_path.exists():
@@ -62,7 +62,7 @@ def init_backpack(args: argparse.Namespace) -> None:
                 f"[floability] Error: Backpack directory already exists: {backpack_path}"
             )
             print("[floability] Use --force to overwrite")
-            return
+            return 1
         else:
             print(
                 f"[floability] Removing existing backpack at {backpack_path}"
@@ -81,7 +81,7 @@ def init_backpack(args: argparse.Namespace) -> None:
             print_success_message(backpack_path)
         except Exception as e:
             print(f"[floability] Error initializing from template: {e}")
-            return
+            return 1
 
     # Custom workflow mode
     elif args.from_workflow:
@@ -94,10 +94,16 @@ def init_backpack(args: argparse.Namespace) -> None:
             print_success_message(backpack_path)
         except Exception as e:
             print(f"[floability] Error initializing from workflow: {e}")
-            return
+            return 1
+
+    else:
+        print("[floability] Error: Select a backpack initialization mode")
+        return 1
+
+    return 0
 
 
-def update_env_backpack_cmd(args: argparse.Namespace) -> None:
+def update_env_backpack_cmd(args: argparse.Namespace) -> int:
     """
     Update a backpack's software/environment.yml from a completed instance's conda environment.
 
@@ -119,10 +125,12 @@ def update_env_backpack_cmd(args: argparse.Namespace) -> None:
         )
     except Exception as e:
         print(f"[floability] Error updating environment: {e}")
-        sys.exit(1)
+        return 1
+
+    return 0
 
 
-def validate_backpack_cmd(args: argparse.Namespace) -> None:
+def validate_backpack_cmd(args: argparse.Namespace) -> int:
     """
     Validate a backpack structure.
 
@@ -138,10 +146,10 @@ def validate_backpack_cmd(args: argparse.Namespace) -> None:
     try:
         result = validate_backpack(backpack_path, strict=args.strict)
         print_validation_result(result)
-        sys.exit(0 if result["valid"] else 1)
+        return 0 if result["valid"] else 1
     except Exception as e:
         print(f"[floability] Error validating backpack: {e}")
-        sys.exit(1)
+        return 1
 
 
 def print_success_message(backpack_path: Path) -> None:

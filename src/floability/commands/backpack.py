@@ -107,11 +107,11 @@ class BackpackCommand(BaseCommand):
             help="Path to backpack directory to update (default: current directory)",
         )
 
-    def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
+    def execute(self, args: argparse.Namespace, cleanup_manager=None) -> int:
         """Execute backpack command."""
         from ..ops.backpack import run_backpack_command
 
-        run_backpack_command(args)
+        return run_backpack_command(args)
 
     def get_examples(self) -> list:
         return [

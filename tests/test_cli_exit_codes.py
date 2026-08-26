@@ -149,6 +149,141 @@ def test_workers_status_returns_zero_for_an_existing_instance_directory(tmp_path
     assert "Status for instance" in result.stdout
 
 
+def test_data_check_returns_nonzero_for_a_missing_spec(tmp_path):
+    result = _run_installed_cli(
+        "data",
+        "--mode",
+        "check",
+        "--data-spec",
+        str(tmp_path / "missing.yml"),
+        "--base-dir",
+        str(tmp_path / "base"),
+    )
+
+    assert result.returncode == 1
+    assert "Data check operation FAILED" in result.stdout
+
+
+def test_data_check_returns_zero_for_valid_local_data(tmp_path):
+    backpack = _write_local_data_backpack(tmp_path)
+    result = _run_installed_cli(
+        "data",
+        "--mode",
+        "check",
+        "--backpack",
+        str(backpack),
+        "--base-dir",
+        str(tmp_path / "base"),
+    )
+
+    assert result.returncode == 0
+    assert "Data check operation completed successfully" in result.stdout
+
+
+def test_backpack_init_returns_nonzero_without_overwriting_existing_backpack(
+    tmp_path,
+):
+    destination = tmp_path / "duplicate"
+    init_args = (
+        "backpack",
+        "init",
+        "--name",
+        str(destination),
+        "--from-template",
+        "taskvine",
+    )
+
+    first = _run_installed_cli(*init_args)
+    assert first.returncode == 0
+
+    workflow = destination / "workflow" / "duplicate.ipynb"
+    original_workflow = workflow.read_bytes()
+    second = _run_installed_cli(*init_args)
+
+    assert second.returncode == 1
+    assert "Backpack directory already exists" in second.stdout
+    assert workflow.read_bytes() == original_workflow
+
+
+def test_backpack_init_returns_nonzero_for_missing_workflow(tmp_path):
+    destination = tmp_path / "invalid-workflow"
+    result = _run_installed_cli(
+        "backpack",
+        "init",
+        "--name",
+        str(destination),
+        "--from-workflow",
+        str(tmp_path / "missing.py"),
+    )
+
+    assert result.returncode == 1
+    assert "Workflow source file not found" in result.stdout
+    assert not destination.exists()
+
+
+def test_backpack_validate_preserves_success_and_failure_statuses(tmp_path):
+    destination = tmp_path / "valid-backpack"
+    initialized = _run_installed_cli(
+        "backpack",
+        "init",
+        "--name",
+        str(destination),
+        "--from-template",
+        "taskvine",
+    )
+
+    valid = _run_installed_cli("backpack", "validate", str(destination))
+    invalid = _run_installed_cli(
+        "backpack", "validate", str(tmp_path / "missing-backpack")
+    )
+
+    assert initialized.returncode == 0
+    assert valid.returncode == 0
+    assert invalid.returncode == 1
+
+
+def test_backpack_requires_a_subcommand():
+    result = _run_installed_cli("backpack")
+
+    assert result.returncode == 1
+    assert "Unknown backpack subcommand" in result.stdout
+
+
+def test_backpack_update_env_preserves_nonzero_failure_status(tmp_path):
+    result = _run_installed_cli(
+        "backpack",
+        "update-env",
+        "--from-instance",
+        "missing-instance-for-update-exit-code-test",
+        str(tmp_path),
+    )
+
+    assert result.returncode == 1
+    assert "Error updating environment" in result.stdout
+
+
+def _write_local_data_backpack(root: Path) -> Path:
+    backpack = root / "local-data"
+    data_dir = backpack / "data"
+    data_dir.mkdir(parents=True)
+    (data_dir / "input.txt").write_text("local-data\n", encoding="utf-8")
+    (data_dir / "data.yml").write_text(
+        """\
+schema_version: 1.0
+default_profile: local
+profiles:
+  local:
+    data:
+      - name: input
+        source_type: backpack
+        source: data/input.txt
+        target_location: data/input.txt
+""",
+        encoding="utf-8",
+    )
+    return backpack
+
+
 def _run_installed_cli(*args):
     return subprocess.run(
         [str(Path(sys.executable).with_name("floability")), *args],

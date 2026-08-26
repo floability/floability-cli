@@ -92,11 +92,11 @@ class DataCommand(BaseCommand):
             help="Base directory for floability cache storage (default: create ~/floability-base-dir if omitted).",
         )
 
-    def execute(self, args: argparse.Namespace, cleanup_manager=None) -> None:
+    def execute(self, args: argparse.Namespace, cleanup_manager=None) -> int:
         """Execute data command."""
         from ..ops.data import run_data_command
 
-        run_data_command(args)
+        return 0 if run_data_command(args) else 1
 
     def get_examples(self) -> list:
         return [
