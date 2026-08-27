@@ -1,8 +1,9 @@
 # Active test suite
 
 This directory contains only tests accepted into the current reliability
-baseline. The superseded suite is preserved unchanged in `old-tests/` as a
-source of behavior and fixtures; it is not collected by pytest.
+baseline. The superseded suite is preserved unchanged in
+`developer/old-tests/` as a source of behavior and fixtures; it is not
+collected by pytest.
 
 Run the current pre-push baseline from `floability-env`:
 
