@@ -45,6 +45,14 @@ class _Process:
         return None
 
 
+class _ExitedProcess(_Process):
+    def __init__(self, returncode):
+        self.returncode = returncode
+
+    def poll(self):
+        return self.returncode
+
+
 class _Thread:
     instances = []
 
@@ -304,6 +312,134 @@ def test_interactive_interrupt_cleans_up_and_syncs_saved_workflow(
             "state": "interrupted",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    (
+        "jupyter_status",
+        "factory_status",
+        "expected_success",
+        "expected_error",
+    ),
+    [
+        (0, None, True, None),
+        (1, None, False, "JupyterLab exited with status 1."),
+        (None, 0, False, "Worker factory exited before JupyterLab with status 0."),
+        (0, 2, True, None),
+    ],
+)
+def test_interactive_child_order_determines_session_outcome(
+    monkeypatch,
+    tmp_path,
+    jupyter_status,
+    factory_status,
+    expected_success,
+    expected_error,
+):
+    ctx = _context(tmp_path)
+    cleanup = _Cleanup()
+    jupyter = (
+        _Process() if jupyter_status is None else _ExitedProcess(jupyter_status)
+    )
+    factory = (
+        None
+        if factory_status is None
+        else _ExitedProcess(factory_status)
+    )
+    finalized = []
+    monkeypatch.setattr(run_ops, "start_jupyterlab", lambda **_kwargs: jupyter)
+    monkeypatch.setattr(run_ops.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        run_ops,
+        "_finalize_run",
+        lambda *args, **kwargs: finalized.append(kwargs),
+    )
+
+    result = run_ops._run_interactive(
+        Namespace(jupyter_port=8888),
+        ctx,
+        SimpleNamespace(env_dir=None, instance_env={}),
+        cleanup,
+        factory,
+        _Perf(),
+        str(ctx.workflow_dir / "workflow.ipynb"),
+    )
+
+    assert result is expected_success
+    assert finalized == [
+        {
+            "cleanup_succeeded": True,
+            "owned_processes_stopped": True,
+            "sync_workflow": True,
+            "success": expected_success,
+            "error": expected_error,
+            "state": None,
+        }
+    ]
+
+
+def test_interactive_cleanup_failure_overrides_success(monkeypatch, tmp_path):
+    ctx = _context(tmp_path)
+    cleanup = _Cleanup()
+    cleanup.owned_processes_stopped = False
+    cleanup.cleanup = lambda: False
+    finalized = []
+    monkeypatch.setattr(
+        run_ops,
+        "start_jupyterlab",
+        lambda **_kwargs: _ExitedProcess(0),
+    )
+    monkeypatch.setattr(run_ops.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        run_ops,
+        "_finalize_run",
+        lambda *args, **kwargs: finalized.append(kwargs),
+    )
+
+    result = run_ops._run_interactive(
+        Namespace(jupyter_port=8888),
+        ctx,
+        SimpleNamespace(env_dir=None, instance_env={}),
+        cleanup,
+        None,
+        _Perf(),
+        str(ctx.workflow_dir / "workflow.ipynb"),
+    )
+
+    assert result is False
+    assert finalized[0]["cleanup_succeeded"] is False
+    assert finalized[0]["success"] is True
+
+
+def test_interactive_rejects_missing_jupyter_process(monkeypatch, tmp_path):
+    ctx = _context(tmp_path)
+    monkeypatch.setattr(run_ops, "start_jupyterlab", lambda **_kwargs: None)
+
+    with pytest.raises(RuntimeError, match="did not return a process"):
+        run_ops._run_interactive(
+            Namespace(jupyter_port=8888),
+            ctx,
+            SimpleNamespace(env_dir=None, instance_env={}),
+            _Cleanup(),
+            None,
+            _Perf(),
+            str(ctx.workflow_dir / "workflow.ipynb"),
+        )
+
+
+def test_jupyter_launch_failure_is_runtime_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        jupyter_runner.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError()),
+    )
+
+    with pytest.raises(RuntimeError, match="JupyterLab could not be started"):
+        jupyter_runner.start_jupyterlab(
+            notebook_path="workflow.ipynb",
+            run_dir=str(tmp_path),
+            working_dir=str(tmp_path),
+        )
 
 
 def test_execute_batch_dispatches_shell_entrypoint(monkeypatch, tmp_path):

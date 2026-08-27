@@ -175,7 +175,7 @@ def run_workflow(
         # Step 8: Run or execute
         execution_success = True
         if mode == "run":
-            _run_interactive(
+            execution_success = _run_interactive(
                 args, ctx, env_ctx, cleanup_manager, factory_proc, perf, entrypoint_path
             )
         else:
@@ -1030,9 +1030,11 @@ def _run_interactive(
     factory_proc: Optional[Any],
     perf: PerformanceTracker,
     entrypoint_path: Optional[str],
-) -> None:
+) -> bool:
     """Run interactive mode with JupyterLab."""
     interrupted = False
+    session_success = False
+    session_error = "Interactive session ended before JupyterLab completed."
     print("[floability] JupyterLab startup")
     # JupyterLab can only open a notebook at startup; pass None for .py entrypoints
     # so it launches in the workflow directory without trying to open the script.
@@ -1055,19 +1057,49 @@ def _run_interactive(
     )
     if jupyter_proc:
         cleanup_manager.register_subprocess(jupyter_proc)
+    else:
+        raise RuntimeError(
+            "JupyterLab startup did not return a process. "
+            f"Review {ctx.paths['logs'] / 'jupyterlab.stdout'}."
+        )
 
     # Monitor subprocesses
     try:
         while True:
             time.sleep(5)
-            if (
-                factory_proc is not None
-                and getattr(factory_proc, "poll", lambda: None)() is not None
-            ):
-                print("[floability] Worker factory ended.")
+            jupyter_status = jupyter_proc.poll()
+            factory_status = (
+                getattr(factory_proc, "poll", lambda: None)()
+                if factory_proc is not None
+                else None
+            )
+
+            # Jupyter owns the interactive session outcome. Check it first so
+            # simultaneous observed exits are not misreported as factory-first.
+            if jupyter_status is not None:
+                print(
+                    "[floability] JupyterLab ended with status "
+                    f"{jupyter_status}."
+                )
+                if factory_status is not None:
+                    print(
+                        "[floability] Worker factory also ended with status "
+                        f"{factory_status}."
+                    )
+                session_success = jupyter_status == 0
+                session_error = (
+                    None
+                    if session_success
+                    else f"JupyterLab exited with status {jupyter_status}."
+                )
                 break
-            if jupyter_proc is not None and jupyter_proc.poll() is not None:
-                print("[floability] JupyterLab ended.")
+
+            if factory_status is not None:
+                session_error = (
+                    "Worker factory exited before JupyterLab with status "
+                    f"{factory_status}."
+                )
+                print(f"[floability] {session_error}")
                 break
     except KeyboardInterrupt:
         interrupted = True
@@ -1081,10 +1113,11 @@ def _run_interactive(
             cleanup_succeeded=cleanup_succeeded,
             owned_processes_stopped=cleanup_manager.owned_processes_stopped,
             sync_workflow=True,
-            success=not interrupted,
-            error="Interrupted by user" if interrupted else None,
+            success=session_success and not interrupted,
+            error="Interrupted by user" if interrupted else session_error,
             state="interrupted" if interrupted else None,
         )
+    return session_success and cleanup_succeeded
 
 
 def _execute_batch(

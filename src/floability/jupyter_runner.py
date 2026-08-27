@@ -2,7 +2,6 @@
 
 import subprocess
 import threading
-import sys
 import os
 import time
 import re
@@ -135,11 +134,12 @@ def start_jupyterlab(
 
             return proc
     except FileNotFoundError:
-        print("[jupyter] Error: 'jupyter' not found in your PATH.")
-        sys.exit(1)
+        raise RuntimeError(
+            "JupyterLab could not be started because 'jupyter' was not found. "
+            "Check software/environment.yml and the prepared environment."
+        ) from None
     except Exception as e:
-        print(f"[jupyter] Failed to start JupyterLab: {e}")
-        sys.exit(1)
+        raise RuntimeError(f"Failed to start JupyterLab: {e}") from e
 
 
 def execute_notebook(
@@ -199,8 +199,9 @@ def execute_notebook(
                 print(f"[jupyter] Error executing notebook: {notebook_path}")
                 return False
     except FileNotFoundError:
-        print("[jupyter] Error: 'jupyter' not found in your PATH.")
-        sys.exit(1)
+        raise RuntimeError(
+            "Notebook execution could not start because 'jupyter' was not "
+            "found. Check software/environment.yml and the prepared environment."
+        ) from None
     except Exception as e:
-        print(f"[jupyter] Failed to execute notebook: {e}")
-        sys.exit(1)
+        raise RuntimeError(f"Failed to execute notebook: {e}") from e
