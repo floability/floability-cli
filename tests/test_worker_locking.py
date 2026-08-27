@@ -208,7 +208,6 @@ def test_factory_immediate_exit_releases_worker_reservation(tmp_path, monkeypatc
             cli_args=Namespace(),
         )
 
-    assert process.terminated is True
     assert not (tmp_path / "metadata" / "workers.lock").exists()
 
 
@@ -233,9 +232,9 @@ def test_metadata_failure_stops_factory_group_and_releases_lock(
         lambda _pid: factory_owner,
     )
     monkeypatch.setattr(
-        workers_manager.os,
-        "killpg",
-        lambda pgid, signal_number: signaled_groups.append((pgid, signal_number)),
+        workers_manager,
+        "_terminate_failed_factory",
+        lambda proc, pgid: signaled_groups.append((proc.pid, pgid)) or True,
     )
     monkeypatch.setattr(
         workers_manager,
@@ -249,8 +248,49 @@ def test_metadata_failure_stops_factory_group_and_releases_lock(
             cli_args=Namespace(),
         )
 
-    assert signaled_groups == [(process.pid, workers_manager.signal.SIGTERM)]
+    assert signaled_groups == [(process.pid, process.pid)]
     assert not (tmp_path / "metadata" / "workers.lock").exists()
+
+
+def test_unverified_failed_factory_cleanup_retains_worker_ownership(
+    tmp_path,
+    monkeypatch,
+):
+    _prepare_instance(tmp_path)
+    process = _FactoryProcess()
+    factory_owner = _factory_identity(process.pid, process.pid)
+    monkeypatch.setattr(
+        workers_manager,
+        "_start_vine_factory",
+        lambda **_kwargs: process,
+    )
+    monkeypatch.setattr(workers_manager.os, "getpgid", lambda _pid: process.pid)
+    monkeypatch.setattr(
+        workers_manager,
+        "capture_process_identity",
+        lambda _pid: factory_owner,
+    )
+    monkeypatch.setattr(
+        workers_manager,
+        "_write_worker_metadata",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        workers_manager,
+        "_terminate_failed_factory",
+        lambda *_args: False,
+    )
+
+    with pytest.raises(
+        workers_manager.WorkerStartupCleanupError,
+        match="cleanup could not be verified",
+    ):
+        workers_manager.start_workers_for_instance(
+            tmp_path,
+            cli_args=Namespace(),
+        )
+
+    assert (tmp_path / "metadata" / "workers.lock").exists()
 
 
 def test_stale_worker_reservation_can_be_recovered(tmp_path, monkeypatch):

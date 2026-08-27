@@ -43,6 +43,10 @@ from .utils import (
 FACTORY_STARTUP_GRACE_SECONDS = 2
 
 
+class WorkerStartupCleanupError(RuntimeError):
+    """Raised when failed factory startup cannot be safely cleaned up."""
+
+
 # -----------------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------------
@@ -123,6 +127,10 @@ def start_workers_for_instance(
                 instance_env=instance_env,
                 detached=detached,
             )
+            # _start_vine_factory launches in a new session, so its PID is the
+            # process-group ID. Record it before the startup-grace wait so an
+            # immediately exiting wrapper cannot orphan children unnoticed.
+            factory_pgid = proc.pid
         else:
             raise ValueError(
                 f"Unknown worker_provider: {worker_provider!r}. "
@@ -138,7 +146,6 @@ def start_workers_for_instance(
                 f"vine_factory exited immediately with status {returncode}."
             )
 
-        factory_pgid = os.getpgid(proc.pid)
         factory_identity = capture_process_identity(proc.pid)
         if factory_identity is None:
             raise RuntimeError("Could not capture vine_factory process identity.")
@@ -168,21 +175,27 @@ def start_workers_for_instance(
             },
         ):
             raise RuntimeError("Could not record vine_factory metadata.")
-    except BaseException:
+    except BaseException as startup_error:
+        cleanup_succeeded = True
         if proc is not None:
-            _terminate_failed_factory(proc, factory_pgid)
-        if lock_promoted:
-            release_workers_lock(
+            cleanup_succeeded = _terminate_failed_factory(proc, factory_pgid)
+        if lock_promoted and cleanup_succeeded:
+            cleanup_succeeded = release_workers_lock(
                 instance_path,
                 expected_factory_pid=proc.pid,
                 expected_factory_pgid=factory_pgid,
                 expected_factory_owner=factory_identity,
             )
-        else:
-            release_workers_lock(
+        elif cleanup_succeeded:
+            cleanup_succeeded = release_workers_lock(
                 instance_path,
                 expected_launcher_pid=os.getpid(),
             )
+        if not cleanup_succeeded:
+            raise WorkerStartupCleanupError(
+                "vine_factory startup failed and cleanup could not be verified. "
+                f"Worker ownership was retained for instance {instance_path}."
+            ) from startup_error
         raise
 
     print(f"[workers] Workers started. PID={proc.pid}")
@@ -941,17 +954,26 @@ def _stream_stderr(proc) -> None:
         print(f"[workers] vine_factory: {line.strip()}")
 
 
-def _terminate_failed_factory(proc, factory_pgid: Optional[int]) -> None:
-    """Best-effort cleanup when factory startup cannot be committed."""
+def _terminate_failed_factory(proc, factory_pgid: Optional[int]) -> bool:
+    """Stop and verify a factory whose startup could not be committed."""
     try:
-        if factory_pgid and factory_pgid != os.getpgrp():
-            os.killpg(factory_pgid, signal.SIGTERM)
+        cleanup = CleanupManager()
+        if factory_pgid is not None:
+            if factory_pgid == os.getpgrp():
+                print(
+                    "[workers] Refusing failed-factory group cleanup because "
+                    "it matches the Floability process group."
+                )
+                return False
+            cleanup.register_process_group(factory_pgid)
         else:
-            proc.terminate()
+            cleanup.register_subprocess(proc)
+        return cleanup.cleanup()
     except ProcessLookupError:
-        pass
+        return True
     except Exception as error:
         print(f"[workers] Warning: could not stop failed factory launch: {error}")
+        return False
 
 
 def _instance_metadata_file(instance_path: Path) -> Path:

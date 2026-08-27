@@ -31,7 +31,11 @@ class EnvCacheInfo:
     tar_path: Path  # .../flo_common_env/tarballs/env_<hash>.tar.gz
 
 
-class EnvironmentStorageError(RuntimeError):
+class EnvironmentSetupError(RuntimeError):
+    """Raised for an actionable environment preparation command failure."""
+
+
+class EnvironmentStorageError(EnvironmentSetupError):
     """Raised when environment creation fails because storage is exhausted."""
 
 
@@ -323,14 +327,21 @@ def _ensure_runtime_dependencies(dependencies: list, is_worker_env: bool) -> lis
 def _run_streaming_command(command: list[str]) -> None:
     """Run a command visibly while retaining its output tail for diagnostics."""
     output_tail: deque[str] = deque(maxlen=2000)
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        errors="replace",
-        bufsize=1,
-    )
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+            bufsize=1,
+        )
+    except FileNotFoundError as error:
+        raise EnvironmentSetupError(
+            f"Required environment command was not found: {command[0]}. "
+            "Activate floability-env and verify the installation with "
+            "'floability --version --verbose'."
+        ) from error
     if process.stdout is not None:
         for line in process.stdout:
             sys.stdout.write(line)
@@ -369,13 +380,22 @@ def _environment_base_dir(env_path: str) -> Path:
     return resolved.parent
 
 
-def _storage_error_message(env_path: str) -> str:
+def _storage_error_message(
+    env_path: str,
+    *,
+    operation: str = "create the workflow environment",
+    output_path: str | None = None,
+) -> str:
     base_dir = _environment_base_dir(env_path)
+    output_detail = (
+        f"\n[floability] Output target: {output_path}" if output_path else ""
+    )
     return (
-        "Conda could not create the workflow environment because the target "
+        f"Conda could not {operation} because the target "
         "filesystem has no available space or the account quota was exceeded.\n"
         f"[floability] Environment target: {env_path}\n"
-        f"[floability] Floability base: {base_dir}\n"
+        f"[floability] Floability base: {base_dir}"
+        f"{output_detail}\n"
         "[floability] Choose a base with more available space using "
         "--base-dir PATH, or preview removable unreferenced caches with:\n"
         f"[floability]   floability tools clean --base-dir {base_dir} "
@@ -459,7 +479,11 @@ def _create_conda_env(env_yml: str, env_path: str, is_worker_env: bool) -> None:
                 raise EnvironmentStorageError(
                     _storage_error_message(env_path)
                 ) from error
-            raise
+            raise EnvironmentSetupError(
+                "Conda environment creation failed with exit status "
+                f"{error.returncode}. Review software/environment.yml and the "
+                "original Conda output above."
+            ) from error
 
         # Optional post-install script
         if post_install_script and os.path.exists(post_install_script):
@@ -494,7 +518,10 @@ def _create_conda_env(env_yml: str, env_path: str, is_worker_env: bool) -> None:
                 print(
                     f"[environment] Post-install script failed (code {result.returncode})"
                 )
-                raise subprocess.CalledProcessError(result.returncode, wrapper_script)
+                raise EnvironmentSetupError(
+                    "Environment post-install script failed with exit status "
+                    f"{result.returncode}: {post_install_script}"
+                )
             print("[environment] Post-install script executed successfully.")
 
     except subprocess.CalledProcessError:
@@ -520,10 +547,22 @@ def _pack_conda_env(env_path: str, tar_path: str) -> None:
     """
     _ensure_conda_history_file(env_path)
     print(f"[environment] Packing '{env_path}' → '{tar_path}'")
-    subprocess.run(
-        ["conda-pack", "-p", env_path, "-o", tar_path, "--force"],
-        check=True,
-    )
+    pack_command = ["conda-pack", "-p", env_path, "-o", tar_path, "--force"]
+    try:
+        _run_streaming_command(pack_command)
+    except subprocess.CalledProcessError as error:
+        if _is_storage_exhaustion(error.output or ""):
+            raise EnvironmentStorageError(
+                _storage_error_message(
+                    env_path,
+                    operation="pack the workflow environment",
+                    output_path=tar_path,
+                )
+            ) from error
+        raise EnvironmentSetupError(
+            "Environment packing failed with exit status "
+            f"{error.returncode}. Review the original conda-pack output above."
+        ) from error
     print(f"[environment] Packed: {tar_path}")
 
 

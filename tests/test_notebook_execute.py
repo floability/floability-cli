@@ -183,6 +183,43 @@ def test_unexpected_setup_failure_finalizes_metadata_before_reraising(
     assert cleanup.calls == 1
 
 
+def test_unverified_worker_startup_cleanup_retains_instance_ownership(
+    monkeypatch,
+    tmp_path,
+):
+    ctx = _context(tmp_path)
+    ctx.is_new = True
+    ctx.lock_acquired = True
+    ctx.metadata_file.write_text(
+        json.dumps({"status": {"state": "initializing"}}),
+        encoding="utf-8",
+    )
+    assert instance_lock_manager.acquire_instance_lock(ctx.root)
+    cleanup = _Cleanup()
+    args = Namespace(base_dir=str(tmp_path), manager_name="test-manager")
+
+    def fail_during_setup(*_args):
+        raise run_ops.WorkerStartupCleanupError("factory cleanup failed")
+
+    monkeypatch.setattr(run_ops, "_is_new_instance_required", lambda _args: True)
+    monkeypatch.setattr(
+        run_ops,
+        "_prepare_new_instance",
+        lambda _args, _mode: ctx,
+    )
+    monkeypatch.setattr(run_ops, "PerformanceTracker", lambda **_kwargs: _Perf())
+    monkeypatch.setattr(run_ops, "_register_new_instance", lambda *_args: None)
+    monkeypatch.setattr(run_ops, "_materialize_data", fail_during_setup)
+
+    assert run_ops.run_workflow(args, cleanup, mode="execute") == 1
+
+    status = json.loads(ctx.metadata_file.read_text(encoding="utf-8"))["status"]
+    lock_data = instance_lock_manager.read_instance_lock(ctx.root)
+    assert status["state"] == "cleanup_incomplete"
+    assert status["success"] is False
+    assert lock_data["state"] == "cleanup_incomplete"
+
+
 @pytest.mark.parametrize("notebook_success", [True, False])
 def test_execute_batch_returns_and_finalizes_notebook_result(
     monkeypatch, tmp_path, notebook_success
@@ -302,6 +339,23 @@ def test_execute_batch_dispatches_shell_entrypoint(monkeypatch, tmp_path):
             "extra_env": {"SETTING": "yes"},
         }
     ]
+
+
+def test_worker_startup_requires_factory_process(monkeypatch, tmp_path):
+    ctx = _context(tmp_path)
+    monkeypatch.setattr(
+        run_ops,
+        "start_workers_for_instance",
+        lambda **_kwargs: None,
+    )
+
+    with pytest.raises(RuntimeError, match="did not return a vine_factory process"):
+        run_ops._start_workers(
+            Namespace(no_worker=False),
+            ctx,
+            SimpleNamespace(env_dir=None, instance_env={}),
+            _Cleanup(),
+        )
 
 
 def test_execute_notebook_uses_selected_environment(monkeypatch, tmp_path):

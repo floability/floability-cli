@@ -7,10 +7,12 @@ import subprocess
 import pytest
 
 from floability.environment_manager import (
+    EnvironmentSetupError,
     EnvironmentStorageError,
     _create_conda_env,
     _ensure_runtime_dependencies,
     _pack_conda_env,
+    _run_streaming_command,
 )
 
 
@@ -89,25 +91,22 @@ def test_pack_repairs_only_conda_history_and_ignores_dangling_symlinks(
     calls = []
 
     monkeypatch.setattr(
-        "floability.environment_manager.subprocess.run",
-        lambda command, check: calls.append((command, check)),
+        "floability.environment_manager._run_streaming_command",
+        lambda command: calls.append(command),
     )
 
     _pack_conda_env(str(env_path), str(tar_path))
 
     assert history_file.stat().st_mtime > 0
     assert calls == [
-        (
-            [
-                "conda-pack",
-                "-p",
-                str(env_path),
-                "-o",
-                str(tar_path),
-                "--force",
-            ],
-            True,
-        )
+        [
+            "conda-pack",
+            "-p",
+            str(env_path),
+            "-o",
+            str(tar_path),
+            "--force",
+        ]
     ]
     assert "Could not fix timestamp" not in capsys.readouterr().out
 
@@ -187,7 +186,64 @@ def test_unrelated_conda_failure_is_not_reported_as_storage_exhaustion(
         lambda: str(fake_conda),
     )
 
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(EnvironmentSetupError, match="creation failed"):
         _create_conda_env(str(env_yml), str(env_path), is_worker_env=False)
 
     assert "PackagesNotFoundError" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("output", "error_type", "message"),
+    [
+        (
+            "OSError: [Errno 28] No space left on device",
+            EnvironmentStorageError,
+            "pack the workflow environment",
+        ),
+        (
+            "CondaPackError: editable package",
+            EnvironmentSetupError,
+            "Environment packing failed",
+        ),
+    ],
+)
+def test_environment_pack_failure_is_actionable(
+    tmp_path,
+    monkeypatch,
+    output,
+    error_type,
+    message,
+):
+    env_path = tmp_path / "base" / "flo_common_env" / "extracted_envs" / "env"
+    history = env_path / "conda-meta" / "history"
+    history.parent.mkdir(parents=True)
+    history.touch()
+    tar_path = tmp_path / "base" / "flo_common_env" / "tarballs" / "env.tar.gz"
+
+    def fail_pack(command):
+        raise subprocess.CalledProcessError(1, command, output=output)
+
+    monkeypatch.setattr(
+        "floability.environment_manager._run_streaming_command",
+        fail_pack,
+    )
+
+    with pytest.raises(error_type, match=message):
+        _pack_conda_env(str(env_path), str(tar_path))
+
+
+def test_missing_environment_command_has_activation_guidance(monkeypatch):
+    def missing_command(*_args, **_kwargs):
+        raise FileNotFoundError("missing")
+
+    monkeypatch.setattr(
+        "floability.environment_manager.subprocess.Popen",
+        missing_command,
+    )
+
+    with pytest.raises(EnvironmentSetupError) as captured:
+        _run_streaming_command(["conda-pack", "--version"])
+
+    message = str(captured.value)
+    assert "Required environment command was not found: conda-pack" in message
+    assert "floability --version --verbose" in message

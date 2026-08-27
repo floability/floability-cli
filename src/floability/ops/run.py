@@ -16,6 +16,7 @@ from ..cleanup import CleanupManager
 from ..performance_tracker import PerformanceTracker
 from ..environment_manager import setup_manager_and_worker_envs
 from ..workers_manager import (
+    WorkerStartupCleanupError,
     reconcile_workers_after_cleanup,
     start_workers_for_instance,
 )
@@ -194,6 +195,16 @@ def run_workflow(
         print(f"[floability] Error: {e}")
         if "ctx" in locals():
             _cleanup_and_abort(cleanup_manager, ctx, error=str(e))
+        return 1
+    except WorkerStartupCleanupError as e:
+        print(f"[floability] Error: {e}")
+        if "ctx" in locals():
+            _cleanup_and_abort(
+                cleanup_manager,
+                ctx,
+                error=str(e),
+                cleanup_already_incomplete=True,
+            )
         return 1
     except RuntimeError as e:
         print(f"[floability] Error: {e}")
@@ -839,6 +850,11 @@ def _start_workers(
         env_dir=env_ctx.env_dir,
         instance_env=env_ctx.instance_env,
     )
+    if factory_proc is None:
+        raise RuntimeError(
+            "Worker startup did not return a vine_factory process. "
+            "Review the worker logs in the instance logs directory."
+        )
     if factory_proc:
         cleanup_manager.register_subprocess(factory_proc)
         cleanup_manager.register_cleanup_callback(
@@ -1495,6 +1511,8 @@ def _cleanup_and_abort(
     cleanup_manager: CleanupManager,
     ctx: InstanceContext,
     error: str,
+    *,
+    cleanup_already_incomplete: bool = False,
 ) -> None:
     """Clean up a failed run, finalize its metadata, and release its lock."""
     cleanup_succeeded = False
@@ -1502,6 +1520,9 @@ def _cleanup_and_abort(
         cleanup_succeeded = cleanup_manager.cleanup()
     except Exception as cleanup_error:
         print(f"[floability] Warning: cleanup after failure was incomplete: {cleanup_error}")
+
+    if cleanup_already_incomplete:
+        cleanup_succeeded = False
 
     final_state = "failed" if cleanup_succeeded else "cleanup_incomplete"
     final_error = error if cleanup_succeeded else f"{error}; cleanup incomplete"
