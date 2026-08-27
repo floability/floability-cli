@@ -1,8 +1,9 @@
-# Update environment.yml from a Completed Instance
+# Update environment.yml from a Prepared Instance
 
 After running a backpack, the conda environment that was actually built and used may differ from what is written in `software/environment.yml` — packages may have been resolved to different versions, transitive dependencies may have been pulled in, or you may have installed extra packages during an interactive session.
 
-`floability backpack update-env` exports the environment that was used in a completed instance and writes the concrete, pinned versions back into the backpack.
+`floability backpack update-env` exports the Conda environment recorded by an
+instance and writes concrete versions back into the backpack.
 
 > **See also:** [Create Your First Backpack](../getting-started/create-first-backpack.md) for how to set up the initial `environment.yml`.
 
@@ -14,7 +15,10 @@ After running a backpack, the conda environment that was actually built and used
 
 ## Prerequisites
 
-- A completed instance (created by `floability run` or `floability instance create`).
+- An instance with usable recorded environment metadata. This includes a
+  successfully prepared (`ready`) instance and a completed or interrupted run
+  whose environment preparation succeeded. A failed or incomplete instance
+  without that metadata is rejected.
 - `conda` available on `PATH`.
 
 ## Two modes
@@ -30,7 +34,7 @@ floability backpack update-env --from-instance <name-or-path>
 Run from inside the backpack directory, or pass an explicit path:
 
 ```bash
-floability backpack update-env --from-instance fi_cms-physics_20260410104122618078 ./cms-physics
+floability backpack update-env --from-instance fi_cms-physics_20260410-104122_a1b2c3d4 ./cms-physics
 ```
 
 ### Versions-only
@@ -49,10 +53,10 @@ Pass either a registered short name or a full path:
 
 ```bash
 # by short name (from `floability instance list`)
-floability backpack update-env --from-instance fi_cms-physics_20260410104122618078
+floability backpack update-env --from-instance fi_cms-physics_20260410-104122_a1b2c3d4
 
 # by path
-floability backpack update-env --from-instance /path/to/floability-base-dir/fi_cms-physics_20260410104122618078
+floability backpack update-env --from-instance /path/to/floability-base-dir/fi_cms-physics_20260410-104122_a1b2c3d4
 ```
 
 To find the latest instance quickly:

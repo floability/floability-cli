@@ -30,7 +30,7 @@ Important behavior:
 Supported batch types come from TaskVine `vine_factory`.
 See the TaskVine manual for up-to-date backend details: https://cctools.readthedocs.io/en/latest/taskvine/
 
-## Full Example (Run + Terminal Output)
+## Interactive and unattended execution
 
 From a login node:
 
@@ -38,22 +38,11 @@ From a login node:
 floability run --backpack matrix-multiplication --batch-type slurm
 ```
 
-You may see output like this:
+This starts Jupyter on the login node and prints the actual remote port and
+token. For unattended execution with no browser or forwarded port, use:
 
-```text
-[jupyter] JupyterLab is running on port 8888 on 10.32.85.31.
-
-	 You can access it using one of the following URLs:
-	 local:  http://localhost:8888/lab/?token=9bc3277e77815110b5bd463b0c9467ad2f8eb7b60bbad97e
-	 remote: http://10.32.85.31:8888/lab/?token=9bc3277e77815110b5bd463b0c9467ad2f8eb7b60bbad97e
-
-	 If you are on a remote machine and it doesn't allow direct access to the port, you can create an SSH tunnel:
-
-	 1. Open a terminal and run the following command:
-		 ssh -L localhost:8888:localhost:8888 <username>@10.32.85.31
-
-	 2. Open a web browser and enter the following URL:
-		 http://localhost:8888/lab/?token=9bc3277e77815110b5bd463b0c9467ad2f8eb7b60bbad97e
+```bash
+floability execute --backpack matrix-multiplication --batch-type slurm
 ```
 
 ## SSH Tunneling for Jupyter
@@ -66,7 +55,9 @@ Why this is needed:
 - Many clusters block direct inbound access to notebook ports from the public internet.
 - SSH tunneling securely forwards the remote Jupyter port to your local machine.
 
-From your laptop/workstation:
+From your laptop/workstation, use the exact cluster login hostname and SSH
+jump-host options that you normally use. If Floability reports remote Jupyter
+port 8888:
 
 ```bash
 ssh -L 8888:localhost:8888 <username>@<cluster-login-host>
@@ -78,6 +69,14 @@ Then open:
 http://localhost:8888/lab/?token=<token-from-terminal>
 ```
 
+The automatically displayed IP is a connection candidate and may be private;
+do not substitute it for the supported login hostname unless your site says it
+is reachable. Keep these three values distinct:
+
+- remote Jupyter port: selected by Jupyter on the login node;
+- local forwarded port: any free port on your laptop; and
+- SSH host: the login hostname or jump-host route used to enter the site.
+
 When tunneling may not work directly:
 
 - the login host in your SSH command is different from the host where Jupyter is running
@@ -86,7 +85,9 @@ When tunneling may not work directly:
 - VPN/firewall policy blocks the SSH route
 - token expired because the Jupyter process restarted
 
-If direct IP access fails, use the exact hostname you used to SSH into the cluster.
+In a VS Code Dev Container, forward the remote Jupyter port in the **Ports**
+view. If a forwarded entry exists but does not respond, reload the window and
+recreate the forwarding entry.
 
 ## Cluster Differences and Troubleshooting
 

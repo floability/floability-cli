@@ -53,27 +53,36 @@ See [Deployment Overview](../deployment/index.md) for more on running on HPC clu
 
 Then follow the on-screen instructions to open the Jupyter Notebook and execute the workflow.
 
-You should see instructions like this in the terminal:
+The terminal prints the actual remote Jupyter port and a tokenized URL. From a
+terminal on your laptop, forward a free local port to that remote port using
+the same login hostname and jump-host options you normally use for the cluster:
 
-```
-[jupyter] JupyterLab is running on port 8888 on 10.32.85.31.
-
-    You can access it using one of the following URLs:
-    local:  http://localhost:8888/lab/?token=9bc3277e77815110b5bd463b0c9467ad2f8eb7b60bbad97e
-    remote: http://10.32.85.31:8888/lab/?token=9bc3277e77815110b5bd463b0c9467ad2f8eb7b60bbad97e
-
-    If you are on a remote machine and it doesn't allow direct access to the port, you can create an SSH tunnel:
-
-    1. Open a terminal and run the following command:
-       ssh -L localhost:8888:localhost:8888 mislam5@10.32.85.31
-
-    2. Open a web browser and enter the following URL:
-       http://localhost:8888/lab/?token=9bc3277e77815110b5bd463b0c9467ad2f8eb7b60bbad97e
+```bash
+# Jupyter uses remote port 8888; choose local port 8888 if it is free.
+ssh -N -L 8888:localhost:8888 <username>@<cluster-login-host>
 ```
 
-If you are running on a remote machine, follow the instructions to create an SSH tunnel and access Jupyter.
+Then open the printed token URL with the local host and local port:
 
-**Note:** On some clusters, the IP address shown in the instructions may not work. In that case, replace it with the domain name or IP address you used to SSH into the cluster.
+```text
+http://localhost:8888/lab/?token=<token-from-floability-output>
+```
+
+The IP address printed by automatic detection is only a candidate; it may be a
+private interface that your laptop cannot reach. The SSH login hostname is the
+supported tunnel endpoint. If local port 8888 is occupied, use (for example)
+`-L 8899:localhost:8888` and open `localhost:8899` without changing the remote
+Jupyter port.
+
+In a VS Code Dev Container, use the **Ports** view to forward the remote
+Jupyter port and open the forwarded local address. Reloading the window may be
+necessary if the Ports view retains a stale forwarding entry.
+
+For unattended execution that needs no browser or port forwarding, run:
+
+```bash
+floability execute --backpack .
+```
 
 
 ## Understanding the Backpack Structure
@@ -102,9 +111,16 @@ To learn more about data specifications and how Floability handles datasets, see
 
 ## Instances (reusable sandboxes)
 
-When you run a backpack, it does not run directly from the backpack directory. Instead, Floability creates an "instance," a self-contained run directory with workflow, logs, metrics, metadata, and an extracted environment. You can reuse instances to avoid rebuilding environments and to manage multiple runs more easily.
+When you run a backpack, it does not run directly from the backpack directory.
+Floability creates an instance containing the workflow sandbox, logs, metrics,
+and metadata. By default, the prepared read-only environment lives under
+`<base-dir>/flo_common_env/extracted_envs/` and the instance records its path;
+`--per-instance-env` instead places `current_conda_env/` inside the instance.
+You can reuse instances to avoid rebuilding environments and to manage runs.
 
-After the run completes, final notebooks are copied back to the backpack directory.
+During finalization, Floability copies back the files that originally came
+from the backpack's `workflow/`. New outputs are copied only when selected with
+`--sync-path`; use `--no-update-backpack` to disable synchronization.
 
 ## Default Directories and Caching
 

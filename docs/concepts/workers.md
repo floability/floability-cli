@@ -64,7 +64,8 @@ You can manage workers explicitly for an instance:
 floability workers start --instance <name-or-path> \
   --batch-type local|condor|uge|slurm \
   [--workers N] [--cores-per-worker C] [--compute-spec compute.yml] \
-  [--batch-options "..."] [--debug-workers]
+  [--batch-options "..."] [--worker-transfer-ports START:END] \
+  [--debug-workers]
 
 # Check status
 floability workers status --instance <name-or-path>
@@ -80,8 +81,14 @@ Worker lifecycle is protected with:
 - `metadata/workers.lock`
 - `metadata/workers.json`
 
-On start, Floability records factory PID and config in `workers.json` and acquires `workers.lock`.
-On stop, it sends `SIGTERM` to the factory process, updates status, and releases the lock.
+On start, Floability records factory process-group identity and configuration
+in `workers.json` and acquires `workers.lock`. Start requires an active run;
+the factory reconnects using the manager identity stored by that run.
+
+On stop, Floability validates ownership before each signal, reconciles
+`workers.json` with `workers.lock`, and releases the lock only after verified
+terminal state. A live legacy or mismatched owner is retained rather than
+signaled by guesswork.
 
 ## Logs
 

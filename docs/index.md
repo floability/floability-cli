@@ -1,8 +1,8 @@
 # Floability Documentation
 
-Floability CLI helps you package and run reproducible notebook workflows
-using **backpacks** — self-contained bundles of workflow, software, data,
-and compute that run the same way everywhere.
+Floability CLI helps you package and run reproducible notebook, Python, and
+shell workflows using **backpacks** — self-contained bundles of workflow,
+software, data, and compute that run the same way across supported systems.
 
 ## Start Here
 

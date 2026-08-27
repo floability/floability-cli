@@ -1,18 +1,39 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77", "setuptools-scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "floability"
-version = "0.2.1"
+dynamic = ["version"]
+description = "Deploy portable TaskVine workflow backpacks on HPC systems"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
+license = "GPL-2.0-only"
+authors = [
+  {name = "Floability Team", email = "dthain@nd.edu"},
+]
 dependencies = [
-  "pyyaml",
-  "requests",
-  "tqdm",
+  "boto3",
+  "botocore",
+  "conda-pack",
+  "jupyter",
+  "jupyter-client",
   "nbformat",
   "pelicanfs",
+  "PyYAML",
+  "requests",
+  "tqdm",
+  "xrootd",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build",
+  "mypy>=1.14,<2",
+  "pytest>=8,<10",
+  "pytest-cov>=6,<8",
+  "pytest-timeout>=2,<3",
+  "ruff>=0.9,<1",
 ]
 
 [project.urls]
@@ -22,15 +43,55 @@ Repository = "https://github.com/floability/floability-cli"
 [project.scripts]
 floability = "floability.cli:main"
 
-[tool.isort]
-profile = "black"
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["floability*"]
 
-[tool.black]
-line-length = 88
-target-version = ["py38"]
+[tool.setuptools_scm]
+write_to = "src/floability/_version.py"
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
 
 [tool.setuptools.package-data]
 floability = [
     "bootstrap_templates/*.ipynb",
     "bootstrap_templates/*.yml",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+markers = [
+  "unit: fast tests without network dependencies",
+  "network: tests requiring network access",
+  "slow: long-running tests",
+  "integration: full-system integration tests",
+  "push: required fast checks before every push",
+  "release: checks required before a release",
+  "data_cache: data-cache behavior tests",
+  "backpack: tests that validate or deploy a backpack",
+]
+timeout = 300
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+packages = ["floability"]
+
+[tool.coverage.run]
+source = ["floability"]
+
+[tool.coverage.report]
+exclude_also = [
+  "def __repr__",
+  "if TYPE_CHECKING:",
+  "raise AssertionError",
+  "raise NotImplementedError",
 ]

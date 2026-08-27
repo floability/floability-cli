@@ -1,64 +1,132 @@
-# Audit & Environment Capture
+# Audit and Environment Capture
 
-The `floability audit` command automatically discovers the software and data dependencies of a Jupyter notebook by executing it and recording what packages and files it uses. Instead of manually curating an `environment.yml`, you run the notebook once and Floability captures the exact environment.
-
-## Overview
-
-Floability executes the notebook under system-call tracing, capturing every package loaded from `site-packages` and every data file opened during execution. It separates these into manager-side (notebook process) and worker-side (TaskVine worker) dependencies, then generates verified environment YAMLs pinned to the exact installed versions in your active environment.
-
-## Outputs
-
-After a successful audit, the following files are written to the current directory:
-
-| File | Description |
-|------|-------------|
-| `manager_environment.yml` | Conda/pip environment for the notebook manager process |
-| `worker_environment.yml` | Conda/pip environment for TaskVine workers |
-| `manager_data_dependencies.yml` | Data files opened by the manager, with file sizes |
-| `worker_data_dependencies.yml` | Data files opened by workers, with file sizes |
-
-These environment files can be used directly as the `software/environment.yml` in a backpack.
+`floability audit` executes an existing Jupyter notebook under Linux tracing
+to observe imported software and opened data files. It writes dependency
+reports and, in normal notebook-level mode, assembles a backpack for review.
+Audit remains a compatibility feature during the 0.3 structural rewrite; its
+generated specifications are a starting point, not a substitute for validation.
 
 ## Basic usage
 
-```bash
-floability audit --notebook path/to/my_notebook.ipynb
-```
-
-### Options
+`--notebook` and `--backpack-name` are required:
 
 ```bash
-# Use a specific Jupyter kernel (name as shown by `jupyter kernelspec list`)
-floability audit --notebook my_notebook.ipynb --kernel python3
-
-# Connect the local worker to a named TaskVine manager
-floability audit --notebook my_notebook.ipynb --manager-name my-manager
-
-# Generate per-cell dependency breakdowns
-floability audit --notebook my_notebook.ipynb --cell-level
+floability audit \
+  --notebook path/to/analysis.ipynb \
+  --backpack-name generated-analysis
 ```
 
-## Cell-level audit
+The notebook must already run in the selected environment. To execute it with
+a particular Conda prefix:
 
-The `--cell-level` flag produces an additional `cell_level_dependencies.yml` that lists the code and data dependencies for each notebook cell individually. This is useful for understanding which cells drive which dependencies and for scoping worker environments to only the cells that run remotely.
-
-```yaml
-notebook_name: my_notebook.ipynb
-cells:
-  - cell_number: 1
-    code_dependencies:
-      - numpy==1.26.4
-      - pandas==2.2.1
-    data_dependencies: []
-  - cell_number: 2
-    code_dependencies:
-      - matplotlib==3.8.4
-    data_dependencies:
-      - /home/user/data/input.csv
+```bash
+floability audit \
+  --notebook analysis.ipynb \
+  --conda-env /shared/envs/analysis \
+  --backpack-name generated-analysis
 ```
 
-## Requirements
+For a notebook that does not create a TaskVine manager, disable the audit
+worker:
 
-- `strace` must be available on the system (Linux only).
-- `vine_worker` (from ndcctools) must be installed and on `PATH`.
-- The notebook must be fully executable in the current environment before auditing.
+```bash
+floability audit \
+  --notebook analysis.ipynb \
+  --no-worker \
+  --backpack-name generated-analysis
+```
+
+## What normal audit writes
+
+Notebook-level audit leaves these intermediate reports in the current
+directory:
+
+| File | Purpose |
+|---|---|
+| `manager_environment.yml` | packages observed in the notebook process |
+| `worker_environment.yml` | packages observed in TaskVine worker execution |
+| `manager_data_dependencies.yml` | files observed on the manager side |
+| `worker_data_dependencies.yml` | files observed on the worker side |
+
+It also creates the directory selected by `--backpack-name`:
+
+```text
+generated-analysis/
+├── compute/
+│   └── compute.yml
+├── software/
+│   └── environment.yml
+├── workflow/
+│   ├── analysis.ipynb
+│   └── <detected local Python helpers>
+└── data/                  # present when local data was detected
+    ├── data.yml
+    └── <bundled files>
+```
+
+The backpack uses the manager environment report. Review whether workers need
+a separate environment before relying on the generated result.
+
+## Data directories
+
+Use `--data-dirs` to identify roots whose accessed files should be treated as
+workflow inputs:
+
+```bash
+floability audit \
+  --notebook analysis.ipynb \
+  --data-dirs ./data ./inputs \
+  --backpack-name generated-analysis
+```
+
+Relative paths are interpreted from the notebook directory. Detected local
+files are bundled into the backpack; update `data/data.yml` afterward if they
+should instead come from HTTP, S3, Pelican/OSDF, or XRootD.
+
+## TaskVine options
+
+Distributed notebooks can select the manager identity used during audit:
+
+```bash
+floability audit \
+  --notebook analysis.ipynb \
+  --manager-name audit-manager \
+  --manager-port 9123 \
+  --backpack-name generated-analysis
+```
+
+`--no-worker` suppresses the audit-launched worker. It does not change the
+notebook itself.
+
+## Cell-level mode
+
+`--cell-level` writes `cell_level_dependencies.yml` plus its environment/data
+intermediates, then exits before normal backpack assembly. The CLI still
+requires `--backpack-name` for compatibility, but that value is not consumed
+by the current cell-level path.
+
+```bash
+floability audit \
+  --notebook analysis.ipynb \
+  --cell-level \
+  --backpack-name unused-in-cell-level-mode
+```
+
+## Requirements and limitations
+
+- Linux and `strace` are required.
+- The notebook and all required packages must work before audit begins.
+- `vine_worker` is required unless `--no-worker` is selected.
+- Audit may report missing worker trace files in `--no-worker` mode; inspect
+  the generated files rather than treating a success exit alone as proof of a
+  complete capture.
+- Native binaries, system libraries, dynamically downloaded resources, and
+  files not observed during this execution may need manual additions.
+
+## Review before running
+
+1. Validate the generated backpack with `floability backpack validate`.
+2. Inspect `software/environment.yml` for missing Conda/system dependencies.
+3. Adjust `compute/compute.yml` for the target scheduler and resources.
+4. Review bundled data, checksums, and source URLs.
+5. Run a small profile before scaling up.

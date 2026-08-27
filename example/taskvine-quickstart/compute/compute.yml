@@ -1,0 +1,4 @@
+vine_factory_config:
+  min-workers: 2
+  max-workers: 4
+  cores: 1

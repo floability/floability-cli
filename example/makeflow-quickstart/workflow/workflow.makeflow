@@ -1,0 +1,21 @@
+CURL=curl
+CONVERT=magick
+URL="https://ccl.cse.nd.edu/images/capitol.jpg"
+
+outputs/capitol.anim.gif: capitol.jpg outputs/capitol.90.jpg outputs/capitol.180.jpg outputs/capitol.270.jpg outputs/capitol.360.jpg
+	LOCAL $(CONVERT) -delay 10 -loop 0 capitol.jpg outputs/capitol.90.jpg outputs/capitol.180.jpg outputs/capitol.270.jpg outputs/capitol.360.jpg outputs/capitol.270.jpg outputs/capitol.180.jpg outputs/capitol.90.jpg outputs/capitol.anim.gif
+
+outputs/capitol.90.jpg: capitol.jpg
+	mkdir -p outputs && $(CONVERT) capitol.jpg -swirl 90 outputs/capitol.90.jpg
+
+outputs/capitol.180.jpg: capitol.jpg
+	mkdir -p outputs && $(CONVERT) capitol.jpg -swirl 180 outputs/capitol.180.jpg
+
+outputs/capitol.270.jpg: capitol.jpg
+	mkdir -p outputs && $(CONVERT) capitol.jpg -swirl 270 outputs/capitol.270.jpg
+
+outputs/capitol.360.jpg: capitol.jpg
+	mkdir -p outputs && $(CONVERT) capitol.jpg -swirl 360 outputs/capitol.360.jpg
+
+capitol.jpg:
+	LOCAL $(CURL) --fail --location --output capitol.jpg $(URL)

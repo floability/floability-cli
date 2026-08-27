@@ -8,10 +8,9 @@ This page is a quick FAQ for common Floability deployment issues.
 
 Use this checklist:
 
-1. Check whether your manager is visible in the catalog:
-	https://catalog.cse.nd.edu/
-2. Check TaskVine status tools:
-	https://ccl.cse.nd.edu/software/taskvine/status/
+1. Check whether your manager is visible in the
+   [TaskVine catalog](https://catalog.cse.nd.edu/).
+2. Check the [TaskVine status tools](https://ccl.cse.nd.edu/software/taskvine/status/).
 3. Verify manager port range policy for your cluster.
 
 In many environments, the root cause is socket/port policy.
@@ -40,7 +39,7 @@ https://github.com/floability/floability-cli/issues
 
 Common fixes:
 
-1. Use the domain name you SSH into, not the raw IP printed by Jupyter.
+1. Use the domain name you SSH into, not an automatically detected private IP.
 2. Ensure local port is free (use another local port if needed).
 3. Confirm you are tunneling to the same login node where Jupyter is running.
 4. Check VPN/firewall/jump-host requirements at your site.
@@ -76,3 +75,27 @@ floability run --backpack <backpack-root> --batch-type slurm \
 
 Use your cluster documentation for exact queue/partition/account flags.
 See site-specific deployment pages in [Deployment Overview](../deployment/index.md).
+
+### Conda environment creation runs out of space
+
+Floability recognizes Conda's explicit disk-full and quota-exceeded errors and
+prints the environment target, its Floability base, and a cleanup preview
+command. Preserve the original Conda output when reporting the failure.
+
+You can select a base on a filesystem with more capacity:
+
+```bash
+floability execute --backpack <backpack-root> \
+  --base-dir /project/<username>/floability-base
+```
+
+Or preview unreferenced data and environment caches in the reported base:
+
+```bash
+floability tools clean --base-dir <reported-base> \
+  --mode data-and-env --dry-run
+```
+
+Review the plan before repeating the command without `--dry-run`. A Conda
+solver or missing-package failure is not treated as a storage failure; correct
+the backpack's `software/environment.yml` instead.

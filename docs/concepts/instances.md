@@ -42,6 +42,11 @@ Create an instance without starting Jupyter/workers:
 floability instance create --backpack <backpack-root>
 ```
 
+Creation prepares both the manager environment and worker environment pack.
+The instance metadata finishes in `ready` state only after data and environment
+preparation succeed. A failed preparation is retained with a diagnostic
+`failed` state but cannot be passed to `run` or `execute`.
+
 Use this when you want to prepare an instance now and run it later.
 
 ### Run (existing instance)
@@ -63,29 +68,36 @@ Stop a running instance:
 floability instance stop <name-or-path>
 ```
 
-`instance stop` sends `SIGINT` first, then `SIGTERM` if needed, and performs worker shutdown as best effort.
+`instance stop` verifies recorded process ownership, requests staged shutdown,
+and confirms both the run and worker lifecycle before reporting success. If
+cleanup cannot be verified, it returns nonzero and retains diagnostic lock
+state instead of claiming the instance stopped.
 
 ## Instance Naming
 
-Instance directories are named after the backpack they were created from:
+Instance directories use a shortened form of the backpack name:
 
 ```
-fi_<backpack-name>_<timestamp>
+fi_<backpack-slug>_<UTC-time>_<random-id>
 ```
 
 For example, running with `--backpack cms-physics` produces:
 
 ```
-fi_cms-physics_20260410104122618078
+fi_cms-physics_20260410-104122_a1b2c3d4
 ```
 
-The timestamp is a compact UTC datetime with microseconds (`YYYYMMDDHHMMSSffffff`), making instances sortable and unique.
+The normalized backpack slug is limited to 20 ASCII characters, while the
+complete backpack name remains in `metadata/run.json`. The UTC time
+(`YYYYMMDD-HHMMSS`) keeps names readable and approximately sortable; the
+eight-character random ID prevents collisions. Generated directory names are
+limited to 64 bytes for safer use inside longer HPC filesystem paths.
 
 If `--backpack .` is used, the name of the current directory is used as the backpack name.
 
 ## Navigating to the Latest Instance
 
-To print the path of the most recently created instance:
+To print the path of the most recently run instance:
 
 ```bash
 floability instance latest
@@ -94,10 +106,14 @@ floability instance latest
 Use it directly in your shell to navigate there:
 
 ```bash
-cd $(floability instance latest)
+cd "$(floability instance latest)"
 ```
 
-This resolves via the `latest_floability_instance` symlink in the base directory, falling back to the most recently registered instance in the registry.
+Floability remembers the last 10 base directories used by `run` or `execute`.
+Without `--base-dir`, `instance latest` selects the most recently run instance
+in the most recently used base directory. Use `--base-dir DIR` to restrict the
+lookup to a specific existing base directory. Instances that were only created
+with `instance create` do not become latest until they are run.
 
 ## Directory Layout
 
@@ -115,6 +131,8 @@ Purpose of each directory:
 
 - `workflow/`: execution sandbox (copied workflow files and outputs)
 - `logs/`: Jupyter execution logs and worker logs
+- `logs/vine_factory_scratch/`: reset before each factory start so generated
+  TaskVine wrapper files cannot break a repeated run
 - `metrics/`: performance reports (when enabled)
 - `metadata/`: run metadata and lock files
 
@@ -136,7 +154,7 @@ matrix-multiplication/
 ├── software/
 │   └── environment.yml
 └── workflow/
-	└── matrix-multiplication.ipynb
+    └── matrix-multiplication.ipynb
 ```
 
 After materialization and run preparation, an instance looks like:
@@ -155,11 +173,11 @@ latest_floability_instance/
 ├── metrics/
 ├── pyuser/
 └── workflow/
-	├── data/
-	│   └── matrices/
-	│       ├── matrix_dense_00.csv -> <base-dir>/floability-data-cache/<hash>/cached_data/data/matrices/matrix_dense_00.csv
-	│       └── ...
-	└── matrix-multiplication.ipynb
+    ├── data/
+    │   └── matrices/
+    │       ├── matrix_dense_00.csv -> <base-dir>/floability-data-cache/<hash>/cached_data/data/matrices/matrix_dense_00.csv
+    │       └── ...
+    └── matrix-multiplication.ipynb
 ```
 
 One-to-one mapping summary:
@@ -188,16 +206,20 @@ You can override cache location with `--data-cache-dir`.
 
 ## Locks and Safety
 
-Floability uses PID-based lock files in `metadata/`:
+Floability uses ownership lock files in `metadata/`:
 
 - `instance.lock`: protects the main run path
 - `workers.lock`: protects worker factory lifecycle
 
 Behavior:
 
-- lock files are created atomically
-- if a lock exists but the PID is dead, Floability treats it as stale and cleans it up
-- active locks prevent duplicate concurrent runs for the same instance
+- lock files are created atomically;
+- new locks record PID/process-group identity, process start time, and Linux
+  boot identity so a reused PID is not treated as the owner;
+- active or unverifiable legacy ownership prevents unsafe signaling and
+  duplicate concurrent use; and
+- a matching dead owner can be reconciled as stale, while corrupt or
+  mismatched state is retained for diagnosis.
 
 ## Registry and Short Names
 
@@ -224,7 +246,7 @@ Registry details and storage location are documented in [Instance Registry](../r
 During execution, Floability may also write:
 
 - `metadata/workers.json` for worker process state
-- sync metadata when outputs are copied back to backpack workflow
+- `metadata/sync.json` when selected workflow files are copied back to the backpack
 
 ## Reuse Workflow Example
 
@@ -232,12 +254,14 @@ During execution, Floability may also write:
 # 1) Create once
 floability instance create --backpack <backpack-root>
 
-# 2) Discover short name or navigate to latest
+# 2) Discover the registered short name
 floability instance list
-cd $(floability instance latest)
 
 # 3) Re-run later without rebuilding from scratch
 floability run --instance <short-name>
+
+# After the first accepted run, latest resolves from run history
+cd "$(floability instance latest)"
 
 # 4) Update backpack environment from what was installed
 floability backpack update-env --from-instance $(floability instance latest) ./my-backpack

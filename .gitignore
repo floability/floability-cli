@@ -8,3 +8,4 @@ dist/
 *.egg
 docs/.venv/
 .github/
+src/floability/_version.py

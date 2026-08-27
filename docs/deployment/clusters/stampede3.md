@@ -22,7 +22,7 @@ Stampede3 uses Slurm, so use `--batch-type slurm`.
 In our runs, the following manager port range worked:
 
 ```bash
-floability run --backpack <backpack-root> --batch-type slurm --manager-ports 35000,40000
+floability run --backpack <backpack-root> --batch-type slurm --manager-ports 35000:40000
 ```
 
 ## Batch Options
@@ -32,7 +32,7 @@ Start with:
 
 ```bash
 floability run --backpack <backpack-root> --batch-type slurm \
-	--batch-options "-p spr -t 02:00:00"
+  --batch-options "-p spr -t 02:00:00"
 ```
 
 Try running without this first, or use other batch options required by your allocation/policy.
@@ -40,17 +40,22 @@ Try running without this first, or use other batch options required by your allo
 Stampede3 run documentation:
 https://docs.tacc.utexas.edu/hpc/stampede3/#running
 
-## Data Location and Shared Filesystem Requirement
+## Data and Base Directory Location
 
-For TaskVine with Slurm, make sure data is on a shared filesystem visible to both login and worker nodes.
+Use project or scratch storage with enough quota for instances, packed
+environments, and cached inputs. TaskVine transfers declared task inputs to
+workers, so workflow inputs do not universally need to be opened directly from
+the same shared path by task code. Any path that the workflow itself opens
+without declaring as a task input must still be reachable where that code
+runs. Confirm the chosen filesystem policy on Stampede3 before a large run.
 
-We recommend using `/work` for data/cache storage.
+`/work` is a common location, subject to the user's allocation and site policy.
 
 Example:
 
 ```bash
 floability run --backpack <backpack-root> --batch-type slurm \
-	--data-cache-dir /work/<project-or-user>/floability-cache-base-dir
+  --base-dir /work/<project-or-user>/floability-base-dir
 ```
 
 ## Checklist

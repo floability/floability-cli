@@ -504,12 +504,12 @@ python scripts/test-pelican-dir-download.py
 ## Implementation Files
 
 Key source files:
-- `floability/data/data_handler.py`: Core data operations and caching logic
-- `floability/data/http_file_utils.py`: HTTP download utilities
-- `floability/data/s3_file_utils.py`: S3 file and directory operations
-- `floability/data/pelican_file_utils.py`: Pelican/OSDF file and directory operations
-- `floability/data/fs_file_utils.py`: Filesystem utilities
-- `floability/ops/data.py`: CLI operation handlers
+- `src/floability/data/data_handler.py`: Core data operations and caching logic
+- `src/floability/data/http_file_utils.py`: HTTP download utilities
+- `src/floability/data/s3_file_utils.py`: S3 file and directory operations
+- `src/floability/data/pelican_file_utils.py`: Pelican/OSDF file and directory operations
+- `src/floability/data/fs_file_utils.py`: Filesystem utilities
+- `src/floability/ops/data.py`: CLI operation handlers
 - `docs/concept/data-caching.md`: User-facing caching documentation
 - `docs/reference/data.md`: Complete data specification reference
 

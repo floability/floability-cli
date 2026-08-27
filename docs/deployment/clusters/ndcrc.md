@@ -35,13 +35,17 @@ floability run --backpack <backpack-root> --batch-type uge
 ## Manager Port Range
 
 NDCRC requires manager communication ports in the `9000-10000` range.
-Floability defaults to `9123,9150`, which is already in that range, so no change is required in most cases.
+When NDCRC is detected, Floability applies `9100:9200` unless the user supplied
+`--manager-ports` explicitly. The generic non-site default is `9123:9150`.
+Both ranges are within the stated NDCRC range.
 
 If you need to customize it, use `--manager-ports`:
 
 ```bash
-floability run --backpack <backpack-root> --batch-type condor --manager-ports 9200,9800
+floability run --backpack <backpack-root> --batch-type condor --manager-ports 9200:9800
 ```
+
+The CLI accepts `START:END`; legacy `START,END` input is normalized internally.
 
 ## Storage Guidance (Home Directory Limits)
 
@@ -57,11 +61,11 @@ Examples:
 ```bash
 # Keep instance in default location, move only data cache
 floability run --backpack <backpack-root> --batch-type condor \
-	--data-cache-dir /scratch/<username>/floability-data-cache
+  --data-cache-dir /scratch/<username>/floability-data-cache
 
 # Move entire Floability base directory (instances + metadata + default cache)
 floability run --backpack <backpack-root> --batch-type condor \
-	--base-dir /scratch/<username>/floability-base-dir
+  --base-dir /scratch/<username>/floability-base-dir
 ```
 
 ## Checklist

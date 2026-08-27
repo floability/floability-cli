@@ -3,7 +3,7 @@
 ## Completed Implementation
 
 ### Core Fingerprinting Module
-✅ **File**: `floability/data/fingerprint.py`
+✅ **File**: `src/floability/data/fingerprint.py`
 - Implements three fingerprint modes for filesystem sources:
   - `meta`: Fast, uses file size + mtime (metadata only)
   - `sample`: Medium speed, uses size + mtime + SHA256 of first 200 bytes
@@ -14,7 +14,7 @@
 - Future extension hooks for HTTP, S3, Pelican sources
 
 ### Cache Integration
-✅ **File**: `floability/data/data_handler.py`
+✅ **File**: `src/floability/data/data_handler.py`
 - Extended `.meta.json` schema with:
   - `source_fingerprint`: Hex digest of source fingerprint
   - `fingerprint_mode`: Mode used (meta/sample/strict)
@@ -25,7 +25,7 @@
 - Updated `_fetch_single_item()`: Passes fingerprint_mode through call chain
 
 ### CLI Integration
-✅ **Files**: `floability/cli.py`, `floability/ops/data.py`, `floability/ops/run.py`, `floability/ops/instance.py`
+✅ **Files**: `src/floability/cli.py`, `src/floability/ops/data.py`, `src/floability/ops/run.py`, `src/floability/ops/instance.py`
 
 Added `--fingerprint-mode` flag to:
 - ✅ `floability data` command (check, fetch, verify modes)
@@ -146,12 +146,12 @@ floability instance create --backpack example/matrix-multiplication \
 
 ### Files Modified
 
-1. **New**: `floability/data/fingerprint.py` (555 lines)
-2. **Modified**: `floability/data/data_handler.py` (+150 lines)
-3. **Modified**: `floability/cli.py` (+15 lines)
-4. **Modified**: `floability/ops/data.py` (+3 lines)
-5. **Modified**: `floability/ops/run.py` (+1 line)
-6. **Modified**: `floability/ops/instance.py` (+1 line)
+1. **New**: `src/floability/data/fingerprint.py` (555 lines)
+2. **Modified**: `src/floability/data/data_handler.py` (+150 lines)
+3. **Modified**: `src/floability/cli.py` (+15 lines)
+4. **Modified**: `src/floability/ops/data.py` (+3 lines)
+5. **Modified**: `src/floability/ops/run.py` (+1 line)
+6. **Modified**: `src/floability/ops/instance.py` (+1 line)
 7. **New**: `TEST_FINGERPRINTING.md` (test strategy)
 8. **Existing**: `FLOABILITY_DATA_OPERATIONS_SUMMARY.md` (documentation)
 

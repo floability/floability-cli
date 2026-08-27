@@ -1,0 +1,13 @@
+{
+    "name": "Floability Dev",
+    "image": "mcr.microsoft.com/devcontainers/miniconda",
+    "remoteUser": "vscode",
+
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "openai.chatgpt"
+            ]
+        }
+    }
+}

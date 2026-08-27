@@ -4,41 +4,44 @@ This page documents the `data.yml` format used by Floability.
 
 ## Matrix Example and Impact
 
-From [example/matrix-multiplication/data/data.yml](../../example/matrix-multiplication/data/data.yml):
+The Matrix Multiplication backpack uses a profile of public CSV inputs. A
+shortened entry looks like:
 
 ```yaml
-default_profile: default
-
-data_profiles:
-  default:
+schema_version: 1.0
+default_profile: matrix_data
+profiles:
+  matrix_data:
     data:
-      - source: "backpack://data/matrix_A.npy"
-        target_location: "data/matrix_A.npy"
-      - source: "backpack://data/matrix_B.npy"
-        target_location: "data/matrix_B.npy"
+      - name: matrix_dense_00
+        source_type: http
+        source: https://raw.githubusercontent.com/floability/backpack-test-data/refs/heads/main/matrix_200_200/matrix_dense_00.csv
+        target_path: data/matrices/matrix_dense_00.csv
 ```
 
 Impact:
 
 - Before your notebook runs, Floability resolves these files and stages them in the workflow environment.
-- Your code can read predictable local paths (for example `data/matrix_A.npy`) without source-specific logic.
+- Your code can read predictable local paths (for example
+  `data/matrices/matrix_dense_00.csv`) without source-specific logic.
 - The same workflow can switch to another profile later (for example S3 or Pelican) without notebook changes.
 
 ## Top-Level Structure
 
-A data spec supports both modern and legacy top-level profile keys:
+A data spec accepts both top-level profile keys. Current templates and examples
+use `profiles`; `data_profiles` remains supported:
 
 ```yaml
 schema_version: 1.0                # optional
 default_profile: default            # optional
 
-# Preferred key
+# Accepted key
 data_profiles:
   default:
     policy: ...                     # optional
     data: ...                       # required per profile
 
-# Legacy key (still supported)
+# Used by current templates and examples
 profiles:
   default:
     policy: ...
@@ -47,8 +50,7 @@ profiles:
 
 Notes:
 
-- `data_profiles` is preferred in new files.
-- `profiles` is kept for backward compatibility.
+- `data_profiles` and `profiles` are both accepted.
 - Floability uses `default_profile` when present; otherwise it falls back to the first profile.
 
 ## Profile Schema
@@ -65,8 +67,11 @@ Supported policy keys and defaults:
 - `run_operation`: `fetch` | `check` | `verify` (default `fetch`)
 - `verification_type`: `size_only` | `strict` (default `size_only`)
 - `retry_attempts`: integer (default `0`)
-- `timeout`: integer seconds (default `30`)
-- `size_tolerance_bytes`: integer (default `10`)
+- `timeout`: integer seconds or null (default `null`)
+- `size_tolerance_bytes`: integer (default `0`)
+
+The generated data template explicitly uses `timeout: 30` and
+`size_tolerance_bytes: 10`; those are template choices, not loader defaults.
 
 Example:
 
@@ -138,6 +143,7 @@ Floability supports these source types in current implementation:
 - `http`
 - `s3`
 - `pelican`
+- `xrootd`
 - `multi` (for `sources` aggregation)
 
 Inference behavior:
@@ -146,6 +152,7 @@ Inference behavior:
 - `http://...` and `https://...` are treated as `http`.
 - `s3://...` is treated as `s3`.
 - `osdf://...` is currently handled via Pelican logic.
+- `root://...` is treated as `xrootd`.
 
 ## Minimal Working Spec
 
@@ -219,11 +226,19 @@ Supported options:
 - `--data-cache-dir`
 - `--force-data-cache`
 - `--fingerprint-mode meta|sample|strict` (default `meta`)
+- `--cache-lookup-mode strict|local` (default `strict`)
 - `--base-dir`
+
+`check` is metadata-only and creates no instance. Direct `fetch` and `verify`
+create a data-only instance under `--base-dir`, stage targets below its
+`workflow/`, and update `latest_floability_instance`.
 
 ### `floability run` / `floability execute`
 
-These commands also consume data-spec options (including `--data-spec`, `--data-profile`, and cache flags). In these flows, operation defaults to profile `run_operation` with fallback to `fetch`.
+These commands also consume data-spec options (including `--data-spec`,
+`--data-profile`, and cache flags). In these flows, operation defaults to
+profile `run_operation` with fallback to `fetch`. Their cache default is
+`symlink`; the direct `data` and `instance create` commands default to `off`.
 
 ## Caching Behavior
 
@@ -232,12 +247,17 @@ Cache controls:
 - `--data-cache-mode`: `off`, `symlink`, `hardlink`, `copy`
 - `--data-cache-dir`: explicit cache location
 - `--force-data-cache`: rebuild cache entries
+- `--cache-lookup-mode`: `strict` (specification plus source fingerprint) or
+  `local` (artifact specification only)
 
 Default cache base when not overridden:
 
 ```text
 <base-dir>/floability-data-cache
 ```
+
+When mode is `off`, Floability does not create or inspect this directory and
+stages ordinary targets directly.
 
 ## Loader Validation Rules
 
