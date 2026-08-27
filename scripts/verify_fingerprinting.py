@@ -7,8 +7,9 @@ Tests that all components are properly connected.
 import sys
 from pathlib import Path
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent))
+# Import the source checkout when the script is run before installation.
+repository_root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(repository_root / "src"))
 
 print("=" * 70)
 print("Floability Fingerprinting Implementation Verification")

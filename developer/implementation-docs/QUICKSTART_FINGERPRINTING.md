@@ -200,7 +200,7 @@ floability data --mode fetch \
 
 Run the verification script:
 ```bash
-python3 verify_fingerprinting.py
+python3 scripts/verify_fingerprinting.py
 ```
 
 This checks:
