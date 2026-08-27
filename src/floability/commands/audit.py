@@ -15,7 +15,7 @@ class AuditCommand(BaseCommand):
 
     @property
     def help(self) -> str:
-        return "Generate environment and data dependencies for a notebook"
+        return "Generate notebook environment and data dependencies"
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         """Add audit command arguments."""

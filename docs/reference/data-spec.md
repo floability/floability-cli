@@ -70,8 +70,9 @@ Supported policy keys and defaults:
 - `timeout`: integer seconds or null (default `null`)
 - `size_tolerance_bytes`: integer (default `0`)
 
-The generated data template explicitly uses `timeout: 30` and
-`size_tolerance_bytes: 10`; those are template choices, not loader defaults.
+The generated data template explicitly uses `retry_attempts: 2`, `timeout:
+60`, and `size_tolerance_bytes: 0`; those are template choices, not loader
+defaults.
 
 Example:
 

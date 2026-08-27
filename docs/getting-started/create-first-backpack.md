@@ -38,111 +38,56 @@ consistently everywhere — your laptop, a university cluster, or cloud.
 
 ## Creating a Backpack
 
-There are four ways to create a backpack, depending on what you already have:
+There are four ways to create a backpack. They progress from fully manual to
+increasingly automated:
 
-1. **Automatic creation (audit)**: Run your existing notebook with dependency tracing to automatically generate the full backpack structure, including environment, data files, and compute configuration
-2. **Manual creation**: Write the directory structure and files yourself
-3. **From a template**: Start from a pre-built example notebook when you don't have existing code yet
-4. **From an existing workflow**: Automatically scaffold the backpack structure around your existing notebook or script
+1. **[Manual creation](#option-1-create-a-backpack-manually)** — Write the
+   directory structure and files yourself. This option is intended for
+   advanced users who need the most control over every workflow, software,
+   compute, and data specification.
+2. **[From a template](#option-2-from-a-template-start-from-scratch)** — Use
+   this when you do not yet have workflow code and want a working backpack
+   that you can edit as you develop it. This is the **recommended** starting
+   point for most new users.
+3. **[From an existing workflow](#option-3-from-an-existing-workflow)** — Use
+   this when you have workflow code but do not have access to a runnable
+   environment. Floability scaffolds the structure around your code; you then
+   complete and edit its specifications.
+4. **[Automatic creation (experimental Audit)](#option-4-automatic-creation-experimental-audit)**
+   — Use this when you have a notebook that already runs successfully in an
+   accessible Conda environment. Audit observes one execution and generates
+   initial specifications for manual review.
 
-In every case you will need to review and adjust the generated files to match
-your actual computation, dependencies, and resource requirements.
-
-
-### Option 1: Automatic Creation (Audit)
-
-The `floability audit` command runs your notebook with dependency tracing and automatically generates a complete backpack. It captures the software environment and data files your notebook accessed during execution. Before running your notebook with `floability audit`, make sure to pre-provision the execution environment with all necessary dependencies either locally or using Conda.
-
-```bash
-floability audit \
-  --notebook my-analysis.ipynb \
-  --conda-env /path/to/my-conda-env \
-  --data-dirs ./data \
-  --backpack-name my-backpack
-```
-
-This creates:
-
-```
-my-backpack/
-├── compute/
-│   └── compute.yml
-├── software/
-│   └── environment.yml    # captured from your conda env
-├── workflow/
-│   └── my-analysis.ipynb
-└── data/
-    ├── data.yml           # generated from detected data files
-    └── <data files>       # copied from your data directory
-```
-
-#### Key flags
-
-| Flag | Description |
-|---|---|
-| `--notebook` | (required) Path to the notebook to audit |
-| `--conda-env` | Conda environment prefix where the notebook runs |
-| `--data-dirs` | One or more directories containing input data files |
-| `--no-worker` | Skip vine worker (for non-distributed notebooks) |
-| `--kernel` | Jupyter kernel to use when analyzing the notebook |
-| `--backpack-name` |(required) Name for the generated backpack directory |
-| `--force` | Overwrite existing backpack directory |
-
-#### Distributed workflows (TaskVine)
-
-For notebooks that use TaskVine:
-
-```bash
-floability audit \
-  --notebook cms-analysis.ipynb \
-  --conda-env /shared/envs/physics-env \
-  --data-dirs ./data \
-  --backpack-name cms-backpack
-```
-
-#### Non-distributed workflows
-
-For notebooks that do not use TaskVine, add `--no-worker`:
-
-```bash
-floability audit \
-  --notebook gis-analysis.ipynb \
-  --conda-env /shared/envs/gis-env \
-  --data-dirs ./data \
-  --no-worker \
-  --backpack-name gis-backpack
-```
-
-#### After running audit
-
-Review and adjust the generated files before running:
-
-- **`compute/compute.yml`**: Set worker count, cores, and memory for your workload.
-- **`software/environment.yml`**: Verify all dependencies were captured correctly. Currently, only Python dependencies are being captured. Any binaries or system libraries have to be manually added.
-- **`data/data.yml`**: Update `source_type` and `source` paths if you plan to fetch data from a remote source (S3, Pelican, HTTP) rather than bundling files in the backpack.
+Whichever approach you choose, review the resulting files before execution so
+they match your actual dependencies, data, and resource requirements.
 
 
-### Option 2: Create a Backpack Manually
+### Option 1: Create a Backpack Manually
 
-Creating a backpack manually gives you full control. The required layout is:
+Creating a backpack manually gives you full control. A complete layout is:
 
 ```
 my-analysis/
+├── compute/               # Worker resource specifications
+│   └── compute.yml
+├── data/                  # Optional managed input data
+│   ├── data.yml           # Sources and instance target paths
+│   └── inputs/
+│       └── sample.csv     # Example file bundled with the backpack
 ├── software/
 │   └── environment.yml    # Conda dependencies
-├── workflow/
-│   └── my-analysis.ipynb  # Your workflow (notebook, .py, or .sh)
-└── compute/               # Recommended; optional for execution preflight
-    └── compute.yml        # Worker resource specifications
+└── workflow/
+    └── my-analysis.ipynb  # Your workflow (notebook, .py, or .sh)
 ```
 
 Create the directories:
 
 ```bash
-mkdir -p my-analysis/{compute,software,workflow}
+mkdir -p my-analysis/{compute,data/inputs,software,workflow}
 ```
 
-Then place your workflow file in `workflow/` and write the two YAML configuration files.
+Place your workflow file in `my-analysis/workflow/`, then write the software
+and compute configuration files.
 
 **`software/environment.yml`** — list all packages your notebook needs:
 
@@ -156,10 +101,12 @@ dependencies:
   - ndcctools=7.17.1       # include when the workflow uses TaskVine
 ```
 
-Make sure include proper versions if your workflow relies on specific versions of packages.
+Pin versions when your workflow depends on specific package behavior. As an
+alternative starting point, export the explicitly requested packages from the
+currently active Conda environment:
 
 ```bash
-conda env export --from-history > software/environment.yml
+conda env export --from-history > my-analysis/software/environment.yml
 ```
 
 **`compute/compute.yml`** — describe the worker resources:
@@ -173,11 +120,34 @@ vine_factory_config:
   disk: 10000       # MB
 ```
 
-Optionally add a `data/data.yml` if your workflow reads input files.
-See [Data Specification](../reference/data-spec.md) for the format.
+**`data/data.yml`** — tell Floability where inputs come from and where they
+should appear inside the instance workflow directory:
+
+```yaml
+schema_version: 1.0
+default_profile: local
+
+profiles:
+  local:
+    data:
+      - name: sample_input
+        source_type: backpack
+        source: data/inputs/sample.csv
+        target_location: data/inputs/sample.csv
+```
+
+Place the example source at `my-analysis/data/inputs/sample.csv`. During
+instance preparation, Floability stages it as `data/inputs/sample.csv` for the
+workflow. Replace the source with an HTTP, S3, Pelican, XRootD, filesystem, or
+other backpack source as needed.
+
+The `data/` directory is optional only when the workflow has no inputs that
+Floability needs to manage. If it reads input data, include `data/data.yml` so
+the source and target paths are explicit. See
+[Data Specification](../reference/data-spec.md) for the complete format.
 
 
-### Option 3: From a Template (Start from Scratch)
+### Option 2: From a Template (Start from Scratch)
 
 Use a template when you **don't have existing code** and want a working
 starter notebook to edit. The template demonstrates the TaskVine distributed
@@ -225,6 +195,8 @@ m = vine.Manager(manager_ports, name=manager_name)
 **2. Task definition** — Structure a worker function:
 ```python
 def worker_function(value, sleep_time=1):
+    import time
+
     time.sleep(sleep_time)
     return {'input': value, 'output': value * 2}
 ```
@@ -249,26 +221,63 @@ while not m.empty():
 
 Replace the example `worker_function` and task submission logic with your actual computation. The template is a starting point to show how to structure your code for distributed execution with TaskVine. You will also need to adjust the `compute.yml` resource specifications and add any dependencies to `environment.yml` that your workflow requires.
 
-#### Template with data handling
-Use the `taskvine-data` template if you want an example that includes a `data.yml` which floability can use to stage files on instances before running the workflow. And the code in the notebook demonstrates how to declare files and add them as inputs to tasks.
+#### Template with local and remote data
 
+Use the `taskvine-data` template to see Floability stage two kinds of input
+through one `data.yml` manifest:
+
+- `local-sample.txt`, a small file that travels inside the backpack.
+- [*War and Peace*](https://www.gutenberg.org/ebooks/2600), downloaded over
+  HTTPS from Project Gutenberg when the backpack is prepared.
 
 ```bash
 floability backpack init --name my-analysis --from-template taskvine-data
 ```
 
-This template includes file staging on workers:
+The generated backpack includes the local source file and declares both inputs:
+
+```
+my-analysis/
+├── compute/
+│   └── compute.yml
+├── data/
+│   ├── data.yml
+│   └── text_data/
+│       └── local-sample.txt
+├── software/
+│   └── environment.yml
+└── workflow/
+    └── my-analysis.ipynb
+```
+
+The remote file is not stored in the backpack. Floability downloads it into
+the instance as `data/text_data/war-and-peace.txt` before starting the
+workflow. The first download therefore requires outbound HTTPS access from
+the machine preparing the instance.
+
+The notebook then gives both staged files to TaskVine workers and computes
+line counts, word counts, and occurrences of `war` and `peace`:
 
 ```python
 import glob
 
 DATA_DIR = "data/text_data"
-files = glob.glob(os.path.join(DATA_DIR, "*"))
+files = sorted(glob.glob(os.path.join(DATA_DIR, "*.txt")))
 declared = {path: m.declare_file(path) for path in files}
 
-def worker_function(file_path):
-    import os
-    return {'file': file_path, 'size_bytes': os.path.getsize(file_path)}
+def worker_function(file_path, keywords=("war", "peace")):
+    import re
+    from pathlib import Path
+
+    text = Path(file_path).read_text(encoding="utf-8", errors="replace")
+    words = re.findall(r"\b[\w']+\b", text.casefold())
+    return {
+        "file": Path(file_path).name,
+        "word_count": len(words),
+        "keyword_counts": {
+            keyword: words.count(keyword) for keyword in keywords
+        },
+    }
 
 for file_path in files:
     t = vine.PythonTask(worker_function, file_path)
@@ -276,10 +285,12 @@ for file_path in files:
     m.submit(t)
 ```
 
-This also creates a `data/data.yml` file where you specify input sources (S3, HTTP, local directory). See [Data Specification](../reference/data-spec.md) for configuration details.
+Edit `data/data.yml` to substitute your own backpack, filesystem, HTTP, S3,
+Pelican, or XRootD inputs. See
+[Data Specification](../reference/data-spec.md) for the complete format.
 
 
-### Option 4: From an Existing Workflow
+### Option 3: From an Existing Workflow
 
 If you already have a notebook, Python script, or shell script, the
 `--from-workflow` flag
@@ -365,6 +376,79 @@ The command creates the backpack structure and copies your file into
 - **`data/data.yml`** (if created): Fill in your actual data sources and paths before running the backpack.
 
 
+### Option 4: Automatic Creation (Experimental Audit)
+
+> **Experimental feature:** Audit is under active development. Treat the
+> generated backpack as a starting point and manually verify its software,
+> data, compute, and workflow specifications before relying on it.
+
+Use `floability audit` when you already have a working Jupyter notebook and
+want Floability to observe its execution. Audit runs the notebook with
+dependency tracing, captures its Python environment, detects files accessed
+from the directories you identify, and generates a backpack for review.
+
+The notebook's dependencies must already be installed in the environment used
+for the audit:
+
+```bash
+floability audit \
+  --notebook my-analysis.ipynb \
+  --conda-env /path/to/my-conda-env \
+  --data-dirs ./data \
+  --backpack-name my-backpack
+```
+
+This creates:
+
+```
+my-backpack/
+├── compute/
+│   └── compute.yml
+├── software/
+│   └── environment.yml    # captured from your Conda environment
+├── workflow/
+│   └── my-analysis.ipynb
+└── data/
+    ├── data.yml                 # generated from detected files
+    └── <data files>             # copied from --data-dirs
+```
+
+#### Key flags
+
+| Flag | Description |
+|---|---|
+| `--notebook` | Required path to the notebook to audit |
+| `--backpack-name` | Required name or path for the generated backpack |
+| `--conda-env` | Conda environment prefix in which to run the notebook |
+| `--data-dirs` | One or more directories containing possible input files |
+| `--no-worker` | Skip the audit worker for a non-TaskVine notebook |
+| `--kernel` | Jupyter kernel used to execute the notebook |
+| `--force` | Overwrite an existing backpack directory |
+
+For a notebook that does not use TaskVine, add `--no-worker`:
+
+```bash
+floability audit \
+  --notebook gis-analysis.ipynb \
+  --conda-env /shared/envs/gis-env \
+  --data-dirs ./data \
+  --no-worker \
+  --backpack-name gis-backpack
+```
+
+#### After running audit
+
+Audit records what it observes, so its output is a starting point rather than
+a complete portability guarantee. Review these files before running:
+
+- **`compute/compute.yml`**: Set appropriate workers, cores, memory, disk, and
+  site-specific options.
+- **`software/environment.yml`**: Verify the Python dependencies and manually
+  add required binaries, system libraries, and other Conda dependencies.
+- **`data/data.yml`**: Verify detected files and replace local sources with
+  stable S3, Pelican, or HTTP sources when the backpack must be portable.
+
+
 ## Tips Before Creating a Backpack
 
 ### Know your dependencies
@@ -407,7 +491,7 @@ Helper files placed in `workflow/` are available when the notebook runs.
 After creating your backpack, validate the structure:
 
 ```bash
-floability backpack validate my-first-analysis
+floability backpack validate my-analysis
 ```
 
 This conventional structure check requires `workflow/`,
@@ -426,8 +510,8 @@ Output:
 [floability] Backpack Validation: VALID
 ======================================================================
 [floability] ✓ Backpack structure is valid
-[floability]   Path: /path/to/my-first-analysis
-[floability]   Workflow: my-first-analysis.ipynb
+[floability]   Path: /path/to/my-analysis
+[floability]   Workflow: my-analysis.ipynb
 ======================================================================
 ```
 

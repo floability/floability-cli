@@ -1,10 +1,10 @@
 """
-Distributed File Processing with TaskVine — Floability Starter Script
+Distributed Text Processing with TaskVine — Floability Starter Script
 
 This script demonstrates:
   1. Connecting to a TaskVine manager
   2. Declaring and staging input files to workers
-  3. Processing files in parallel across workers
+  3. Processing local and remotely staged text in parallel across workers
   4. Collecting and summarising results
 
 To customize:
@@ -17,7 +17,6 @@ import glob
 import os
 
 import ndcctools.taskvine as vine
-
 
 # ---------------------------------------------------------------------------
 # Setup: Manager Connection
@@ -43,19 +42,27 @@ print(f"[manager] Listening on port {m.port}")
 
 # ---------------------------------------------------------------------------
 # Worker Function
-# Reads a file and returns its byte size.  Replace with your own logic.
+# Reads a text file and returns useful statistics. Replace with your own logic.
 # ---------------------------------------------------------------------------
 
-def worker_function(file_path):
-    """Return byte-size metadata for a file."""
-    import os as _os
+def worker_function(file_path, keywords=("war", "peace")):
+    """Return basic text statistics and keyword counts for one file."""
+    import re as _re
+    from pathlib import Path as _Path
 
-    if not _os.path.exists(file_path):
+    path = _Path(file_path)
+    if not path.exists():
         return {"file": file_path, "error": "File not found"}
 
+    text = path.read_text(encoding="utf-8", errors="replace")
+    words = _re.findall(r"\b[\w']+\b", text.casefold())
     return {
-        "file": file_path,
-        "size_bytes": _os.path.getsize(file_path),
+        "file": path.name,
+        "line_count": len(text.splitlines()),
+        "word_count": len(words),
+        "keyword_counts": {
+            keyword: words.count(keyword.casefold()) for keyword in keywords
+        },
     }
 
 
@@ -68,7 +75,11 @@ print("[manager] worker_function defined.")
 
 DATA_DIR = "data/text_data"
 
-files = glob.glob(os.path.join(DATA_DIR, "*")) if os.path.isdir(DATA_DIR) else []
+files = (
+    sorted(glob.glob(os.path.join(DATA_DIR, "*.txt")))
+    if os.path.isdir(DATA_DIR)
+    else []
+)
 print(f"[manager] Found {len(files)} file(s) in {DATA_DIR}/")
 
 if not files:
@@ -112,5 +123,8 @@ while not m.empty():
     else:
         print(f"  Task {done.id} failed: {done.result}")
 
-total_size = sum(r.get("size_bytes", 0) for r in results)
-print(f"\n[manager] All {len(results)} task(s) completed — {total_size} bytes processed")
+total_words = sum(r.get("word_count", 0) for r in results)
+print(
+    f"\n[manager] All {len(results)} task(s) completed — "
+    f"{total_words:,} words processed"
+)

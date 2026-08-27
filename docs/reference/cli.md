@@ -293,7 +293,8 @@ directory is created or consulted.
 
 ## audit
 
-Generate environment and data dependency information from a notebook.
+Generate environment and data dependency information from a notebook. Manually
+review every generated backpack before use.
 
 ```bash
 floability audit --notebook <notebook.ipynb> \
@@ -316,8 +317,8 @@ Options:
 Audit executes the notebook under tracing, writes intermediate dependency
 reports in the current directory, and assembles a backpack at
 `--backpack-name`. Review the generated workflow, environment, compute, and
-data specifications before running it. Audit behavior and arguments are kept
-compatible during the 0.3 structural rewrite.
+data specifications before running it. Audit may not capture every software or
+data dependency used by the workflow.
 
 ---
 
@@ -338,7 +339,9 @@ floability backpack init --name <name> --from-workflow <notebook-or-script>
 Options:
 
 - `--name NAME` (required): backpack name or path; the leaf directory becomes the backpack name
-- `--from-template taskvine|taskvine-data` (mutually exclusive with `--from-workflow`): bootstrap from a built-in template
+- `--from-template taskvine|taskvine-data` (mutually exclusive with
+  `--from-workflow`): bootstrap from a built-in template; `taskvine-data`
+  includes one backpack-local input and one Project Gutenberg HTTP input
 - `--from-workflow PATH` (mutually exclusive with `--from-template`): use an
   existing notebook (`.ipynb`), Python script (`.py`), or shell script (`.sh`)
   as the workflow entrypoint

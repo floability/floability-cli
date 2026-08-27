@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from floability import cli
 from floability.commands.base import BaseCommand
@@ -278,24 +279,86 @@ def test_shell_workflow_recommends_execute(tmp_path):
     assert "floability execute --backpack" in result.stdout
 
 
-def test_backpack_validate_preserves_success_and_failure_statuses(tmp_path):
-    destination = tmp_path / "valid-backpack"
-    initialized = _run_installed_cli(
+@pytest.mark.parametrize(
+    ("template_variant", "workflow_suffix", "expected_sample_count"),
+    (
+        ("taskvine", ".ipynb", 0),
+        ("taskvine", ".py", 0),
+        ("taskvine-data", ".ipynb", 1),
+        ("taskvine-data", ".py", 1),
+    ),
+)
+def test_backpack_template_init_creates_complete_valid_backpack(
+    tmp_path, template_variant, workflow_suffix, expected_sample_count
+):
+    entrypoint_type = "script" if workflow_suffix == ".py" else "notebook"
+    destination = tmp_path / f"valid-{template_variant}-{entrypoint_type}-backpack"
+    init_args = [
         "backpack",
         "init",
         "--name",
         str(destination),
         "--from-template",
-        "taskvine",
-    )
+        template_variant,
+    ]
+    if workflow_suffix == ".py":
+        init_args.append("--script")
+
+    initialized = _run_installed_cli(*init_args)
 
     valid = _run_installed_cli("backpack", "validate", str(destination))
+
+    workflow = destination / "workflow" / f"{destination.name}{workflow_suffix}"
+    environment = destination / "software" / "environment.yml"
+    compute = destination / "compute" / "compute.yml"
+    data_spec = destination / "data" / "data.yml"
+    sample_files = sorted((destination / "data" / "text_data").glob("*.txt"))
+
+    assert initialized.returncode == 0, initialized.stdout + initialized.stderr
+    assert workflow.is_file()
+    assert environment.is_file()
+    assert compute.is_file()
+
+    if workflow_suffix == ".ipynb":
+        notebook = json.loads(workflow.read_text(encoding="utf-8"))
+        code = "\n".join(
+            "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+            if cell.get("cell_type") == "code"
+        )
+    else:
+        code = workflow.read_text(encoding="utf-8")
+        compile(code, str(workflow), "exec")
+    assert "VINE_MANAGER_NAME" in code
+    assert "VINE_MANAGER_PORTS" in code
+    assert "vine.Manager" in code
+    assert "vine.PythonTask" in code
+
+    assert data_spec.is_file() is bool(expected_sample_count)
+    assert len(sample_files) == expected_sample_count
+    if expected_sample_count:
+        manifest = yaml.safe_load(data_spec.read_text(encoding="utf-8"))
+        profile = manifest["profiles"][manifest["default_profile"]]
+        entries = {item["name"]: item for item in profile["data"]}
+
+        assert entries["local_sample"]["source_type"] == "backpack"
+        assert entries["local_sample"]["checksum"].startswith("sha256:")
+        assert entries["war_and_peace"] == {
+            "name": "war_and_peace",
+            "source_type": "http",
+            "source": "https://www.gutenberg.org/cache/epub/2600/pg2600.txt",
+            "content_type": "text/plain",
+            "target_location": "data/text_data/war-and-peace.txt",
+        }
+    assert valid.returncode == 0, valid.stdout + valid.stderr
+    assert "Backpack Validation: VALID" in valid.stdout
+
+
+def test_backpack_validate_returns_nonzero_for_missing_backpack(tmp_path):
     invalid = _run_installed_cli(
         "backpack", "validate", str(tmp_path / "missing-backpack")
     )
 
-    assert initialized.returncode == 0
-    assert valid.returncode == 0
     assert invalid.returncode == 1
 
 

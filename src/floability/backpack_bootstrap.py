@@ -12,7 +12,6 @@ Templates are loaded from floability/bootstrap_templates/
 
 import json
 import hashlib
-import random
 import re
 import shutil
 import subprocess
@@ -169,61 +168,39 @@ def extract_conda_package_name(package_spec: str) -> str:
     return re.split(r"[<>=!~\s]", package_spec.strip().lower(), maxsplit=1)[0]
 
 
-def generate_backpack_data_files(data_root: Path, count: int = 10) -> List[Path]:
-    """Generate sample text files used by the taskvine-data starter notebook."""
+def generate_backpack_data_file(data_root: Path) -> Path:
+    """Create the deterministic local input used by the data starter template."""
     backpack_data_dir = data_root / "text_data"
     backpack_data_dir.mkdir(parents=True, exist_ok=True)
 
-    generated_paths: List[Path] = []
-    for idx in range(1, count + 1):
-        file_path = backpack_data_dir / f"sample_{idx:02d}.txt"
-        random_value = random.randint(1, 100000000)
-        file_path.write_text(
-            (
-                f"sample_file={idx}\n"
-                f"description=generated backpack sample input\n"
-                f"value={random_value}\n"
-            ),
-            encoding="utf-8",
-        )
-        generated_paths.append(file_path)
-
-    return generated_paths
+    file_path = backpack_data_dir / "local-sample.txt"
+    file_path.write_text(
+        (
+            "Floability backpacks keep workflow, software, compute, and data "
+            "requirements together.\n"
+            "This local file travels with the backpack. The second example file "
+            "comes from Project Gutenberg.\n"
+            "TaskVine workers process both files using the same Python function.\n"
+        ),
+        encoding="utf-8",
+    )
+    return file_path
 
 
-def build_taskvine_data_yml(generated_files: List[Path], backpack_path: Path) -> Dict[str, Any]:
-    """Build data.yml content for taskvine-data with local backpack samples."""
-    local_entries: List[Dict[str, Any]] = []
+def build_taskvine_data_yml(local_file: Path, backpack_path: Path) -> Dict[str, Any]:
+    """Personalize the mixed local/remote data manifest for the starter template."""
+    data_dict = load_template_yaml("data.yml")
+    profile_name = data_dict["default_profile"]
+    entries = data_dict["profiles"][profile_name]["data"]
+    local_entry = next(item for item in entries if item["name"] == "local_sample")
 
-    for idx, file_path in enumerate(generated_files, start=1):
-        rel_path = file_path.relative_to(backpack_path).as_posix()
-        file_bytes = file_path.read_bytes()
-        checksum = hashlib.sha256(file_bytes).hexdigest()
-
-        local_entries.append(
-            {
-                "name": f"text_data_{idx:02d}",
-                "source_type": "backpack",
-                "source": rel_path,
-                "checksum": f"sha256:{checksum}",
-                "target_location": rel_path,
-            }
-        )
-
-    return {
-        "schema_version": 1.0,
-        "default_profile": "local_data",
-        "profiles": {
-            "local_data": {
-                "policy": {
-                    "retry_attempts": 0,
-                    "timeout": 30,
-                    "size_tolerance_bytes": 10,
-                },
-                "data": local_entries,
-            },
-        },
-    }
+    rel_path = local_file.relative_to(backpack_path).as_posix()
+    file_bytes = local_file.read_bytes()
+    local_entry["source"] = rel_path
+    local_entry["target_location"] = rel_path
+    local_entry["expected_size"] = len(file_bytes)
+    local_entry["checksum"] = f"sha256:{hashlib.sha256(file_bytes).hexdigest()}"
+    return data_dict
 
 
 # ============================================================================
@@ -291,8 +268,8 @@ def init_from_template(
     has_data = template_variant == "taskvine-data"
     if has_data:
         (backpack_path / "data").mkdir(exist_ok=True)
-        generated_files = generate_backpack_data_files(backpack_path / "data", count=10)
-        data_dict = build_taskvine_data_yml(generated_files, backpack_path)
+        local_file = generate_backpack_data_file(backpack_path / "data")
+        data_dict = build_taskvine_data_yml(local_file, backpack_path)
         data_path = backpack_path / "data" / "data.yml"
         with open(data_path, "w") as f:
             yaml.safe_dump(data_dict, f, default_flow_style=False, sort_keys=False)
@@ -304,7 +281,7 @@ def init_from_template(
     print(f"[floability]   Environment: environment.yml")
     print(f"[floability]   Compute: compute.yml")
     if has_data:
-        print(f"[floability]   Data: data.yml + 10 sample files in data/text_data/")
+        print("[floability]   Data: data.yml + one local and one remote text input")
 
 
 def init_from_workflow(

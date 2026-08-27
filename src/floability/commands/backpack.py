@@ -39,7 +39,10 @@ class BackpackCommand(BaseCommand):
             "--from-template",
             "-t",
             choices=["taskvine", "taskvine-data"],
-            help="Bootstrap from a template. 'taskvine' (no data) or 'taskvine-data' (with data example)",
+            help=(
+                "Bootstrap from a template. 'taskvine' has no managed data; "
+                "'taskvine-data' demonstrates local and HTTP inputs"
+            ),
         )
         mode_group.add_argument(
             "--from-workflow",

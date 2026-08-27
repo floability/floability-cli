@@ -1,10 +1,13 @@
 # Audit and Environment Capture
 
+> Audit output requires manual review and may not capture every dependency or
+> input needed by the workflow.
+
 `floability audit` executes an existing Jupyter notebook under Linux tracing
 to observe imported software and opened data files. It writes dependency
 reports and, in normal notebook-level mode, assembles a backpack for review.
-Audit remains a compatibility feature during the 0.3 structural rewrite; its
-generated specifications are a starting point, not a substitute for validation.
+Its generated specifications are a starting point, not a substitute for
+validation.
 
 ## Basic usage
 
