@@ -331,15 +331,16 @@ Initialize and manage backpacks.
 Bootstrap a new Floability backpack directory structure.
 
 ```bash
+floability backpack init --name <name> --from-template taskvine-data
 floability backpack init --name <name> --from-template taskvine
-floability backpack init --name <name> --from-template taskvine --script
+floability backpack init --name <name> --from-template taskvine-data --script
 floability backpack init --name <name> --from-workflow <notebook-or-script>
 ```
 
 Options:
 
 - `--name NAME` (required): backpack name or path; the leaf directory becomes the backpack name
-- `--from-template taskvine|taskvine-data` (mutually exclusive with
+- `--from-template taskvine-data|taskvine` (mutually exclusive with
   `--from-workflow`): bootstrap from a built-in template; `taskvine-data`
   includes one backpack-local input and one Project Gutenberg HTTP input
 - `--from-workflow PATH` (mutually exclusive with `--from-template`): use an

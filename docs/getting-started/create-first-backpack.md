@@ -47,8 +47,7 @@ increasingly automated:
    compute, and data specification.
 2. **[From a template](#option-2-from-a-template-start-from-scratch)** — Use
    this when you do not yet have workflow code and want a working backpack
-   that you can edit as you develop it. This is the **recommended** starting
-   point for most new users.
+   that you can edit as you develop it.
 3. **[From an existing workflow](#option-3-from-an-existing-workflow)** — Use
    this when you have workflow code but do not have access to a runnable
    environment. Floability scaffolds the structure around your code; you then
@@ -154,87 +153,17 @@ starter notebook to edit. The template demonstrates the TaskVine distributed
 computing pattern, but you will need to replace the example logic with your
 own computation.
 
-#### Basic template:
-Use the basic `taskvine` template when you don’t need Floability to handle your data; instead, your code or workflow manager downloads and stages the data itself.
+#### Template with Floability-managed data
 
-```bash
-floability backpack init --name my-analysis --from-template taskvine
-```
-
-This creates:
-
-```
-my-analysis/
-├── compute/
-│   └── compute.yml
-├── software/
-│   └── environment.yml
-└── workflow/
-    └── my-analysis.ipynb
-```
-
-#### What the template provides
-
-The template notebook demonstrates the TaskVine distributed-computing pattern:
-
-**1. Manager setup** — Connects to the TaskVine manager (environment variables set automatically):
-```python
-import os
-import ndcctools.taskvine as vine
-
-manager_name = os.environ.get('VINE_MANAGER_NAME')
-ports_text = os.environ.get('VINE_MANAGER_PORTS', '9123,9150')
-manager_ports = [
-    int(value.strip())
-    for value in ports_text.replace(':', ',').split(',')
-    if value.strip()
-]
-m = vine.Manager(manager_ports, name=manager_name)
-```
-
-**2. Task definition** — Structure a worker function:
-```python
-def worker_function(value, sleep_time=1):
-    import time
-
-    time.sleep(sleep_time)
-    return {'input': value, 'output': value * 2}
-```
-
-**3. Task submission** — Distribute tasks to workers:
-```python
-for i in range(20):
-    task = vine.PythonTask(worker_function, i, sleep_time=1)
-    m.submit(task)
-```
-
-**4. Result collection** — Gather results:
-```python
-results = []
-while not m.empty():
-    done = m.wait(5)
-    if done and done.successful():
-        results.append(done.output)
-```
-
-#### What you need to edit
-
-Replace the example `worker_function` and task submission logic with your actual computation. The template is a starting point to show how to structure your code for distributed execution with TaskVine. You will also need to adjust the `compute.yml` resource specifications and add any dependencies to `environment.yml` that your workflow requires.
-
-#### Template with local and remote data
-
-Use the `taskvine-data` template to see Floability stage two kinds of input
-through one `data.yml` manifest:
-
-- `local-sample.txt`, a small file that travels inside the backpack.
-- [*War and Peace*](https://www.gutenberg.org/ebooks/2600), downloaded over
-  HTTPS from Project Gutenberg when the backpack is prepared.
+Use the `taskvine-data` template when you want Floability to manage input-data
+staging and local data caching. It contains all files needed for a complete
+Floability backpack example, which you can edit for your own workflow.
 
 ```bash
 floability backpack init --name my-analysis --from-template taskvine-data
 ```
 
-The generated backpack includes the local source file and declares both inputs:
+This creates:
 
 ```
 my-analysis/
@@ -250,10 +179,26 @@ my-analysis/
     └── my-analysis.ipynb
 ```
 
-The remote file is not stored in the backpack. Floability downloads it into
-the instance as `data/text_data/war-and-peace.txt` before starting the
-workflow. The first download therefore requires outbound HTTPS access from
-the machine preparing the instance.
+#### Files in the generated backpack
+
+- **`workflow/my-analysis.ipynb`**: A working TaskVine notebook that processes
+  staged text files on workers.
+- **`software/environment.yml`**: The Conda environment containing Python and
+  TaskVine.
+- **`compute/compute.yml`**: The initial `vine_factory` worker and resource
+  configuration.
+- **`data/data.yml`**: The Floability data specification. It declares one
+  backpack-local input and one HTTP input, along with their paths inside the
+  instance workflow directory.
+- **`data/text_data/local-sample.txt`**: A small input file bundled with the
+  backpack.
+
+The HTTP input is
+[*War and Peace*](https://www.gutenberg.org/ebooks/2600) from Project
+Gutenberg. It is not stored in the backpack. Floability downloads it into the
+instance as `data/text_data/war-and-peace.txt` before starting the workflow.
+The first download therefore requires outbound HTTPS access from the machine
+preparing the instance.
 
 The notebook then gives both staged files to TaskVine workers and computes
 line counts, word counts, and occurrences of `war` and `peace`:
@@ -288,6 +233,85 @@ for file_path in files:
 Edit `data/data.yml` to substitute your own backpack, filesystem, HTTP, S3,
 Pelican, or XRootD inputs. See
 [Data Specification](../reference/data-spec.md) for the complete format.
+
+#### Basic template without managed data
+
+Use the basic `taskvine` template when your application code or workflow
+manager handles downloading, staging, and caching its own data. This template
+does not include a Floability `data/data.yml` specification.
+
+```bash
+floability backpack init --name my-analysis --from-template taskvine
+```
+
+This creates:
+
+```
+my-analysis/
+├── compute/
+│   └── compute.yml
+├── software/
+│   └── environment.yml
+└── workflow/
+    └── my-analysis.ipynb
+```
+
+#### What both templates provide
+
+Both template notebooks demonstrate the TaskVine distributed-computing
+pattern:
+
+**1. Manager setup** — Connect to the TaskVine manager using environment
+variables set automatically by Floability:
+
+```python
+import os
+import ndcctools.taskvine as vine
+
+manager_name = os.environ.get("VINE_MANAGER_NAME")
+ports_text = os.environ.get("VINE_MANAGER_PORTS", "9123,9150")
+manager_ports = [
+    int(value.strip())
+    for value in ports_text.replace(":", ",").split(",")
+    if value.strip()
+]
+m = vine.Manager(manager_ports, name=manager_name)
+```
+
+**2. Task definition** — Define the function that workers execute:
+
+```python
+def worker_function(value, sleep_time=1):
+    import time
+
+    time.sleep(sleep_time)
+    return {"input": value, "output": value * 2}
+```
+
+**3. Task submission** — Distribute work to workers:
+
+```python
+for i in range(20):
+    task = vine.PythonTask(worker_function, i, sleep_time=1)
+    m.submit(task)
+```
+
+**4. Result collection** — Gather completed results:
+
+```python
+results = []
+while not m.empty():
+    done = m.wait(5)
+    if done and done.successful():
+        results.append(done.output)
+```
+
+#### What you need to edit
+
+Replace the example worker function and task-submission logic with your actual
+computation. Adjust `compute/compute.yml` for the workload, list all required
+dependencies in `software/environment.yml`, and update `data/data.yml` when
+using the data template.
 
 
 ### Option 3: From an Existing Workflow

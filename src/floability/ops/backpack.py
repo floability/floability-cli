@@ -43,7 +43,7 @@ def init_backpack(args: argparse.Namespace) -> int:
     Initialize a new backpack.
 
     Supports two modes:
-    1. From template (--from-template taskvine|taskvine-data):
+    1. From template (--from-template taskvine-data|taskvine):
        - Generate complete backpack with starter workflow, environment, compute, data
     2. From custom workflow (--from-workflow <path>):
        - Copy user's workflow, prompt for environment, generate compute/data

@@ -38,10 +38,10 @@ class BackpackCommand(BaseCommand):
         mode_group.add_argument(
             "--from-template",
             "-t",
-            choices=["taskvine", "taskvine-data"],
+            choices=["taskvine-data", "taskvine"],
             help=(
-                "Bootstrap from a template. 'taskvine' has no managed data; "
-                "'taskvine-data' demonstrates local and HTTP inputs"
+                "Bootstrap from a template. 'taskvine-data' demonstrates local "
+                "and HTTP inputs; 'taskvine' has no managed data"
             ),
         )
         mode_group.add_argument(
@@ -127,10 +127,10 @@ class BackpackCommand(BaseCommand):
 
     def get_examples(self) -> list:
         return [
-            "floability backpack init --name my-workflow --from-template taskvine",
             "floability backpack init --name my-workflow --from-template taskvine-data",
-            "floability backpack init --name my-workflow --from-template taskvine --script",
+            "floability backpack init --name my-workflow --from-template taskvine",
             "floability backpack init --name my-workflow --from-template taskvine-data --script",
+            "floability backpack init --name my-workflow --from-template taskvine --script",
             "floability backpack init --name my-workflow --from-workflow ./my-notebook.ipynb",
             "floability backpack validate ./my-workflow",
             "floability backpack update-env --from-instance fi_20260410-104122_a1b2c3d4",
