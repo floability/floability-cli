@@ -88,7 +88,7 @@ def _context(tmp_path: Path) -> run_ops.InstanceContext:
     )
 
 
-def test_incomplete_cleanup_retains_instance_ownership(tmp_path):
+def test_incomplete_cleanup_retains_instance_ownership(tmp_path, capsys):
     ctx = _context(tmp_path)
     ctx.metadata_file.write_text(
         json.dumps({"status": {"state": "running"}}),
@@ -111,6 +111,10 @@ def test_incomplete_cleanup_retains_instance_ownership(tmp_path):
     assert status["success"] is False
     assert lock_data["state"] == "cleanup_incomplete"
     assert lock_data["owned_processes_stopped"] is False
+    output = capsys.readouterr().out
+    assert f"floability instance status {ctx.root}" in output
+    assert f"floability instance stop {ctx.root}" in output
+    assert "incomplete-only" in output
 
 
 @pytest.mark.parametrize("failure_type", [ValueError, RuntimeError])
@@ -228,6 +232,112 @@ def test_unverified_worker_startup_cleanup_retains_instance_ownership(
     assert lock_data["state"] == "cleanup_incomplete"
 
 
+@pytest.mark.parametrize(
+    ("interruption", "expected_status", "expected_error"),
+    [
+        (KeyboardInterrupt(), 130, "Interrupted by user"),
+        (run_ops.TerminationRequested(signal.SIGTERM), 143, "Terminated by signal 15"),
+    ],
+)
+def test_run_workflow_finalizes_interruption_after_instance_acceptance(
+    monkeypatch,
+    tmp_path,
+    interruption,
+    expected_status,
+    expected_error,
+):
+    ctx = _context(tmp_path)
+    ctx.is_new = True
+    ctx.lock_acquired = True
+    ctx.metadata_file.write_text(
+        json.dumps({"status": {"state": "initializing"}}),
+        encoding="utf-8",
+    )
+    assert instance_lock_manager.acquire_instance_lock(ctx.root)
+    cleanup = _Cleanup()
+    args = Namespace(
+        base_dir=str(tmp_path),
+        manager_name="test-manager",
+        no_update_backpack=False,
+        backpack=None,
+    )
+
+    monkeypatch.setattr(run_ops, "_is_new_instance_required", lambda _args: True)
+    monkeypatch.setattr(
+        run_ops,
+        "_prepare_new_instance",
+        lambda _args, _mode: ctx,
+    )
+    monkeypatch.setattr(run_ops, "PerformanceTracker", lambda **_kwargs: _Perf())
+    monkeypatch.setattr(run_ops, "_register_new_instance", lambda *_args: None)
+    monkeypatch.setattr(run_ops, "record_instance_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(run_ops, "_materialize_data", lambda *_args: None)
+    monkeypatch.setattr(
+        run_ops,
+        "_setup_environment",
+        lambda *_args: SimpleNamespace(env_dir=None, instance_env={}),
+    )
+    monkeypatch.setattr(
+        run_ops,
+        "_prepared_entrypoint",
+        lambda _ctx: str(ctx.workflow_dir / "workflow.ipynb"),
+    )
+    monkeypatch.setattr(run_ops, "_send_catalog_event", lambda *_args: None)
+    monkeypatch.setattr(run_ops, "_start_workers", lambda *_args: None)
+
+    def interrupt(*_args):
+        raise interruption
+
+    monkeypatch.setattr(run_ops, "_run_interactive", interrupt)
+
+    assert run_ops.run_workflow(args, cleanup, mode="run") == expected_status
+
+    status = json.loads(ctx.metadata_file.read_text(encoding="utf-8"))["status"]
+    assert status["state"] == "interrupted"
+    assert status["success"] is False
+    assert status["error"] == expected_error
+    assert cleanup.calls == 1
+    assert instance_lock_manager.read_instance_lock(ctx.root) is None
+
+
+@pytest.mark.parametrize(
+    ("interruption", "expected_state", "expected_error"),
+    [
+        (KeyboardInterrupt(), "interrupted", "Interrupted by user"),
+        (
+            run_ops.TerminationRequested(signal.SIGTERM),
+            "interrupted",
+            "Terminated by signal 15",
+        ),
+        (RuntimeError("copy failed"), "failed", "copy failed"),
+    ],
+)
+def test_preparation_exception_finalizes_and_releases_instance_lock(
+    tmp_path,
+    interruption,
+    expected_state,
+    expected_error,
+):
+    ctx = _context(tmp_path)
+    ctx.metadata_file.write_text(
+        json.dumps({"status": {"state": "initializing"}}),
+        encoding="utf-8",
+    )
+    assert instance_lock_manager.acquire_instance_lock(ctx.root)
+
+    run_ops._finalize_preparation_exception(
+        ctx.root,
+        ctx.metadata_file,
+        interruption,
+    )
+
+    status = json.loads(ctx.metadata_file.read_text(encoding="utf-8"))["status"]
+    assert status["state"] == expected_state
+    assert status["success"] is False
+    assert status["error"] == expected_error
+    assert instance_lock_manager.read_instance_lock(ctx.root) is None
+
+
 @pytest.mark.parametrize("notebook_success", [True, False])
 def test_execute_batch_returns_and_finalizes_notebook_result(
     monkeypatch, tmp_path, notebook_success
@@ -268,6 +378,39 @@ def test_execute_batch_returns_and_finalizes_notebook_result(
     ]
 
 
+def test_execute_success_returns_false_when_cleanup_is_incomplete(
+    monkeypatch,
+    tmp_path,
+):
+    ctx = _context(tmp_path)
+    notebook = ctx.workflow_dir / "workflow.ipynb"
+    notebook.touch()
+    cleanup = _Cleanup()
+    cleanup.owned_processes_stopped = False
+    cleanup.cleanup = lambda: False
+    finalized = []
+    monkeypatch.setattr(run_ops, "execute_notebook", lambda **_kwargs: True)
+    monkeypatch.setattr(run_ops, "_sync_workflow_if_needed", lambda *_args: None)
+    monkeypatch.setattr(
+        run_ops,
+        "_finalize_run",
+        lambda *args, **kwargs: finalized.append(kwargs),
+    )
+
+    result = run_ops._execute_batch(
+        Namespace(backpack=None),
+        ctx,
+        SimpleNamespace(env_dir=None, instance_env={}),
+        cleanup,
+        _Perf(),
+        str(notebook),
+    )
+
+    assert result is False
+    assert finalized[0]["cleanup_succeeded"] is False
+    assert finalized[0]["success"] is True
+
+
 def test_interactive_interrupt_cleans_up_and_syncs_saved_workflow(
     monkeypatch, tmp_path
 ):
@@ -301,17 +444,8 @@ def test_interactive_interrupt_cleans_up_and_syncs_saved_workflow(
         )
 
     assert cleanup.subprocesses == [process]
-    assert cleanup.calls == 1
-    assert finalized == [
-        {
-            "cleanup_succeeded": True,
-            "owned_processes_stopped": True,
-            "sync_workflow": True,
-            "success": False,
-            "error": "Interrupted by user",
-            "state": "interrupted",
-        }
-    ]
+    assert cleanup.calls == 0
+    assert finalized == []
 
 
 @pytest.mark.parametrize(
@@ -373,7 +507,6 @@ def test_interactive_child_order_determines_session_outcome(
             "sync_workflow": True,
             "success": expected_success,
             "error": expected_error,
-            "state": None,
         }
     ]
 
@@ -473,6 +606,7 @@ def test_execute_batch_dispatches_shell_entrypoint(monkeypatch, tmp_path):
             "conda_env_dir": "/backpack/env",
             "working_dir": str(ctx.workflow_dir),
             "extra_env": {"SETTING": "yes"},
+            "cleanup_manager": cleanup,
         }
     ]
 
@@ -496,6 +630,7 @@ def test_worker_startup_requires_factory_process(monkeypatch, tmp_path):
 
 def test_execute_notebook_uses_selected_environment(monkeypatch, tmp_path):
     commands = []
+    cleanup = _Cleanup()
     monkeypatch.setenv("CONDA_EXE", "/opt/conda/bin/conda")
     monkeypatch.setattr(
         jupyter_runner.subprocess,
@@ -509,6 +644,7 @@ def test_execute_notebook_uses_selected_environment(monkeypatch, tmp_path):
         conda_env_dir="/backpack/env",
         working_dir=str(tmp_path),
         extra_env={},
+        cleanup_manager=cleanup,
     )
 
     assert result is True
@@ -527,6 +663,8 @@ def test_execute_notebook_uses_selected_environment(monkeypatch, tmp_path):
             "workflow.ipynb",
         ]
     ]
+    assert len(cleanup.subprocesses) == 1
+    assert cleanup.subprocesses[0].pid == 1234
     assert (tmp_path / "notebook-execution.log").is_file()
 
 

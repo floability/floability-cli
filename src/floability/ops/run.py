@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Any
-from ..cleanup import CleanupManager
+from ..cleanup import CleanupManager, TerminationRequested
 from ..performance_tracker import PerformanceTracker
 from ..environment_manager import setup_manager_and_worker_envs
 from ..workers_manager import (
@@ -98,6 +98,9 @@ def run_workflow(
     """Run or execute a workflow either by creating a new instance from a backpack
     or by reusing an existing instance (via --instance).
     """
+    ctx: InstanceContext | None = None
+    perf: PerformanceTracker | None = None
+    workflow_started = False
     try:
         # Resolve the instance source before choosing the effective base. An
         # existing instance with no explicit --base-dir belongs to its parent,
@@ -174,6 +177,7 @@ def run_workflow(
 
         # Step 8: Run or execute
         execution_success = True
+        workflow_started = True
         if mode == "run":
             execution_success = _run_interactive(
                 args, ctx, env_ctx, cleanup_manager, factory_proc, perf, entrypoint_path
@@ -191,14 +195,41 @@ def run_workflow(
         print("[floability] Exiting run.")
         return 0 if execution_success else 1
 
+    except KeyboardInterrupt:
+        if ctx is not None:
+            _finalize_interrupted_run(
+                args,
+                ctx,
+                perf,
+                cleanup_manager,
+                sync_workflow=workflow_started,
+                reason="Interrupted by user",
+            )
+        else:
+            cleanup_manager.cleanup()
+        return 130
+    except TerminationRequested as termination:
+        reason = f"Terminated by signal {termination.signal_number}"
+        if ctx is not None:
+            _finalize_interrupted_run(
+                args,
+                ctx,
+                perf,
+                cleanup_manager,
+                sync_workflow=workflow_started,
+                reason=reason,
+            )
+        else:
+            cleanup_manager.cleanup()
+        return 128 + termination.signal_number
     except ValueError as e:
         print(f"[floability] Error: {e}")
-        if "ctx" in locals():
+        if ctx is not None:
             _cleanup_and_abort(cleanup_manager, ctx, error=str(e))
         return 1
     except WorkerStartupCleanupError as e:
         print(f"[floability] Error: {e}")
-        if "ctx" in locals():
+        if ctx is not None:
             _cleanup_and_abort(
                 cleanup_manager,
                 ctx,
@@ -208,18 +239,23 @@ def run_workflow(
         return 1
     except RuntimeError as e:
         print(f"[floability] Error: {e}")
-        if "ctx" in locals():
+        if ctx is not None:
             _cleanup_and_abort(cleanup_manager, ctx, error=str(e))
         return 1
     except Exception as e:
         print(f"[floability] Unexpected error: {e}")
-        if "ctx" in locals():
+        if ctx is not None:
             _cleanup_and_abort(cleanup_manager, ctx, error=str(e))
         raise
 
 
 def execute_python_script(
-    script_path, run_dir, conda_env_dir=None, working_dir=None, extra_env: dict = None
+    script_path,
+    run_dir,
+    conda_env_dir=None,
+    working_dir=None,
+    extra_env: dict = None,
+    cleanup_manager: CleanupManager | None = None,
 ):
     """Execute a Python script, streaming stdout/stderr to both the terminal and a log file.
 
@@ -274,7 +310,10 @@ def execute_python_script(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                start_new_session=True,
             )
+            if cleanup_manager is not None:
+                cleanup_manager.register_subprocess(proc)
 
             # Tee: write each line to both the log and the terminal live
             for line in proc.stdout:
@@ -302,7 +341,12 @@ def execute_python_script(
 
 
 def execute_shell_script(
-    script_path, run_dir, conda_env_dir=None, working_dir=None, extra_env: dict = None
+    script_path,
+    run_dir,
+    conda_env_dir=None,
+    working_dir=None,
+    extra_env: dict = None,
+    cleanup_manager: CleanupManager | None = None,
 ):
     """Execute a shell entrypoint and stream its combined output to workflow.log."""
     script_abs_path = os.path.abspath(script_path)
@@ -345,7 +389,10 @@ def execute_shell_script(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                start_new_session=True,
             )
+            if cleanup_manager is not None:
+                cleanup_manager.register_subprocess(proc)
 
             for line in proc.stdout:
                 sys.stdout.write(line)
@@ -451,40 +498,45 @@ def _prepare_new_instance(args: argparse.Namespace, mode: str) -> InstanceContex
 
     metadata_file = instance_paths["metadata"] / "run.json"
     try:
-        record_initial_metadata(args, instance_paths, mode=mode)
-    except Exception as e:
-        print(f"[floability] Warning: Could not create metadata: {e}")
+        try:
+            record_initial_metadata(args, instance_paths, mode=mode)
+        except Exception as e:
+            print(f"[floability] Warning: Could not create metadata: {e}")
 
-    # Setup workflow directory
-    workflow_dir = instance_paths["workflow"]
-    copied_workflow_paths: list[Path] = []
-    if getattr(args, "backpack_root", None):
-        from ..instance_manager import copy_workflow_directory
+        # Setup workflow directory
+        workflow_dir = instance_paths["workflow"]
+        copied_workflow_paths: list[Path] = []
+        if getattr(args, "backpack_root", None):
+            from ..instance_manager import copy_workflow_directory
 
-        backpack_workflow_dir = Path(args.backpack_root) / "workflow"
-        copy_workflow_directory(
-            source_workflow_dir=backpack_workflow_dir,
-            dest_workflow_dir=workflow_dir,
-            copied_paths=copied_workflow_paths,
+            backpack_workflow_dir = Path(args.backpack_root) / "workflow"
+            copy_workflow_directory(
+                source_workflow_dir=backpack_workflow_dir,
+                dest_workflow_dir=workflow_dir,
+                copied_paths=copied_workflow_paths,
+            )
+        else:
+            print(
+                "[floability] No backpack specified; created empty workflow "
+                f"directory at {workflow_dir}"
+            )
+
+        args.workflow_dir = str(workflow_dir)
+
+        return InstanceContext(
+            root=instance_root,
+            paths=instance_paths,
+            metadata_file=metadata_file,
+            workflow_dir=workflow_dir,
+            entrypoint_path=workflow_dir / entrypoint_relative_path,
+            entrypoint_message=entrypoint_message,
+            copied_workflow_paths=tuple(copied_workflow_paths),
+            lock_acquired=True,
+            is_new=True,
         )
-    else:
-        print(
-            f"[floability] No backpack specified; created empty workflow directory at {workflow_dir}"
-        )
-
-    args.workflow_dir = str(workflow_dir)
-
-    return InstanceContext(
-        root=instance_root,
-        paths=instance_paths,
-        metadata_file=metadata_file,
-        workflow_dir=workflow_dir,
-        entrypoint_path=workflow_dir / entrypoint_relative_path,
-        entrypoint_message=entrypoint_message,
-        copied_workflow_paths=tuple(copied_workflow_paths),
-        lock_acquired=True,
-        is_new=True,
-    )
+    except BaseException as error:
+        _finalize_preparation_exception(instance_root, metadata_file, error)
+        raise
 
 
 def _source_backpack_root(args: argparse.Namespace) -> Path:
@@ -493,6 +545,62 @@ def _source_backpack_root(args: argparse.Namespace) -> Path:
     if requested_backpack:
         return Path(requested_backpack).expanduser().resolve()
     return Path(getattr(args, "backpack_root", ".") or ".").expanduser().resolve()
+
+
+def _finalize_preparation_exception(
+    instance_root: Path,
+    metadata_file: Path,
+    error: BaseException,
+) -> None:
+    """Finalize the narrow failure window after locking but before context return."""
+    if isinstance(error, KeyboardInterrupt):
+        state = "interrupted"
+        message = "Interrupted by user"
+    elif isinstance(error, TerminationRequested):
+        state = "interrupted"
+        message = f"Terminated by signal {error.signal_number}"
+    else:
+        state = "failed"
+        message = str(error)
+
+    try:
+        finalize_instance_metadata(
+            metadata_file,
+            success=False,
+            error=message,
+            state=state,
+        )
+    except Exception as metadata_error:
+        print(
+            "[floability] Warning: could not finalize interrupted instance "
+            f"preparation: {metadata_error}"
+        )
+
+    if release_instance_lock(instance_root):
+        return
+
+    incomplete_error = f"{message}; cleanup incomplete"
+    try:
+        finalize_instance_metadata(
+            metadata_file,
+            success=False,
+            error=incomplete_error,
+            state="cleanup_incomplete",
+        )
+    except Exception as metadata_error:
+        print(
+            "[floability] Warning: could not record incomplete instance "
+            f"preparation: {metadata_error}"
+        )
+    if not mark_instance_cleanup_incomplete(
+        instance_root,
+        error=incomplete_error,
+        owned_processes_stopped=True,
+    ):
+        print(
+            "[floability] Warning: could not preserve incomplete instance "
+            "preparation ownership."
+        )
 
 
 def _normalize_base_and_cache_directories(args: argparse.Namespace) -> None:
@@ -573,23 +681,26 @@ def _prepare_existing_instance(
 
     if not acquire_instance_lock(instance_root):
         raise RuntimeError("Failed to acquire instance run lock.")
+    try:
+        print(f"[floability] Running on existing instance: {instance_root}")
 
-    print(f"[floability] Running on existing instance: {instance_root}")
+        create_latest_symlink(str(instance_root.parent), str(instance_root))
 
-    create_latest_symlink(str(instance_root.parent), str(instance_root))
+        args.workflow_dir = str(workflow_dir)
 
-    args.workflow_dir = str(workflow_dir)
-
-    return InstanceContext(
-        root=instance_root,
-        paths=instance_paths,
-        metadata_file=metadata_file,
-        workflow_dir=workflow_dir,
-        entrypoint_path=entrypoint_path,
-        entrypoint_message=entrypoint_message,
-        lock_acquired=True,
-        is_new=False,
-    )
+        return InstanceContext(
+            root=instance_root,
+            paths=instance_paths,
+            metadata_file=metadata_file,
+            workflow_dir=workflow_dir,
+            entrypoint_path=entrypoint_path,
+            entrypoint_message=entrypoint_message,
+            lock_acquired=True,
+            is_new=False,
+        )
+    except BaseException as error:
+        _finalize_preparation_exception(instance_root, metadata_file, error)
+        raise
 
 
 def _read_reusable_instance_metadata(metadata_file: Path) -> dict:
@@ -1101,22 +1212,22 @@ def _run_interactive(
                 )
                 print(f"[floability] {session_error}")
                 break
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, TerminationRequested):
         interrupted = True
         raise
     finally:
-        cleanup_succeeded = cleanup_manager.cleanup()
-        _finalize_run(
-            args,
-            ctx,
-            perf,
-            cleanup_succeeded=cleanup_succeeded,
-            owned_processes_stopped=cleanup_manager.owned_processes_stopped,
-            sync_workflow=True,
-            success=session_success and not interrupted,
-            error="Interrupted by user" if interrupted else session_error,
-            state="interrupted" if interrupted else None,
-        )
+        if not interrupted:
+            cleanup_succeeded = cleanup_manager.cleanup()
+            _finalize_run(
+                args,
+                ctx,
+                perf,
+                cleanup_succeeded=cleanup_succeeded,
+                owned_processes_stopped=cleanup_manager.owned_processes_stopped,
+                sync_workflow=True,
+                success=session_success,
+                error=session_error,
+            )
     return session_success and cleanup_succeeded
 
 
@@ -1147,6 +1258,7 @@ def _execute_batch(
             conda_env_dir=env_ctx.env_dir,
             working_dir=str(ctx.workflow_dir),
             extra_env=env_ctx.instance_env,
+            cleanup_manager=cleanup_manager,
         )
     elif entrypoint_path and entrypoint_path.endswith(".sh"):
         print("[floability] Shell script execution")
@@ -1156,6 +1268,7 @@ def _execute_batch(
             conda_env_dir=env_ctx.env_dir,
             working_dir=str(ctx.workflow_dir),
             extra_env=env_ctx.instance_env,
+            cleanup_manager=cleanup_manager,
         )
     elif entrypoint_path:
         print("[floability] notebook execution")
@@ -1167,6 +1280,7 @@ def _execute_batch(
             conda_env_dir=env_ctx.env_dir,
             working_dir=str(ctx.workflow_dir),
             extra_env=env_ctx.instance_env,
+            cleanup_manager=cleanup_manager,
         )
         if perf.enabled:
             perf.end_timer(
@@ -1190,7 +1304,7 @@ def _execute_batch(
     if not execution_success:
         print("[floability] Workflow entrypoint execution failed.")
 
-    return execution_success
+    return execution_success and cleanup_succeeded
 
 
 def _sync_workflow_if_needed(args: argparse.Namespace, ctx: InstanceContext) -> None:
@@ -1214,7 +1328,7 @@ def _sync_workflow_if_needed(args: argparse.Namespace, ctx: InstanceContext) -> 
 def _finalize_run(
     args: argparse.Namespace,
     ctx: InstanceContext,
-    perf: PerformanceTracker,
+    perf: PerformanceTracker | None,
     cleanup_succeeded: bool,
     owned_processes_stopped: bool,
     sync_workflow: bool = False,
@@ -1226,7 +1340,7 @@ def _finalize_run(
     if sync_workflow:
         _sync_workflow_if_needed(args, ctx)
 
-    if perf.enabled:
+    if perf is not None and perf.enabled:
         perf.end_timer("total_run_time", "Total run time")
         perf.save_report()
         print(f"[floability] Performance report saved to {ctx.paths['metrics']}")
@@ -1255,6 +1369,7 @@ def _finalize_run(
     if not ctx.lock_acquired:
         return
     if not cleanup_succeeded:
+        _print_incomplete_cleanup_guidance(ctx)
         if not mark_instance_cleanup_incomplete(
             ctx.root,
             error=final_error,
@@ -1540,6 +1655,59 @@ def _display_env_info(env_dir: Optional[str], instance_env: dict) -> None:
     print(sep + "\n")
 
 
+def _finalize_interrupted_run(
+    args: argparse.Namespace,
+    ctx: InstanceContext,
+    perf: PerformanceTracker | None,
+    cleanup_manager: CleanupManager,
+    *,
+    sync_workflow: bool,
+    reason: str,
+) -> None:
+    """Finalize an accepted run after SIGINT or SIGTERM."""
+    print(f"[floability] {reason}. Cleaning up...")
+    try:
+        cleanup_succeeded = cleanup_manager.cleanup()
+    except Exception as cleanup_error:
+        cleanup_succeeded = False
+        print(
+            "[floability] Warning: cleanup after interruption failed: "
+            f"{cleanup_error}"
+        )
+
+    _finalize_run(
+        args,
+        ctx,
+        perf,
+        cleanup_succeeded=cleanup_succeeded,
+        owned_processes_stopped=cleanup_manager.owned_processes_stopped,
+        sync_workflow=sync_workflow,
+        success=False,
+        error=reason,
+        state="interrupted",
+    )
+
+
+def _print_incomplete_cleanup_guidance(ctx: InstanceContext) -> None:
+    """Tell the user how to inspect and retry process cleanup safely."""
+    print(
+        "[floability] Error: cleanup is incomplete for instance "
+        f"{ctx.root}."
+    )
+    print(
+        "[floability] Inspect ownership: "
+        f"floability instance status {ctx.root}"
+    )
+    print(
+        "[floability] Retry process cleanup: "
+        f"floability instance stop {ctx.root}"
+    )
+    print(
+        "[floability] 'tools clean --mode incomplete-only' is only for "
+        "staged storage-deletion remnants; it does not stop processes."
+    )
+
+
 def _cleanup_and_abort(
     cleanup_manager: CleanupManager,
     ctx: InstanceContext,
@@ -1587,3 +1755,6 @@ def _cleanup_and_abort(
                     "[floability] Warning: could not record incomplete "
                     "instance cleanup ownership."
                 )
+
+    if not cleanup_succeeded:
+        _print_incomplete_cleanup_guidance(ctx)

@@ -148,6 +148,7 @@ def execute_notebook(
     conda_env_dir: str = None,
     working_dir: str = None,
     extra_env: dict = None,
+    cleanup_manager=None,
 ):
 
     nbconvert_args = [
@@ -188,7 +189,10 @@ def execute_notebook(
                 stderr=stdout,
                 text=True,
                 cwd=working_dir,
+                start_new_session=True,
             )
+            if cleanup_manager is not None:
+                cleanup_manager.register_subprocess(proc)
 
             proc.wait()  # Wait for the process to complete
 

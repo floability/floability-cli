@@ -12,6 +12,14 @@ SIGKILL_GRACE_SECONDS = 2
 PROCESS_GROUP_POLL_SECONDS = 0.1
 
 
+class TerminationRequested(Exception):
+    """Propagate a termination signal to code that owns durable state."""
+
+    def __init__(self, signal_number: int):
+        self.signal_number = signal_number
+        super().__init__(f"termination requested by signal {signal_number}")
+
+
 class CleanupManager:
     """
     Tracks subprocesses we need to clean up on Ctrl+C or program exit.
@@ -445,9 +453,9 @@ def install_signal_handlers(cleanup_manager: CleanupManager):
     """
     Install signal handlers with conventional process exit semantics.
 
-    SIGINT becomes ``KeyboardInterrupt`` so the CLI can record an interrupted
-    workflow before cleaning up and returning 130. SIGTERM performs immediate
-    cleanup and exits with 143 (128 + signal 15).
+    SIGINT becomes ``KeyboardInterrupt`` and SIGTERM becomes
+    ``TerminationRequested`` so the command that owns durable state can
+    finalize it before the CLI returns 130 or 143.
     """
     def signal_handler(sig, frame):
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -456,9 +464,7 @@ def install_signal_handlers(cleanup_manager: CleanupManager):
         if sig == signal.SIGINT:
             raise KeyboardInterrupt
 
-        print(f"[cleanup] Caught signal {sig}, initiating cleanup...")
-        cleanup_manager.cleanup()
-        raise SystemExit(128 + sig)
+        raise TerminationRequested(sig)
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)

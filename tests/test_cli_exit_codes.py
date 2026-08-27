@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -40,6 +41,11 @@ class _CleanedInterruptCommand(_StatusCommand):
     def execute(self, args, cleanup_manager=None):
         cleanup_manager.cleanup()
         raise KeyboardInterrupt
+
+
+class _TerminationCommand(_StatusCommand):
+    def execute(self, args, cleanup_manager=None):
+        raise cli.TerminationRequested(signal.SIGTERM)
 
 
 @pytest.fixture
@@ -83,6 +89,24 @@ def test_cli_does_not_repeat_completed_cleanup(monkeypatch, isolated_cli):
 
     assert cli.main() == 130
     assert cleaned == [True]
+
+
+def test_cli_returns_signal_status_and_cleans_up(
+    monkeypatch,
+    isolated_cli,
+    capsys,
+):
+    cleaned = []
+    monkeypatch.setattr(cli, "get_all_commands", lambda: [_TerminationCommand])
+    monkeypatch.setattr(
+        cli.CleanupManager,
+        "cleanup",
+        lambda self: cleaned.append(True),
+    )
+
+    assert cli.main() == 143
+    assert cleaned == [True]
+    assert "Terminated by signal 15" in capsys.readouterr().out
 
 
 def test_metadata_can_record_interrupted_state(tmp_path):

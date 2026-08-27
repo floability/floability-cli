@@ -4,7 +4,7 @@
 import argparse
 import sys
 
-from .cleanup import CleanupManager, install_signal_handlers
+from .cleanup import CleanupManager, TerminationRequested, install_signal_handlers
 from .commands import get_all_commands
 from .cli_utils import collect_explicit_args
 from .version_info import concise_version, verbose_version
@@ -85,6 +85,13 @@ def main():
                 print("\n[floability] Interrupted by user. Cleaning up...")
                 cleanup_manager.cleanup()
             return 130
+        except TerminationRequested as termination:
+            print(
+                f"\n[floability] Terminated by signal "
+                f"{termination.signal_number}. Cleaning up..."
+            )
+            cleanup_manager.cleanup()
+            return 128 + termination.signal_number
 
         return result if isinstance(result, int) else 0
     else:
