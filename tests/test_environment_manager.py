@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import os
+import stat
+import subprocess
+
+import pytest
 
 from floability.environment_manager import (
+    EnvironmentStorageError,
+    _create_conda_env,
     _ensure_runtime_dependencies,
     _pack_conda_env,
 )
@@ -104,3 +110,84 @@ def test_pack_repairs_only_conda_history_and_ignores_dangling_symlinks(
         )
     ]
     assert "Could not fix timestamp" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "failure_text",
+    [
+        "OSError: [Errno 28] No space left on device",
+        "OSError: [Errno 122] Disk quota exceeded",
+    ],
+)
+def test_conda_storage_failure_has_actionable_cleanup_guidance(
+    tmp_path,
+    monkeypatch,
+    capsys,
+    failure_text,
+):
+    fake_conda = tmp_path / "fake-conda"
+    fake_conda.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' '{failure_text}'\n"
+        "exit 1\n"
+    )
+    fake_conda.chmod(fake_conda.stat().st_mode | stat.S_IXUSR)
+    env_yml = tmp_path / "environment.yml"
+    env_yml.write_text(
+        "name: storage-test\n"
+        "channels:\n"
+        "  - conda-forge\n"
+        "dependencies:\n"
+        "  - python=3.12\n"
+        "  - jupyter\n"
+        "  - cloudpickle\n"
+    )
+    base_dir = tmp_path / "floability-base"
+    env_path = base_dir / "flo_common_env" / "extracted_envs" / "env_test"
+    monkeypatch.setattr(
+        "floability.environment_manager.get_conda_executable",
+        lambda: str(fake_conda),
+    )
+
+    with pytest.raises(EnvironmentStorageError) as captured:
+        _create_conda_env(str(env_yml), str(env_path), is_worker_env=False)
+
+    message = str(captured.value)
+    output = capsys.readouterr().out
+    assert failure_text in output
+    assert "no available space or the account quota was exceeded" in message
+    assert f"--base-dir {base_dir}" in message
+    assert "--mode data-and-env --dry-run" in message
+    assert "original Conda output appears above" in message
+
+
+def test_unrelated_conda_failure_is_not_reported_as_storage_exhaustion(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    fake_conda = tmp_path / "fake-conda"
+    fake_conda.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' 'PackagesNotFoundError: missing-package'\n"
+        "exit 1\n"
+    )
+    fake_conda.chmod(fake_conda.stat().st_mode | stat.S_IXUSR)
+    env_yml = tmp_path / "environment.yml"
+    env_yml.write_text(
+        "name: solver-test\n"
+        "dependencies:\n"
+        "  - python=3.12\n"
+        "  - jupyter\n"
+        "  - cloudpickle\n"
+    )
+    env_path = tmp_path / "base" / "flo_common_env" / "extracted_envs" / "env"
+    monkeypatch.setattr(
+        "floability.environment_manager.get_conda_executable",
+        lambda: str(fake_conda),
+    )
+
+    with pytest.raises(subprocess.CalledProcessError):
+        _create_conda_env(str(env_yml), str(env_path), is_worker_env=False)
+
+    assert "PackagesNotFoundError" in capsys.readouterr().out

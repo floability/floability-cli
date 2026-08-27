@@ -4,9 +4,11 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import textwrap
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
@@ -27,6 +29,10 @@ class EnvCacheInfo:
     file_hash: str
     shared_env_dir: Path  # .../flo_common_env/extracted_envs/env_<hash>/
     tar_path: Path  # .../flo_common_env/tarballs/env_<hash>.tar.gz
+
+
+class EnvironmentStorageError(RuntimeError):
+    """Raised when environment creation fails because storage is exhausted."""
 
 
 # -----------------------------------------------------------------------------
@@ -314,6 +320,71 @@ def _ensure_runtime_dependencies(dependencies: list, is_worker_env: bool) -> lis
     return warnings
 
 
+def _run_streaming_command(command: list[str]) -> None:
+    """Run a command visibly while retaining its output tail for diagnostics."""
+    output_tail: deque[str] = deque(maxlen=2000)
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        errors="replace",
+        bufsize=1,
+    )
+    if process.stdout is not None:
+        for line in process.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            output_tail.append(line)
+    returncode = process.wait()
+    if returncode != 0:
+        raise subprocess.CalledProcessError(
+            returncode,
+            command,
+            output="".join(output_tail),
+        )
+
+
+def _is_storage_exhaustion(output: str) -> bool:
+    """Recognize specific disk-full and filesystem-quota failure signatures."""
+    normalized = output.lower()
+    signatures = (
+        "no space left on device",
+        "errno 28",
+        "disk quota exceeded",
+        "quota exceeded",
+        "errno 122",
+        "enospc",
+        "edquot",
+    )
+    return any(signature in normalized for signature in signatures)
+
+
+def _environment_base_dir(env_path: str) -> Path:
+    """Return the Floability base containing a standard shared environment."""
+    resolved = Path(env_path).expanduser().resolve()
+    for parent in resolved.parents:
+        if parent.name == "flo_common_env":
+            return parent.parent
+    return resolved.parent
+
+
+def _storage_error_message(env_path: str) -> str:
+    base_dir = _environment_base_dir(env_path)
+    return (
+        "Conda could not create the workflow environment because the target "
+        "filesystem has no available space or the account quota was exceeded.\n"
+        f"[floability] Environment target: {env_path}\n"
+        f"[floability] Floability base: {base_dir}\n"
+        "[floability] Choose a base with more available space using "
+        "--base-dir PATH, or preview removable unreferenced caches with:\n"
+        f"[floability]   floability tools clean --base-dir {base_dir} "
+        "--mode data-and-env --dry-run\n"
+        "[floability] Review the plan, then repeat without --dry-run to clean. "
+        "The original Conda output appears above."
+    )
+
+
 def _create_conda_env(env_yml: str, env_path: str, is_worker_env: bool) -> None:
     """Create a conda environment unconditionally from a YAML spec.
 
@@ -372,18 +443,23 @@ def _create_conda_env(env_yml: str, env_path: str, is_worker_env: bool) -> None:
         finally:
             tmp.close()
 
-        subprocess.run(
-            [
-                get_conda_executable(),
-                "env",
-                "create",
-                "--file",
-                modified_yml,
-                "--prefix",
-                env_path,
-            ],
-            check=True,
-        )
+        conda_command = [
+            get_conda_executable(),
+            "env",
+            "create",
+            "--file",
+            modified_yml,
+            "--prefix",
+            env_path,
+        ]
+        try:
+            _run_streaming_command(conda_command)
+        except subprocess.CalledProcessError as error:
+            if _is_storage_exhaustion(error.output or ""):
+                raise EnvironmentStorageError(
+                    _storage_error_message(env_path)
+                ) from error
+            raise
 
         # Optional post-install script
         if post_install_script and os.path.exists(post_install_script):
