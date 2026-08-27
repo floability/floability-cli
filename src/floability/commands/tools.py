@@ -34,7 +34,22 @@ class ToolsCommand(BaseCommand):
 
         # tools clean sub-command
         clean_parser = tools_subparsers.add_parser(
-            "clean", help="Clean Floability cache directories and instance data"
+            "clean",
+            help="Clean Floability cache directories and instance data",
+            description=(
+                "Remove one explicitly selected category of inactive Floability "
+                "storage. A cleanup mode is required; no files are selected by "
+                "default."
+            ),
+            epilog=(
+                "Examples:\n"
+                "  floability tools clean --mode data-only --dry-run\n"
+                "  floability tools clean --base-dir /scratch/myuser "
+                "--mode env-only\n"
+                "  floability tools clean --all-registered-bases "
+                "--mode incomplete-only --yes"
+            ),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
         )
         base_group = clean_parser.add_mutually_exclusive_group()
         base_group.add_argument(
@@ -62,40 +77,23 @@ class ToolsCommand(BaseCommand):
             ),
         )
 
-        scope_group = clean_parser.add_mutually_exclusive_group()
-        scope_group.add_argument(
-            "--data-only",
-            action="store_true",
-            help="Clean only unreferenced data-cache entries.",
-        )
-        scope_group.add_argument(
-            "--env-only",
-            action="store_true",
-            help="Clean only unreferenced environment directories and archives.",
-        )
-        scope_group.add_argument(
-            "--data-and-env",
-            action="store_true",
-            help=(
-                "Clean unreferenced data and environment entries."
+        clean_parser.add_argument(
+            "--mode",
+            required=True,
+            choices=(
+                "all",
+                "data-only",
+                "env-only",
+                "data-and-env",
+                "instances-only",
+                "keep-last",
+                "incomplete-only",
             ),
-        )
-        scope_group.add_argument(
-            "--instances-only",
-            action="store_true",
-            help="Remove inactive instance directories but leave caches unchanged.",
-        )
-        scope_group.add_argument(
-            "--all",
-            action="store_true",
-            help="Remove all inactive instances and their unreferenced cache entries.",
-        )
-        scope_group.add_argument(
-            "--keep-last",
-            action="store_true",
             help=(
-                "Clean everything except the most recently run instance and its "
-                "dependencies according to the run registry."
+                "Required cleanup category: unreferenced data, unreferenced "
+                "environments, both cache types, inactive instances, all inactive "
+                "storage, everything except the latest run, or only remnants from "
+                "an interrupted cleanup."
             ),
         )
 
@@ -134,11 +132,11 @@ class ToolsCommand(BaseCommand):
 
     def get_examples(self) -> list:
         return [
-            "floability tools clean",
-            "floability tools clean --env-only",
-            "floability tools clean --data-only --base-dir /scratch/myuser",
-            "floability tools clean --dry-run",
-            "floability tools clean --instances-only",
-            "floability tools clean --all --yes",
-            "floability tools clean --keep-last --yes",
+            "floability tools clean --mode data-only --dry-run",
+            "floability tools clean --mode env-only",
+            "floability tools clean --base-dir /scratch/myuser --mode data-only",
+            "floability tools clean --mode instances-only",
+            "floability tools clean --mode all --yes",
+            "floability tools clean --mode keep-last --yes",
+            "floability tools clean --all-registered-bases --mode incomplete-only",
         ]

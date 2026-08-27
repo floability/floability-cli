@@ -404,15 +404,15 @@ Remove unreferenced cache entries and, when explicitly requested, inactive
 instance directories. Floability always prints a compact cleanup plan before
 deleting. It prompts for confirmation unless `--yes` is given.
 
-**Default behavior:** select the most recently used existing base directory
-found in Floability's recent-base registry and remove only data-cache entries
-that are not referenced by any retained instance. Environment caches and
-instance directories are retained unless their scope is explicitly selected.
-The registry contains recently recorded bases, not necessarily every
-Floability base that exists.
+The cleanup category is always explicit: `--mode` is required, and invoking
+`floability tools clean` without it fails before planning or deleting anything.
+If no base selector is given, Floability uses the most recently used existing
+base directory found in its recent-base registry. The registry contains
+recently recorded bases, not necessarily every Floability base that exists.
 
 ```bash
-floability tools clean [base selection] [scope] [--dry-run] [--yes] [--jobs N]
+floability tools clean [base selection] --mode MODE \
+  [--dry-run] [--yes] [--jobs N]
 ```
 
 Options:
@@ -425,18 +425,19 @@ Options:
 `--base-dir` and `--all-registered-bases` are mutually exclusive. A custom
 data-cache directory can be used only with one selected base.
 
-**Scope** (mutually exclusive; default is reference-aware `--data-only`):
+**Mode** (required):
 
-| Flag | What is removed |
+| Value | What is removed |
 |---|---|
-| `--data-only` | Unreferenced entries in `floability-data-cache/`; the default |
-| `--env-only` | Unreferenced extracted environments and archives in `flo_common_env/` |
-| `--data-and-env` | Both unreferenced cache types |
-| `--instances-only` | Inactive `fi_*/` instance directories; caches remain |
-| `--all` | All inactive instances and cache entries not needed by retained instances |
-| `--keep-last` | Everything except the most recently run instance and its recorded data/environment dependencies |
+| `data-only` | Unreferenced entries in `floability-data-cache/` |
+| `env-only` | Unreferenced extracted environments and archives in `flo_common_env/` |
+| `data-and-env` | Both unreferenced cache types |
+| `instances-only` | Inactive `fi_*/` instance directories; caches remain |
+| `all` | All inactive instances and cache entries not needed by retained instances |
+| `keep-last` | Everything except the most recently run instance and its recorded data/environment dependencies |
+| `incomplete-only` | Only `.floability-delete-*` remnants left by an interrupted cleanup; normal instances and cache entries remain |
 
-`--keep-last` uses registry `last_run_at`, the same definition used by
+`--mode keep-last` uses registry `last_run_at`, the same definition used by
 `floability instance latest`; it does not use directory modification time or
 the legacy latest symlink. Cleanup refuses to run if a selected base contains
 active or unverifiable instance/worker ownership. Missing or corrupt metadata
@@ -456,29 +457,32 @@ interrupted, a later cleanup recognizes and removes the staged entry.
 **Examples:**
 
 ```bash
-# Preview unreferenced data entries in the latest used base
-floability tools clean --dry-run
+# Preview unreferenced data entries in the most recently used base
+floability tools clean --mode data-only --dry-run
 
 # Remove unreferenced data entries
-floability tools clean
+floability tools clean --mode data-only
 
 # Remove only unreferenced environment entries using two deletion jobs
-floability tools clean --env-only --jobs 2
+floability tools clean --mode env-only --jobs 2
 
 # Remove unreferenced data and environment entries
-floability tools clean --data-and-env
+floability tools clean --mode data-and-env
 
 # Remove everything except the most recently run instance and its dependencies
-floability tools clean --keep-last --yes
+floability tools clean --mode keep-last --yes
 
 # Remove inactive instances from one explicit base
-floability tools clean --instances-only --base-dir /scratch/myuser
+floability tools clean --base-dir /scratch/myuser --mode instances-only
 
 # Clean every base currently recorded in the recent-base registry
-floability tools clean --all-registered-bases --dry-run
+floability tools clean --all-registered-bases --mode data-only --dry-run
 
 # Remove all inactive instances and unreferenced caches without prompting
-floability tools clean --all --yes --jobs 4
+floability tools clean --mode all --yes --jobs 4
+
+# Retry only deletion remnants left by an interrupted cleanup
+floability tools clean --all-registered-bases --mode incomplete-only --yes
 ```
 
 ---

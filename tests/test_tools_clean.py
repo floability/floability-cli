@@ -21,12 +21,7 @@ def _args(**overrides):
         "base_dir": None,
         "all_registered_bases": False,
         "data_cache_dir": None,
-        "data_only": False,
-        "env_only": False,
-        "data_and_env": False,
-        "instances_only": False,
-        "all": False,
-        "keep_last": False,
+        "mode": "data-only",
         "yes": False,
         "dry_run": False,
         "jobs": 1,
@@ -132,7 +127,7 @@ def test_data_and_env_removes_unreferenced_entries(tmp_path, monkeypatch):
     removed_env, removed_archive = _make_environment(base_dir, "removed-env")
 
     result = tools_ops.run_tools_command(
-        _args(base_dir=str(base_dir), data_and_env=True, yes=True, jobs=1)
+        _args(base_dir=str(base_dir), mode="data-and-env", yes=True, jobs=1)
     )
 
     assert result == 0
@@ -169,7 +164,7 @@ def test_keep_last_uses_last_run_and_preserves_its_dependencies(tmp_path, monkey
     _register_run(latest_instance, base_dir, ran_at="2026-08-25T02:00:00Z")
 
     result = tools_ops.run_tools_command(
-        _args(base_dir=str(base_dir), keep_last=True, yes=True, jobs=1)
+        _args(base_dir=str(base_dir), mode="keep-last", yes=True, jobs=1)
     )
 
     assert result == 0
@@ -257,7 +252,6 @@ def test_custom_cache_root_rejects_broad_destructive_path(tmp_path, monkeypatch)
         _args(
             base_dir=str(base_dir),
             data_cache_dir="/",
-            data_only=True,
             dry_run=True,
         )
     )
@@ -287,7 +281,7 @@ def test_parallel_cleanup_handles_read_only_tree_and_does_not_follow_symlink(
     result = tools_ops.run_tools_command(
         _args(
             base_dir=str(base_dir),
-            data_and_env=True,
+            mode="data-and-env",
             yes=True,
             jobs=2,
         )
@@ -310,7 +304,7 @@ def test_failed_delete_is_nonzero_and_staged_for_retry(tmp_path, monkeypatch):
 
     monkeypatch.setattr(tools_ops, "_delete_staged_path", fail_delete)
     result = tools_ops.run_tools_command(
-        _args(base_dir=str(base_dir), data_only=True, yes=True)
+        _args(base_dir=str(base_dir), mode="data-only", yes=True)
     )
 
     assert result == 1
@@ -323,8 +317,10 @@ def test_jobs_default_is_bounded_and_one_selects_serial_mode():
     parser = argparse.ArgumentParser()
     ToolsCommand().add_arguments(parser)
 
-    defaults = parser.parse_args(["clean"])
-    serial = parser.parse_args(["clean", "--jobs", "1"])
+    defaults = parser.parse_args(["clean", "--mode", "data-only"])
+    serial = parser.parse_args(
+        ["clean", "--mode", "data-only", "--jobs", "1"]
+    )
 
     assert defaults.jobs == min(os.cpu_count() or 1, 4)
     assert serial.jobs == 1
@@ -341,7 +337,6 @@ def test_custom_cache_root_must_match_floability_layout(tmp_path, monkeypatch):
         _args(
             base_dir=str(base_dir),
             data_cache_dir=str(unrelated),
-            data_only=True,
             yes=True,
         )
     )
@@ -373,7 +368,8 @@ def test_public_cli_prints_plan_and_removes_only_unreferenced_data(
             "clean",
             "--base-dir",
             str(base_dir),
-            "--data-only",
+            "--mode",
+            "data-only",
             "--yes",
             "--jobs",
             "1",
@@ -411,7 +407,6 @@ def test_custom_cache_preserves_references_from_other_registered_base(
         _args(
             base_dir=str(selected_base),
             data_cache_dir=str(custom_cache),
-            data_only=True,
             yes=True,
         )
     )
@@ -441,7 +436,7 @@ def test_keep_last_across_registered_bases_preserves_cross_base_data(
     _register_run(latest_instance, latest_base, ran_at="2026-08-25T02:00:00Z")
 
     result = tools_ops.run_tools_command(
-        _args(all_registered_bases=True, keep_last=True, yes=True)
+        _args(all_registered_bases=True, mode="keep-last", yes=True)
     )
 
     assert result == 0
@@ -449,3 +444,54 @@ def test_keep_last_across_registered_bases_preserves_cross_base_data(
     assert shared_entry.is_dir()
     assert not orphan_entry.exists()
     assert not old_instance.exists()
+
+
+def test_public_cli_requires_cleanup_mode():
+    executable = Path(sys.executable).parent / "floability"
+
+    result = subprocess.run(
+        [str(executable), "tools", "clean"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "the following arguments are required: --mode" in result.stderr
+
+
+def test_incomplete_only_removes_staged_cleanup_remnants(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    base_dir = tmp_path / "base"
+    base_dir.mkdir()
+    instance = _write_instance(base_dir, "fi_retained")
+    data_entry = _make_data_entry(base_dir, "retained-data")
+    env_dir, env_archive = _make_environment(base_dir, "retained-env")
+
+    staged_paths = [
+        base_dir / ".floability-delete-instance-remnant",
+        base_dir
+        / "floability-data-cache"
+        / ".floability-delete-data-remnant",
+        base_dir
+        / "flo_common_env"
+        / "extracted_envs"
+        / ".floability-delete-env-remnant",
+        base_dir
+        / "flo_common_env"
+        / "tarballs"
+        / ".floability-delete-archive-remnant",
+    ]
+    for path in staged_paths:
+        path.mkdir(parents=True)
+        (path / "partial-file").write_text("incomplete")
+
+    result = tools_ops.run_tools_command(
+        _args(base_dir=str(base_dir), mode="incomplete-only", yes=True)
+    )
+
+    assert result == 0
+    assert all(not path.exists() for path in staged_paths)
+    assert instance.is_dir()
+    assert data_entry.is_dir()
+    assert env_dir.is_dir()
+    assert env_archive.is_file()

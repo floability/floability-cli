@@ -270,7 +270,7 @@ def _build_cleanup_plans(
         latest_instance = _select_latest_instance(statuses, set(base_dirs))
         if latest_instance is None:
             raise CleanupPlanError(
-                "--keep-last requires a previously run instance in the "
+                "--mode keep-last requires a previously run instance in the "
                 "selected base directory"
             )
 
@@ -289,7 +289,10 @@ def _build_cleanup_plans(
             )
         )
 
-    if scope != "instances_only":
+    if scope == "incomplete_only":
+        for plan in plans:
+            _add_cache_targets(plan, scope, set(), set(), set())
+    elif scope != "instances_only":
         retained_instances = {
             instance for plan in plans for instance in plan.retained_instances
         }
@@ -322,19 +325,25 @@ def _build_cleanup_plans(
 
 
 def _cleanup_scope(args) -> str:
-    if getattr(args, "keep_last", False):
-        return "keep_last"
-    if getattr(args, "all", False):
-        return "all"
-    if getattr(args, "instances_only", False):
-        return "instances_only"
-    if getattr(args, "data_only", False):
-        return "data_only"
-    if getattr(args, "env_only", False):
-        return "env_only"
-    if getattr(args, "data_and_env", False):
-        return "data_and_env"
-    return "data_only"
+    raw_mode = getattr(args, "mode", None)
+    if not raw_mode:
+        raise CleanupPlanError(
+            "a cleanup mode is required; use --mode and review "
+            "'floability tools clean --help'"
+        )
+    mode = str(raw_mode).replace("-", "_")
+    supported = {
+        "all",
+        "data_only",
+        "env_only",
+        "data_and_env",
+        "instances_only",
+        "keep_last",
+        "incomplete_only",
+    }
+    if mode not in supported:
+        raise CleanupPlanError(f"unsupported cleanup mode: {raw_mode}")
+    return mode
 
 
 def _discover_instances(base_dir: Path, statuses: dict[str, dict]) -> set[Path]:
@@ -433,7 +442,7 @@ def _build_base_plan(
     else:
         plan.retained_instances.update(instances)
 
-    if delete_instances:
+    if delete_instances or scope == "incomplete_only":
         plan.targets.extend(_staged_instance_targets(base_dir))
     return plan
 
@@ -447,23 +456,26 @@ def _add_cache_targets(
 ) -> None:
     clean_data = scope in {"data_only", "data_and_env", "all", "keep_last"}
     clean_env = scope in {"env_only", "data_and_env", "all", "keep_last"}
+    clean_incomplete = scope == "incomplete_only"
 
-    if clean_data:
+    if clean_data or clean_incomplete:
         _validate_data_cache_layout(plan.data_cache_dir)
         protected, targets = _select_unreferenced_entries(
             plan.data_cache_dir,
             data_references,
             "data cache",
+            staged_only=clean_incomplete,
         )
         plan.protected_data_entries = protected
         plan.targets.extend(targets)
 
-    if clean_env:
+    if clean_env or clean_incomplete:
         env_cache_dir = plan.base_dir / "flo_common_env"
         protected, targets = _select_unreferenced_entries(
             env_cache_dir / "extracted_envs",
             env_dir_references,
             "env extracted",
+            staged_only=clean_incomplete,
         )
         plan.protected_env_dirs = protected
         plan.targets.extend(targets)
@@ -472,6 +484,7 @@ def _add_cache_targets(
             env_cache_dir / "tarballs",
             env_archive_references,
             "env archive",
+            staged_only=clean_incomplete,
         )
         plan.protected_env_archives = protected
         plan.targets.extend(targets)
@@ -557,6 +570,8 @@ def _select_unreferenced_entries(
     container: Path,
     references: set[Path],
     category: str,
+    *,
+    staged_only: bool = False,
 ) -> tuple[int, list[CleanupTarget]]:
     if not container.is_dir():
         return 0, []
@@ -567,6 +582,8 @@ def _select_unreferenced_entries(
             continue
         if entry.name.startswith(DELETE_STAGING_PREFIX):
             targets.append(CleanupTarget("incomplete/staged", entry, container))
+            continue
+        if staged_only:
             continue
         if _entry_contains_reference(entry, references):
             protected += 1

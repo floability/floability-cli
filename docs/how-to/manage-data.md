@@ -107,4 +107,4 @@ all instances and default caches on project or scratch storage with
 `--base-dir`, or move only the data cache with `--data-cache-dir`. Do not point
 cleanup at an arbitrary directory: `floability tools clean` operates only on
 Floability base directories selected explicitly or found in its recent-base
-registry.
+registry, and requires an explicit cleanup `--mode`.
