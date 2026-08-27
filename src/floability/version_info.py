@@ -46,6 +46,33 @@ def _distribution_version(name: str) -> str:
         return "not installed"
 
 
+def _jupyter_version() -> str:
+    """Report Jupyter packages without starting the umbrella CLI.
+
+    ``jupyter --version`` imports and probes several optional components. On
+    shared HPC filesystems that can exceed the diagnostic command's timeout
+    even when Jupyter is correctly installed. Distribution metadata is local,
+    fast, and sufficient for installation diagnostics.
+    """
+    packages = (
+        ("jupyter", "jupyter"),
+        ("jupyterlab", "jupyterlab"),
+        ("jupyter-core", "jupyter-core"),
+    )
+    installed = [
+        f"{label} {version}"
+        for label, distribution in packages
+        if (version := _distribution_version(distribution)) != "not installed"
+    ]
+    executable = shutil.which("jupyter")
+
+    if not installed and executable is None:
+        return "not installed"
+    if executable is not None:
+        installed.append(f"executable {executable}")
+    return "; ".join(installed)
+
+
 def _ndcctools_version() -> str:
     """Return TaskVine's module version, including for Conda installations.
 
@@ -111,7 +138,7 @@ def verbose_version(program: str = "floability") -> str:
         ("Package location", str(package_dir)),
         ("Conda", _command_version("conda", "--version")),
         ("conda-pack", _command_version("conda-pack", "--version")),
-        ("Jupyter", _command_version("jupyter", "--version")),
+        ("Jupyter", _jupyter_version()),
         ("ndcctools", _ndcctools_version()),
         ("vine_factory", _command_version("vine_factory", "--version")),
         ("vine_worker", _command_version("vine_worker", "--version")),

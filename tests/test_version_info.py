@@ -9,7 +9,7 @@ import types
 from pathlib import Path
 
 from floability import __version__
-from floability.version_info import concise_version, verbose_version
+from floability.version_info import _jupyter_version, concise_version, verbose_version
 
 
 def test_import_version_matches_installed_distribution() -> None:
@@ -43,6 +43,40 @@ def test_ndcctools_version_uses_taskvine_module(monkeypatch) -> None:
     from floability.version_info import _ndcctools_version
 
     assert _ndcctools_version() == "7.17.1"
+
+
+def test_jupyter_version_uses_metadata_without_starting_cli(monkeypatch) -> None:
+    versions = {
+        "jupyter": "1.1.1",
+        "jupyterlab": "4.5.0",
+        "jupyter-core": "5.9.1",
+    }
+    monkeypatch.setattr(
+        "floability.version_info.importlib.metadata.version",
+        lambda name: versions[name],
+    )
+    monkeypatch.setattr(
+        "floability.version_info.shutil.which",
+        lambda name: "/test/env/bin/jupyter" if name == "jupyter" else None,
+    )
+
+    assert _jupyter_version() == (
+        "jupyter 1.1.1; jupyterlab 4.5.0; jupyter-core 5.9.1; "
+        "executable /test/env/bin/jupyter"
+    )
+
+
+def test_jupyter_version_reports_missing_installation(monkeypatch) -> None:
+    def missing(_name):
+        raise importlib.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(
+        "floability.version_info.importlib.metadata.version",
+        missing,
+    )
+    monkeypatch.setattr("floability.version_info.shutil.which", lambda _name: None)
+
+    assert _jupyter_version() == "not installed"
 
 
 def test_git_details_finds_repository_above_src_layout(monkeypatch, tmp_path) -> None:
