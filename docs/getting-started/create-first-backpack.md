@@ -411,8 +411,11 @@ want Floability to observe its execution. Audit runs the notebook with
 dependency tracing, captures its Python environment, detects files accessed
 from the directories you identify, and generates a backpack for review.
 
-The notebook's dependencies must already be installed in the environment used
-for the audit:
+**Prerequisites**: 
+1. The notebook's software dependencies must already be installed in the environment used
+for the audit.
+2. The notebook's data dependencies must already be present and the path to it should be provided for the audit.
+3. The environment used for the audit needs to have `jupyter` and its relevant dependencies installed in it: `jupyter, nbclient, nbconvert, ipykernel`.
 
 ```bash
 floability audit \
