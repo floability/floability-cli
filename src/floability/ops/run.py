@@ -15,6 +15,10 @@ from typing import Optional, Any
 from ..cleanup import CleanupManager, TerminationRequested
 from ..performance_tracker import PerformanceTracker
 from ..environment_manager import setup_manager_and_worker_envs
+from ..environment_toolchain import (
+    build_prefix_run_command,
+    format_prefix_run_command,
+)
 from ..workers_manager import (
     WorkerStartupCleanupError,
     reconcile_workers_after_cleanup,
@@ -30,11 +34,7 @@ from ..instance_manager import (
     create_latest_symlink,
     record_initial_metadata,
 )
-from ..utils import (
-    get_conda_executable,
-    normalize_cli_base_dir,
-    normalize_manager_ports,
-)
+from ..utils import normalize_cli_base_dir, normalize_manager_ports
 from ..jupyter_runner import start_jupyterlab, execute_notebook
 from ..instance_lock_manager import (
     acquire_instance_lock,
@@ -280,20 +280,20 @@ def execute_python_script(
 
     if conda_env_dir:
         python_path = os.path.join(conda_env_dir, "bin", "python")
-        cmd = [
-            get_conda_executable(),
-            "run",
-            "--prefix",
+        workflow_command = [python_path, "-u", script_name]
+        cmd = build_prefix_run_command(
             conda_env_dir,
-            "--no-capture-output",
-            python_path,
-            "-u",
-            script_name,
-        ]
+            workflow_command,
+        )
+        displayed_command = format_prefix_run_command(
+            conda_env_dir,
+            workflow_command,
+        )
     else:
         cmd = ["python", "-u", script_name]
+        displayed_command = " ".join(cmd)
 
-    print(f"[floability] Running: {' '.join(cmd)}")
+    print(f"[floability] Running: {displayed_command}")
 
     original_dir = os.getcwd()
     returncode = 1
@@ -301,7 +301,7 @@ def execute_python_script(
         os.chdir(exec_dir)
         with open(log_file, "w") as log:
             log.write(f"[floability] script: {script_abs_path}\n")
-            log.write(f"[floability] command: {' '.join(cmd)}\n\n")
+            log.write(f"[floability] command: {displayed_command}\n\n")
             log.flush()
 
             proc = subprocess.Popen(
@@ -360,19 +360,20 @@ def execute_shell_script(
 
     shell_path = "/bin/bash"
     if conda_env_dir:
-        cmd = [
-            get_conda_executable(),
-            "run",
-            "--prefix",
+        workflow_command = [shell_path, script_name]
+        cmd = build_prefix_run_command(
             conda_env_dir,
-            "--no-capture-output",
-            shell_path,
-            script_name,
-        ]
+            workflow_command,
+        )
+        displayed_command = format_prefix_run_command(
+            conda_env_dir,
+            workflow_command,
+        )
     else:
         cmd = [shell_path, script_name]
+        displayed_command = " ".join(cmd)
 
-    print(f"[floability] Running: {' '.join(cmd)}")
+    print(f"[floability] Running: {displayed_command}")
 
     original_dir = os.getcwd()
     returncode = 1
@@ -380,7 +381,7 @@ def execute_shell_script(
         os.chdir(exec_dir)
         with open(log_file, "w") as log:
             log.write(f"[floability] script: {script_abs_path}\n")
-            log.write(f"[floability] command: {' '.join(cmd)}\n\n")
+            log.write(f"[floability] command: {displayed_command}\n\n")
             log.flush()
 
             proc = subprocess.Popen(
@@ -881,14 +882,18 @@ def _setup_environment(
         )
 
     print("[floability] environment setup (manager & worker)")
-    env_dir, worker_tar, manager_tar = setup_manager_and_worker_envs(
+    setup_result = setup_manager_and_worker_envs(
         environment_spec=env_spec,
         worker_environment_spec=getattr(args, "worker_environment", None),
         base_dir=args.base_dir,
         instance_root=str(ctx.root),
         per_instance_env=per_instance_env,
+        environment_creator=getattr(args, "environment_creator", "auto"),
         perf=perf if perf.enabled else None,
     )
+    env_dir, worker_tar, manager_tar = setup_result
+    manager_plan = getattr(setup_result, "manager_plan", None)
+    worker_plan = getattr(setup_result, "worker_plan", None)
 
     persist_prepared_environment(
         ctx.metadata_file,
@@ -898,6 +903,8 @@ def _setup_environment(
         environment_spec=env_spec,
         worker_environment_spec=getattr(args, "worker_environment", None),
         per_instance_env=per_instance_env,
+        environment_plan=manager_plan.as_metadata() if manager_plan else None,
+        worker_environment_plan=worker_plan.as_metadata() if worker_plan else None,
     )
     instance_env = _build_instance_env(args, ctx, env_dir)
 
@@ -1403,6 +1410,13 @@ def _restore_existing_instance_environment(
     environment_spec = prepared["environment_spec"]
     worker_environment_spec = prepared["worker_environment_spec"]
     per_instance_env = prepared["per_instance_env"]
+    saved_plan = prepared.get("environment_plan") or {}
+    saved_creator = saved_plan.get("creator") or {}
+    environment_creator = saved_creator.get("family") or getattr(
+        args,
+        "environment_creator",
+        "auto",
+    )
 
     manager_spec_available = bool(
         environment_spec and Path(environment_spec).is_file()
@@ -1412,14 +1426,18 @@ def _restore_existing_instance_environment(
     )
 
     if manager_spec_available and worker_spec_available:
-        env_dir, worker_pack, manager_pack = setup_manager_and_worker_envs(
+        setup_result = setup_manager_and_worker_envs(
             environment_spec=environment_spec,
             worker_environment_spec=worker_environment_spec,
             base_dir=args.base_dir,
             instance_root=str(ctx.root),
             per_instance_env=per_instance_env,
+            environment_creator=environment_creator,
             perf=perf if perf.enabled else None,
         )
+        env_dir, worker_pack, manager_pack = setup_result
+        manager_plan = getattr(setup_result, "manager_plan", None)
+        worker_plan = getattr(setup_result, "worker_plan", None)
         persist_prepared_environment(
             ctx.metadata_file,
             env_dir=env_dir,
@@ -1428,6 +1446,8 @@ def _restore_existing_instance_environment(
             environment_spec=environment_spec,
             worker_environment_spec=worker_environment_spec,
             per_instance_env=per_instance_env,
+            environment_plan=manager_plan.as_metadata() if manager_plan else None,
+            worker_environment_plan=worker_plan.as_metadata() if worker_plan else None,
         )
     else:
         env_dir = prepared["env_dir"]
@@ -1482,17 +1502,16 @@ def _get_env_python_version(prefix: str) -> str:
     Returns string like '3.14'
     """
     python_path = str(Path(prefix) / "bin" / "python")
-    result = subprocess.run(
+    command = build_prefix_run_command(
+        prefix,
         [
-            get_conda_executable(),
-            "run",
-            "--prefix",
-            str(prefix),
-            "--no-capture-output",
             python_path,
             "-c",
             "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
         ],
+    )
+    result = subprocess.run(
+        command,
         capture_output=True,
         text=True,
         check=True,
@@ -1518,9 +1537,8 @@ def _build_instance_env(
 
     env = os.environ.copy()
 
-    # Do not leak the currently activated Conda environment into subprocesses
-    # that will be activated with ``conda run --prefix``. Keep CONDA_EXE and
-    # CONDA_PYTHON_EXE so the Conda installation itself remains discoverable.
+    # Do not leak the currently activated environment into subprocesses that
+    # will be launched through the selected prefix.
     for key in (
         "CONDA_PREFIX",
         "CONDA_DEFAULT_ENV",
@@ -1597,7 +1615,7 @@ def _build_instance_env(
 def _display_env_info(env_dir: Optional[str], instance_env: dict) -> None:
     """Display information about the active environment.
 
-    Runs a short Python snippet inside the conda env (via conda run) to report
+    Runs a short Python snippet inside the selected Python environment to report
     sys.prefix, sys.path, CONDA_PREFIX, and ndcctools version.  Also prints the
     TaskVine manager identity from instance_env so it is easy to confirm which
     manager the workflow will connect to.
@@ -1608,7 +1626,7 @@ def _display_env_info(env_dir: Optional[str], instance_env: dict) -> None:
     print(sep)
 
     if not env_dir:
-        print("  Conda env          : (none — using system Python)")
+        print("  Python env         : (none — using system Python)")
         print(sep + "\n")
         return
 
@@ -1629,17 +1647,12 @@ def _display_env_info(env_dir: Optional[str], instance_env: dict) -> None:
     )
 
     try:
+        command = build_prefix_run_command(
+            env_dir,
+            [str(Path(env_dir) / "bin" / "python"), "-c", snippet],
+        )
         result = subprocess.run(
-            [
-                get_conda_executable(),
-                "run",
-                "--prefix",
-                env_dir,
-                "--no-capture-output",
-                str(Path(env_dir) / "bin" / "python"),
-                "-c",
-                snippet,
-            ],
+            command,
             env=instance_env,
             capture_output=True,
             text=True,
@@ -1650,7 +1663,7 @@ def _display_env_info(env_dir: Optional[str], instance_env: dict) -> None:
         if result.returncode != 0 and result.stderr:
             print(f"  [warn] {result.stderr.strip().splitlines()[-1]}")
     except Exception as e:
-        print(f"  [warn] Could not introspect conda env: {e}")
+        print(f"  [warn] Could not introspect Python environment: {e}")
 
     print(sep + "\n")
 

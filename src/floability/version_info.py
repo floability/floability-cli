@@ -10,6 +10,10 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .environment_toolchain import (
+    discover_conda_pack_executable,
+    discover_pixi_executable,
+)
 
 
 def concise_version(program: str = "floability") -> str:
@@ -37,6 +41,31 @@ def _command_version(command: str, *args: str) -> str:
     if output:
         return output[0]
     return f"available at {executable} (exit {result.returncode})"
+
+
+def _resolved_tool_version(executable: str | None) -> str:
+    if executable is None:
+        return "not found"
+    try:
+        result = subprocess.run(
+            [executable, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"unavailable ({exc})"
+    output = (result.stdout or result.stderr).strip().splitlines()
+    return output[0] if output else f"available at {executable}"
+
+
+def _pixi_version() -> str:
+    return _resolved_tool_version(discover_pixi_executable())
+
+
+def _conda_pack_version() -> str:
+    return _resolved_tool_version(discover_conda_pack_executable())
 
 
 def _distribution_version(name: str) -> str:
@@ -137,7 +166,8 @@ def verbose_version(program: str = "floability") -> str:
         ("Architecture", platform.machine()),
         ("Package location", str(package_dir)),
         ("Conda", _command_version("conda", "--version")),
-        ("conda-pack", _command_version("conda-pack", "--version")),
+        ("Pixi", _pixi_version()),
+        ("conda-pack", _conda_pack_version()),
         ("Jupyter", _jupyter_version()),
         ("ndcctools", _ndcctools_version()),
         ("vine_factory", _command_version("vine_factory", "--version")),

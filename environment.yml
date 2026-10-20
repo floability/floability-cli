@@ -5,6 +5,7 @@ dependencies:
   - python=3.12
   - ndcctools>=7.17.0
   - conda-pack
+  - pixi
   - xrootd
   - pip
   - pip:

@@ -52,6 +52,9 @@ floability run --instance <instance-name-or-path>
 - `--instance PATH_OR_NAME`: existing instance to reuse (mutually exclusive with `--backpack`)
 - `--environment PATH`: manager environment spec. Required for new instances unless auto-resolved from the backpack's `software/environment.yml`.
 - `--worker-environment PATH`: worker environment spec (optional; auto-resolved from `software/worker-environment.yml` if present)
+- `--environment-creator auto|conda|pixi`: select the tool that creates the
+  Python environment. `auto` keeps using Conda when available and otherwise
+  uses Pixi. An explicit selection never silently falls back.
 - `--entrypoint FILENAME`: explicitly select the file that runs first from `workflow/`; normally unnecessary unless automatic selection is ambiguous
 
 Entrypoint discovery is recursive. `run` considers only `.ipynb` files;
@@ -103,7 +106,7 @@ unique within `workflow/`.
 - `--no-update-backpack`: disable copying workflow files back to the backpack
 - `--sync-path PATH`: additionally copy a generated file or directory relative to
   `workflow/`; repeat the option to select multiple paths
-- `--per-instance-env`: extract a private conda env per instance instead of sharing a read-only base
+- `--per-instance-env`: extract a private Python environment per instance instead of sharing a read-only base
 
 By default, Floability copies back only files that originally came from the
 backpack's `workflow/` directory. This includes saved notebook changes when an
@@ -161,6 +164,8 @@ Options:
 - `--fingerprint-mode meta|sample|strict` (default: `meta`)
 - `--environment PATH`: manager environment spec
 - `--worker-environment PATH`: worker environment spec
+- `--environment-creator auto|conda|pixi`: select the Python-environment
+  creator; `auto` prefers Conda when available
 - `--per-instance-env`: extract a private environment inside the instance
   instead of using the shared environment cache
 - `--manager-name NAME`: TaskVine manager name (auto-generated if omitted)

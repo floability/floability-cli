@@ -81,6 +81,15 @@ class InstanceCommand(BaseCommand):
             help="Path to worker-environment.yml (optional).",
         )
         create_parser.add_argument(
+            "--environment-creator",
+            choices=["auto", "conda", "pixi"],
+            default="auto",
+            help=(
+                "Tool used to create the Python environment: auto preserves "
+                "Conda when available and otherwise uses Pixi (default: auto)."
+            ),
+        )
+        create_parser.add_argument(
             "--manager-name",
             help="TaskVine manager name (auto-generated if not provided).",
         )
@@ -95,13 +104,13 @@ class InstanceCommand(BaseCommand):
         )
         create_parser.add_argument(
             "--env-vars",
-            help="Comma-separated list of KEY=VALUE pairs to set in conda environment.",
+            help="Comma-separated KEY=VALUE pairs to set in workflow processes.",
         )
         create_parser.add_argument(
             "--per-instance-env",
             action="store_true",
             help=(
-                "Use a separate conda environment for this instance "
+                "Use a separate Python environment for this instance "
                 "(default: use the shared environment cache)."
             ),
         )

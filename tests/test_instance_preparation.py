@@ -265,6 +265,14 @@ def test_per_instance_setup_reuses_a_valid_extracted_environment(
         lambda *_args, **_kwargs: cache_info,
     )
     monkeypatch.setattr(
+        "floability.environment_manager.resolve_environment_plan",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "floability.environment_manager.print_environment_plan",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
         "floability.environment_manager.extract_env_to_instance",
         lambda *_args, **_kwargs: pytest.fail("valid environment was re-extracted"),
     )

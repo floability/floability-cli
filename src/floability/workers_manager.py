@@ -35,9 +35,12 @@ from .instance_lock_manager import (
     release_workers_lock,
 )
 from .utils import (
-    get_conda_executable,
     normalize_manager_ports,
     normalize_worker_transfer_ports,
+)
+from .environment_toolchain import (
+    build_prefix_run_command,
+    format_prefix_run_command,
 )
 
 FACTORY_STARTUP_GRACE_SECONDS = 2
@@ -890,21 +893,22 @@ def _start_vine_factory(
 
     if manager_env_dir:
         vine_factory_path = os.path.join(manager_env_dir, "bin", "vine_factory")
-        cmd = [
-            get_conda_executable(),
-            "run",
-            "--prefix",
+        factory_command = [vine_factory_path, *vine_factory_args]
+        cmd = build_prefix_run_command(
             manager_env_dir,
-            "--no-capture-output",
-            vine_factory_path,
-            *vine_factory_args,
-        ]
+            factory_command,
+        )
+        displayed_command = format_prefix_run_command(
+            manager_env_dir,
+            factory_command,
+        )
         print(f"[workers] Using manager env for vine_factory: {manager_env_dir}")
     else:
         cmd = ["vine_factory", *vine_factory_args]
+        displayed_command = " ".join(cmd)
 
     stdout_file = os.path.join(run_dir, "vine_factory.stdout")
-    print(f"[workers] Launching: {' '.join(cmd)}")
+    print(f"[workers] Launching: {displayed_command}")
     print(f"[workers] stdout  : {os.path.abspath(stdout_file)}")
 
     stderr_file = None
