@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Dict, Optional
 
+from .storage import ensure_filesystem_capacity
+
 
 _IMPLEMENTATION_VERSIONS = {"untar": 1, "unzip": 1}
 SUPPORTED_OPERATIONS = frozenset(_IMPLEMENTATION_VERSIONS)
@@ -161,42 +163,6 @@ def inspect_zip_archive(
         largest_file_bytes=largest_file_bytes,
         limits=limits,
     )
-
-
-def ensure_filesystem_capacity(
-    destination: Path,
-    *,
-    required_bytes: int,
-    required_entries: int = 0,
-    purpose: str,
-) -> None:
-    """Ensure the destination filesystem can hold a planned operation."""
-    existing_path = Path(destination)
-    while not existing_path.exists():
-        parent = existing_path.parent
-        if parent == existing_path:
-            raise PostProcessError(
-                f"Cannot locate a filesystem for destination: {destination}"
-            )
-        existing_path = parent
-
-    free_bytes = shutil.disk_usage(existing_path).free
-    if required_bytes > free_bytes:
-        raise PostProcessError(
-            f"Insufficient space for {purpose} at {destination}: "
-            f"requires {required_bytes} bytes, {free_bytes} bytes available"
-        )
-
-    filesystem = os.statvfs(existing_path)
-    if (
-        required_entries
-        and filesystem.f_files > 0
-        and required_entries > filesystem.f_favail
-    ):
-        raise PostProcessError(
-            f"Insufficient inodes for {purpose} at {destination}: "
-            f"requires {required_entries}, {filesystem.f_favail} available"
-        )
 
 
 def extract_zip_archive(

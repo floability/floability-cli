@@ -19,12 +19,15 @@ from floability.data.post_process import (
     extract_archive,
     extract_tar_archive,
     extract_zip_archive,
-    ensure_filesystem_capacity,
     inspect_archive,
     inspect_tar_archive,
     inspect_zip_archive,
     post_process_cache_identity,
     validate_post_process_spec,
+)
+from floability.data.storage import (
+    StorageCapacityError,
+    ensure_filesystem_capacity,
 )
 
 
@@ -677,12 +680,12 @@ def test_ensure_filesystem_capacity_rejects_insufficient_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr(
-        "floability.data.post_process.shutil.disk_usage",
+        "floability.data.storage.shutil.disk_usage",
         lambda _path: SimpleNamespace(free=99),
     )
 
     with pytest.raises(
-        PostProcessError, match="requires 100 bytes, 99 bytes available"
+        StorageCapacityError, match="requires 100 bytes, 99 bytes available"
     ):
         ensure_filesystem_capacity(
             tmp_path / "not-created",
@@ -696,15 +699,15 @@ def test_ensure_filesystem_capacity_rejects_insufficient_inodes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr(
-        "floability.data.post_process.shutil.disk_usage",
+        "floability.data.storage.shutil.disk_usage",
         lambda _path: SimpleNamespace(free=1000),
     )
     monkeypatch.setattr(
-        "floability.data.post_process.os.statvfs",
+        "floability.data.storage.os.statvfs",
         lambda _path: SimpleNamespace(f_files=100, f_favail=2),
     )
 
-    with pytest.raises(PostProcessError, match="requires 3, 2 available"):
+    with pytest.raises(StorageCapacityError, match="requires 3, 2 available"):
         ensure_filesystem_capacity(
             tmp_path,
             required_bytes=100,
@@ -718,11 +721,11 @@ def test_ensure_filesystem_capacity_accepts_unlimited_inode_reporting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr(
-        "floability.data.post_process.shutil.disk_usage",
+        "floability.data.storage.shutil.disk_usage",
         lambda _path: SimpleNamespace(free=1000),
     )
     monkeypatch.setattr(
-        "floability.data.post_process.os.statvfs",
+        "floability.data.storage.os.statvfs",
         lambda _path: SimpleNamespace(f_files=0, f_favail=0),
     )
 
@@ -741,11 +744,11 @@ def test_extract_zip_archive_checks_capacity_before_creating_result(
     archive_path = _write_zip(tmp_path, [("file.txt", b"content")])
     result_dir = tmp_path / "result"
     monkeypatch.setattr(
-        "floability.data.post_process.shutil.disk_usage",
+        "floability.data.storage.shutil.disk_usage",
         lambda _path: SimpleNamespace(free=3),
     )
 
-    with pytest.raises(PostProcessError, match="Insufficient space"):
+    with pytest.raises(StorageCapacityError, match="Insufficient space"):
         extract_zip_archive(archive_path, result_dir)
 
     assert not result_dir.exists()

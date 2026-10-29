@@ -1,5 +1,6 @@
 from __future__ import annotations
-from pathlib import Path
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from typing import Dict, Any, Iterable, List, Tuple, Optional, Callable
 import yaml
 import hashlib
@@ -8,6 +9,9 @@ import time
 import os
 import shutil
 import tempfile
+import errno
+import stat as statmod
+
 
 # Reuse existing low-level helpers
 from .http_file_utils import http_file_metadata, http_file_download
@@ -39,7 +43,34 @@ from .post_process import (
     post_process_cache_identity,
     validate_post_process_spec,
 )
+from .storage import (
+    StorageCapacityError,
+    ensure_filesystem_capacity,
+)
+
+
 from floability.performance_tracker import NullPerf as _NullPerf
+
+
+@dataclass(frozen=True)
+class SourceEstimate:
+    """Storage estimate and metadata for one source fetch attempt."""
+
+    source_type: str
+    source: str
+    object_type: str
+    required_bytes: int
+    required_entries: Optional[int]
+    size_basis: str
+    metadata: Dict[str, Any]
+
+
+class SourcePreflightError(RuntimeError):
+    """Raised when a source cannot pass metadata or capacity preflight."""
+
+
+class DataWriteError(RuntimeError):
+    """Raised when storage is exhausted during an active transfer."""
 
 
 def _prepare_cache_base_dir(
@@ -1055,37 +1086,24 @@ def _prepare_fetch_target(
 def _prepare_cache_context(
     item: Dict[str, Any],
     backpack_root: Path,
+    source_estimate: SourceEstimate,
     cache_lookup_mode: str = "strict",
     perf: Optional[Any] = None,
     verbose: bool = False,
 ) -> Dict[str, Any]:
-    """Compute artifact spec and spec_key. For strict mode with remote sources,
-    also fetch source metadata and compute source_key upfront.
-
-    Returns dict with: artifact_spec, spec_key, source_key (None if deferred),
-    source_meta (None if deferred).
-    """
+    """Compute cache identity from an already prepared source estimate."""
     perf = perf or _NullPerf()
     name = item.get("name", "<unnamed>")
     artifact_spec = _create_artifact_spec(item, backpack_root)
     spec_key = _compute_spec_key(artifact_spec)
+    source_meta = source_estimate.metadata
 
-    source_key: Optional[str] = None
-    source_meta: Optional[Dict[str, Any]] = None
-
-    # For strict mode: fetch remote metadata now to determine source_key.
-    # For local mode: defer to build time (avoid network cost on cache hit).
-    if str(cache_lookup_mode or "strict").strip().lower() == "strict":
-        source_meta = _fetch_source_metadata_for_item(
-            item, name=name, perf=perf, verbose=verbose
-        )
-
-        perf.start_timer(f"source_key_compute_{name}")
-        source_key = _compute_source_key(source_meta, item.get("source_type", ""))
-        perf.end_timer(
-            f"source_key_compute_{name}",
-            f"Source key computation for cache context of '{name}'",
-        )
+    perf.start_timer(f"source_key_compute_{name}")
+    source_key = _compute_source_key(source_meta, item.get("source_type", ""))
+    perf.end_timer(
+        f"source_key_compute_{name}",
+        f"Source key computation for cache context of '{name}'",
+    )
 
     if verbose:
         print(
@@ -1107,6 +1125,7 @@ def _validate_cache_dir(
     post_process_spec: Optional[Dict[str, Any]] = None,
     perf: Optional[Any] = None,
     verbose: bool = False,
+    ignore_lock: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Validate a single cache directory. Returns metadata on success, None on any failure.
 
@@ -1315,17 +1334,14 @@ def _get_or_build_cache_entry(
     backpack_root: Path,
     cache_base_dir: Path,
     cache_ctx: Dict[str, Any],
+    source_estimate: SourceEstimate,
     data_cache_mode: str,
     force_data_cache: bool,
     cache_lookup_mode: str,
     perf: Optional[Any] = None,
     verbose: bool = False,
 ) -> Optional[Tuple[Path, Dict[str, Any]]]:
-    """Return (cache_dir, meta) from cache hit or after building a new entry.
-
-    On a miss in local mode, fetches source metadata now (deferred from context
-    preparation) to determine the source_key for the new cache directory.
-    """
+    """Return (cache_dir, meta) from cache hit or after building a new entry."""
     perf = perf or _NullPerf()
     name = item.get("name", "<unnamed>")
     artifact_spec = cache_ctx["artifact_spec"]
@@ -1360,18 +1376,7 @@ def _get_or_build_cache_entry(
     if verbose:
         print(f"[data:fetch] Cache miss for '{name}' — building new entry")
 
-    # Resolve source_key for build (may be None when local lookup mode was used).
-    build_source_key = source_key
-    build_source_meta = source_meta
-    if build_source_key is None:
-        build_source_meta = _fetch_source_metadata_for_item(
-            item, name=name, perf=perf, verbose=verbose
-        )
-        build_source_key = _compute_source_key(
-            build_source_meta, item.get("source_type", "")
-        )
-
-    cache_dir = _get_cache_dir(cache_base_dir, spec_key, build_source_key)
+    cache_dir = _get_cache_dir(cache_base_dir, spec_key, source_key)
 
     if not _acquire_cache_lock(cache_dir, timeout=300):
         if verbose:
@@ -1379,14 +1384,40 @@ def _get_or_build_cache_entry(
         return None
 
     try:
+        if not force_data_cache:
+            locked_meta = _validate_cache_dir(
+                cache_dir,
+                artifact_spec,
+                backpack_root,
+                post_process_spec=item.get("post_process"),
+                perf=perf,
+                verbose=verbose,
+                ignore_lock=True,
+            )
+            if locked_meta is not None:
+                if verbose:
+                    print(
+                        f"[data:fetch] Cache entry became available for "
+                        f"'{name}' while waiting for its lock"
+                    )
+                return (cache_dir, locked_meta)
+
+        ensure_filesystem_capacity(
+            cache_dir,
+            required_bytes=source_estimate.required_bytes,
+            required_entries=source_estimate.required_entries or 0,
+            purpose=f"downloading data item '{name}' into the shared cache",
+        )
+
         perf.start_timer(f"cache_build_{name}")
         built = _build_cache_entry(
             item,
             cache_dir,
             backpack_root,
             artifact_spec=artifact_spec,
-            source_key=build_source_key,
-            source_meta=build_source_meta,
+            source_key=source_key,
+            source_meta=source_meta,
+            source_estimate=source_estimate,
             verbose=verbose,
             perf=perf,
         )
@@ -1464,6 +1495,7 @@ def _fetch_direct_to_target(
     item: Dict[str, Any],
     target_path: Path,
     backpack_root: Path,
+    source_estimate: SourceEstimate,
     force: bool,
     perf=None,
     verbose: bool = False,
@@ -1475,11 +1507,19 @@ def _fetch_direct_to_target(
     if verbose:
         print(f"[data:fetch] Direct fetch path for '{name}' (source_type={stype})")
 
+    ensure_filesystem_capacity(
+        target_path.parent,
+        required_bytes=source_estimate.required_bytes,
+        required_entries=source_estimate.required_entries or 0,
+        purpose=f"downloading data item '{name}'",
+    )
+
     if item.get("post_process"):
         return _fetch_post_processed_to_target(
             item,
             target_path,
             backpack_root,
+            source_estimate=source_estimate,
             force=force,
             verbose=verbose,
         )
@@ -1489,6 +1529,7 @@ def _fetch_direct_to_target(
         item,
         target_path,
         backpack_root,
+        source_estimate=source_estimate,
         force=force,
         verbose=verbose,
     )
@@ -1508,6 +1549,7 @@ def _fetch_unprocessed_to_target(
     target_path: Path,
     backpack_root: Path,
     *,
+    source_estimate: SourceEstimate,
     force: bool,
     verbose: bool,
 ) -> bool:
@@ -1524,6 +1566,7 @@ def _fetch_unprocessed_to_target(
             build_dir,
             backpack_root,
             name=name,
+            source_estimate=source_estimate,
             verbose=verbose,
         )
         if staged_result is None:
@@ -1549,6 +1592,7 @@ def _fetch_post_processed_to_target(
     target_path: Path,
     backpack_root: Path,
     *,
+    source_estimate: SourceEstimate,
     force: bool,
     verbose: bool,
 ) -> bool:
@@ -1576,6 +1620,7 @@ def _fetch_post_processed_to_target(
             source_dir,
             backpack_root,
             name=name,
+            source_estimate=source_estimate,
             verbose=verbose,
         )
         if archive_path is None:
@@ -1621,6 +1666,7 @@ def _download_item_to_staging(
     backpack_root: Path,
     *,
     name: str,
+    source_estimate: SourceEstimate,
     verbose: bool,
 ) -> Optional[Path]:
     """Try item sources in order and return one completely downloaded path."""
@@ -1714,12 +1760,25 @@ def _fetch_single_item(
             )
         return None
 
+    try:
+        source_estimate = _prepare_source_estimate(
+            item,
+            backpack_root,
+            name=name,
+            perf=perf,
+            verbose=verbose,
+        )
+    except SourcePreflightError as error:
+        print(f"[data:fetch] Cannot prepare source for '{name}': {error}")
+        return None
+
     if data_cache_mode != "off" and cache_base_dir is not None:
         perf.start_timer(f"total_lookup_{name}")
 
         cache_ctx = _prepare_cache_context(
             item,
             backpack_root,
+            source_estimate=source_estimate,
             cache_lookup_mode=cache_lookup_mode,
             perf=perf,
             verbose=verbose,
@@ -1730,6 +1789,7 @@ def _fetch_single_item(
             backpack_root,
             Path(cache_base_dir),
             cache_ctx=cache_ctx,
+            source_estimate=source_estimate,
             data_cache_mode=data_cache_mode,
             force_data_cache=force_data_cache,
             cache_lookup_mode=cache_lookup_mode,
@@ -1762,6 +1822,7 @@ def _fetch_single_item(
         item,
         target_path,
         backpack_root,
+        source_estimate=source_estimate,
         force=force,
         perf=perf,
         verbose=verbose,
@@ -2107,6 +2168,133 @@ def _compute_source_key(source_meta: Optional[Dict[str, Any]], source_type: str)
     return "local"
 
 
+def _prepare_source_estimate(
+    item: Dict[str, Any],
+    backpack_root: Path,
+    *,
+    name: str,
+    perf: Optional[Any] = None,
+    verbose: bool = False,
+) -> SourceEstimate:
+    """Inspect one usable source and estimate the storage needed to fetch it."""
+    source_entries = (
+        item.get("sources", [])
+        if item.get("source_type") == "multi"
+        else [item]
+    )
+    errors: List[str] = []
+
+    for source_entry in source_entries:
+        source_type = str(source_entry.get("source_type", "") or "")
+        source = str(source_entry.get("source", "") or "")
+
+        try:
+            if source_type in ("fs", "backpack"):
+                source_path = Path(source)
+                if not source_path.is_absolute():
+                    source_path = (backpack_root / source_path).resolve()
+
+                from .fingerprint import compute_fingerprint
+
+                fingerprint = compute_fingerprint(
+                    str(source_path), mode="meta", verbose=verbose
+                )
+                parameters = fingerprint.get("params", {})
+                object_type = "directory" if source_path.is_dir() else "file"
+                required_bytes = int(
+                    parameters.get("total_size", parameters.get("size", 0)) or 0
+                )
+                required_entries = int(
+                    parameters.get("file_count", 1) or 0
+                )
+                metadata: Dict[str, Any] = {
+                    "ok": True,
+                    "object_type": object_type,
+                    "size": required_bytes if object_type == "file" else None,
+                    "total_size": (
+                        required_bytes if object_type == "directory" else None
+                    ),
+                    "file_count": (
+                        required_entries if object_type == "directory" else None
+                    ),
+                    "source_fingerprint": fingerprint,
+                }
+                size_basis = "local metadata fingerprint"
+            elif source_type == "http":
+                perf = perf or _NullPerf()
+                perf.start_timer(f"metadata_fetch_{name}")
+                http_metadata = http_file_metadata(source)
+                perf.end_timer(
+                    f"metadata_fetch_{name}",
+                    f"HTTP metadata fetch for '{name}'",
+                )
+                if not http_metadata.get("exists"):
+                    raise SourcePreflightError(
+                        str(http_metadata.get("raw", {}).get("error") or "not found")
+                    )
+                object_type = "file"
+                required_bytes = int(http_metadata.get("size") or 0)
+                required_entries = 1
+                metadata = {
+                    **http_metadata,
+                    "ok": True,
+                    "object_type": object_type,
+                }
+                size_basis = (
+                    "remote metadata"
+                    if http_metadata.get("size") is not None
+                    else "unknown"
+                )
+            else:
+                metadata = _fetch_source_metadata_for_item(
+                    source_entry,
+                    name=name,
+                    perf=perf,
+                    verbose=verbose,
+                ) or {}
+                if not metadata.get("ok"):
+                    raise SourcePreflightError(
+                        str(metadata.get("error") or "metadata unavailable")
+                    )
+                object_type = str(metadata.get("object_type") or "file")
+                if object_type == "directory":
+                    required_bytes = int(metadata.get("total_size") or 0)
+                    required_entries = int(metadata.get("file_count") or 0)
+                else:
+                    required_bytes = int(metadata.get("size") or 0)
+                    required_entries = 1
+                size_basis = (
+                    "remote metadata"
+                    if (
+                        metadata.get("total_size") is not None
+                        or metadata.get("size") is not None
+                    )
+                    else "unknown"
+                )
+
+            if item.get("source_type") == "multi":
+                metadata = {
+                    **metadata,
+                    "used_source": source,
+                    "used_source_type": source_type,
+                }
+
+            return SourceEstimate(
+                source_type=source_type,
+                source=source,
+                object_type=object_type,
+                required_bytes=required_bytes,
+                required_entries=required_entries,
+                size_basis=size_basis,
+                metadata=metadata,
+            )
+        except (OSError, ValueError, SourcePreflightError) as error:
+            errors.append(f"{source or '<missing source>'}: {error}")
+
+    details = "; ".join(errors) if errors else "no sources were configured"
+    raise SourcePreflightError(details)
+
+
 def _fetch_source_metadata_for_item(
     item: Dict[str, Any],
     name: str = "<unnamed>",
@@ -2361,6 +2549,7 @@ def _build_cache_entry(
     cache_dir: Path,
     backpack_root: Path,
     artifact_spec: Dict[str, Any],
+    source_estimate: SourceEstimate,
     source_key: Optional[str] = None,
     source_meta: Optional[Dict[str, Any]] = None,
     verbose: bool = False,
@@ -2387,6 +2576,7 @@ def _build_cache_entry(
             artifact_spec=artifact_spec,
             source_key=source_key,
             source_meta=source_meta,
+            source_estimate=source_estimate,
             verbose=verbose,
             perf=perf,
         )
@@ -2466,6 +2656,7 @@ def _build_post_processed_cache_entry(
     artifact_spec: Dict[str, Any],
     source_key: Optional[str],
     source_meta: Optional[Dict[str, Any]],
+    source_estimate: SourceEstimate,
     verbose: bool,
     perf: Any,
 ) -> bool:
@@ -2490,6 +2681,7 @@ def _build_post_processed_cache_entry(
             build_dir / "source",
             backpack_root,
             name=name,
+            source_estimate=source_estimate,
             verbose=verbose,
         )
         if archive_path is None:
