@@ -1,0 +1,5 @@
+name: archive-post-process
+channels:
+- conda-forge
+dependencies:
+- python=3.12

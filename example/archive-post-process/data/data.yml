@@ -1,0 +1,29 @@
+schema_version: 1.0
+default_profile: archive_fixtures
+
+profiles:
+  archive_fixtures:
+    policy:
+      run_operation: fetch
+
+    data:
+      - name: nested_directories
+        source_type: http
+        source: https://raw.githubusercontent.com/floability/backpack-test-data/refs/heads/main/archive-fixtures/nested-directories.zip
+        target_location: data/nested-directories
+        post_process:
+          operation: unzip
+
+      - name: single_directory
+        source_type: http
+        source: https://raw.githubusercontent.com/floability/backpack-test-data/refs/heads/main/archive-fixtures/single-directory.zip
+        target_location: data/single-directory
+        post_process:
+          operation: unzip
+
+      - name: single_file
+        source_type: http
+        source: https://raw.githubusercontent.com/floability/backpack-test-data/refs/heads/main/archive-fixtures/single-file.zip
+        target_location: data/single-file
+        post_process:
+          operation: unzip
