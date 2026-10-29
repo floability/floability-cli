@@ -135,6 +135,52 @@ For each `sources[]` entry:
 - `source_type` is optional.
 - `source_object_type` is optional.
 
+## Archive Post-Processing
+
+Use `post_process` to safely extract a downloaded ZIP or TAR archive into its
+`target_location`:
+
+```yaml
+- name: observations
+  source: https://example.org/observations.zip
+  target_location: data/observations
+  post_process:
+    operation: unzip
+    limits:
+      max_extracted_bytes: 1073741824
+      max_entries: 10000
+```
+
+Supported operations are:
+
+- `unzip` for ZIP archives; and
+- `untar` for uncompressed TAR, TAR.GZ, TAR.BZ2, and TAR.XZ archives.
+
+Extraction always creates a directory at `target_location`. The archive's
+internal layout is preserved below that directory, whether the archive contains
+one file, one top-level directory, or a nested directory tree.
+
+The optional limits are checked before extraction:
+
+- `max_extracted_bytes` limits the total declared uncompressed size; and
+- `max_entries` limits the combined number of files and directories.
+
+Floability rejects absolute paths, parent traversal, links, special files,
+duplicate paths, and file/directory conflicts. It extracts into a unique
+staging directory and publishes the completed result only after every member
+has been written successfully. For multi-source items, another source is tried
+only when acquiring the current source fails; an invalid archive does not
+trigger source fallback.
+
+When caching is enabled, the extracted directory is cached independently of
+`target_location`, so one result can be materialized at different workflow
+paths. Cache metadata records the operation implementation version and the
+result's file count, directory count, and declared uncompressed size. Current
+limits are checked again on every cache lookup.
+
+Checksum validation is not yet supported for post-processed data. Floability
+prints a warning and ignores a configured checksum for these items.
+
 ## Source Types
 
 Floability supports these source types in current implementation:
@@ -268,6 +314,8 @@ The loader validates:
 - Every item has `source` or valid `sources`.
 - Every item has `target_location` or `target_path`.
 - Every `sources[]` entry defines `source`.
+- Every `post_process` mapping selects `unzip` or `untar` and uses positive
+  integer limits when limits are provided.
 
 ## Related Pages
 

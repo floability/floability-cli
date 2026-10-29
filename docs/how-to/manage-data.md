@@ -92,6 +92,32 @@ Select the larger profile explicitly:
 floability execute --backpack . --data-profile full
 ```
 
+## Extract ZIP or TAR inputs
+
+Declare archive extraction in the data item instead of adding download and
+unpacking logic to the notebook:
+
+```yaml
+profiles:
+  default:
+    data:
+      - name: archived_inputs
+        source: https://example.org/inputs.tar.gz
+        target_location: data/inputs
+        post_process:
+          operation: untar
+          limits:
+            max_extracted_bytes: 2147483648
+            max_entries: 50000
+```
+
+Floability safely extracts the archive and makes its preserved internal layout
+available below `data/inputs`. Use `operation: unzip` for ZIP archives. Limits
+are optional but recommended for remote archives.
+
+See `example/archive-post-process` for a runnable notebook backpack covering a
+single file, a single top-level directory, and nested directories.
+
 ## Supported sources
 
 Current source schemes are local backpack/filesystem paths, HTTP(S), S3,

@@ -7,6 +7,7 @@ import json
 import time
 import os
 import shutil
+import tempfile
 
 # Reuse existing low-level helpers
 from .http_file_utils import http_file_metadata, http_file_download
@@ -33,6 +34,11 @@ from .xrootd_file_utils import (
     xrootd_source_metadata,
 )
 from .fs_file_utils import fs_file_metadata, fs_file_copy
+from .post_process import (
+    extract_archive,
+    post_process_cache_identity,
+    validate_post_process_spec,
+)
 from floability.performance_tracker import NullPerf as _NullPerf
 
 
@@ -278,7 +284,7 @@ def fetch_data_from_spec(
       * Relative sources (source_type: backpack, fs) are resolved against backpack_root.
       * Relative target_location paths are resolved against target_root (or backpack_root/workflow if target_root not provided).
       * multi source_type: iterate sources until first successful fetch.
-      * For now, post_process is ignored (placeholder).
+      * ZIP/TAR post-processing extracts into the item's target directory.
 
     Args:
         data_spec: Path to data spec YAML file
@@ -695,6 +701,11 @@ def _validate_required_fields(profile: Dict[str, Any]) -> None:
         if not (item.get("target_location") or item.get("target_path")):
             raise ValueError(f"Spec item #{idx} missing required 'target_location'")
 
+        if "post_process" in item:
+            validate_post_process_spec(
+                item["post_process"], item_label=f"Spec item #{idx}"
+            )
+
 
 def _normalize_data_profile(
     profile: Dict[str, Any], backpack_root: Optional[Path] = None
@@ -869,6 +880,7 @@ def _check_single_item(
                 artifact_spec=artifact_spec,
                 backpack_root=backpack_root,
                 cache_lookup_mode="local",
+                post_process_spec=item.get("post_process"),
                 verbose=False,
             )
             cache_exists = hit is not None
@@ -1028,13 +1040,12 @@ def _prepare_fetch_target(
             )
         return target_path
 
-    if target_path.exists() and force:
+    if (target_path.exists() or target_path.is_symlink()) and force:
         if verbose:
-            print(f"[data:fetch] Removing existing target for '{name}': {target_path}")
-        if target_path.is_dir() and not target_path.is_symlink():
-            shutil.rmtree(target_path)
-        else:
-            target_path.unlink()
+            print(
+                f"[data:fetch] Preserving existing target for '{name}' until "
+                f"its replacement is ready: {target_path}"
+            )
 
     if verbose:
         print(f"[data:fetch] Ready target for '{name}': {target_path}")
@@ -1093,14 +1104,16 @@ def _validate_cache_dir(
     candidate: Path,
     artifact_spec: Dict[str, Any],
     backpack_root: Optional[Path],
-    perf=None,
+    post_process_spec: Optional[Dict[str, Any]] = None,
+    perf: Optional[Any] = None,
     verbose: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Validate a single cache directory. Returns metadata on success, None on any failure.
 
     Step 1: directory exists and no build is in progress.
     Step 2: build is complete — metadata and cached_data/ both present.
-    Step 3: for local sources (fs/backpack), confirm source file hasn't changed.
+    Step 3: validate post-processed completion metadata and current limits.
+    Step 4: for local sources (fs/backpack), confirm source file hasn't changed.
     """
     # Step 1
     if not candidate.exists() or (candidate / ".verify.lock").exists():
@@ -1109,6 +1122,15 @@ def _validate_cache_dir(
     # Step 2
     meta = _read_cache_metadata(candidate)
     if not meta or not (candidate / "cached_data").exists():
+        return None
+
+    if post_process_spec and not _validate_post_process_cache_result(
+        candidate,
+        meta,
+        artifact_spec,
+        post_process_spec,
+        verbose=verbose,
+    ):
         return None
 
     # Step 3 — only applies to local sources; remote sources encode version in source_key.
@@ -1150,6 +1172,80 @@ def _validate_cache_dir(
     return meta
 
 
+def _validate_post_process_cache_result(
+    cache_dir: Path,
+    meta: Dict[str, Any],
+    artifact_spec: Dict[str, Any],
+    post_process_spec: Dict[str, Any],
+    *,
+    verbose: bool,
+) -> bool:
+    """Validate completion metadata and limits for one extracted cache result."""
+    expected_identity = post_process_cache_identity(post_process_spec)
+    result_meta = meta.get("post_process")
+
+    if meta.get("status") != "complete" or not isinstance(result_meta, dict):
+        if verbose:
+            print(f"[cache] Miss: incomplete post-process metadata in {cache_dir}")
+        return False
+    if meta.get("artifact_spec") != artifact_spec:
+        if verbose:
+            print(f"[cache] Miss: artifact metadata mismatch in {cache_dir}")
+        return False
+    if meta.get("source_key") != cache_dir.name:
+        if verbose:
+            print(f"[cache] Miss: source metadata mismatch in {cache_dir}")
+        return False
+    if artifact_spec.get("post_process") != expected_identity:
+        return False
+    if result_meta.get("identity") != expected_identity:
+        if verbose:
+            print(f"[cache] Miss: post-process identity mismatch in {cache_dir}")
+        return False
+    if result_meta.get("result_path") != "cached_data/result":
+        return False
+    if result_meta.get("result_type") != "directory":
+        return False
+
+    result_path = cache_dir / "cached_data" / "result"
+    if result_path.is_symlink() or not result_path.is_dir():
+        if verbose:
+            print(f"[cache] Miss: extracted result directory is missing in {cache_dir}")
+        return False
+
+    summary_fields = (
+        "file_count",
+        "directory_count",
+        "total_uncompressed_bytes",
+        "largest_file_bytes",
+    )
+    for field in summary_fields:
+        value = result_meta.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            if verbose:
+                print(f"[cache] Miss: invalid {field} metadata in {cache_dir}")
+            return False
+
+    limits = post_process_spec.get("limits") or {}
+    max_bytes = limits.get("max_extracted_bytes")
+    if (
+        max_bytes is not None
+        and result_meta["total_uncompressed_bytes"] > max_bytes
+    ):
+        if verbose:
+            print(f"[cache] Miss: cached result exceeds max_extracted_bytes")
+        return False
+
+    max_entries = limits.get("max_entries")
+    entry_count = result_meta["file_count"] + result_meta["directory_count"]
+    if max_entries is not None and entry_count > max_entries:
+        if verbose:
+            print(f"[cache] Miss: cached result exceeds max_entries")
+        return False
+
+    return True
+
+
 def _find_cache_hit(
     cache_base_dir: Path,
     spec_key: str,
@@ -1157,6 +1253,7 @@ def _find_cache_hit(
     artifact_spec: Dict[str, Any],
     backpack_root: Path,
     cache_lookup_mode: str,
+    post_process_spec: Optional[Dict[str, Any]] = None,
     perf: Optional[Any] = None,
     verbose: bool = False,
 ) -> Optional[Tuple[Path, Dict[str, Any]]]:
@@ -1176,7 +1273,12 @@ def _find_cache_hit(
             return None
         cache_dir = _get_cache_dir(cache_base_dir, spec_key, source_key)
         meta = _validate_cache_dir(
-            cache_dir, artifact_spec, backpack_root, perf, verbose
+            cache_dir,
+            artifact_spec,
+            backpack_root,
+            post_process_spec=post_process_spec,
+            perf=perf,
+            verbose=verbose,
         )
         if verbose:
             print(f"[cache] Strict {'hit' if meta else 'miss'}: {cache_dir}")
@@ -1191,7 +1293,14 @@ def _find_cache_hit(
     for subdir in sorted(artifact_dir.iterdir()):
         if not subdir.is_dir():
             continue
-        meta = _validate_cache_dir(subdir, artifact_spec, backpack_root, perf, verbose)
+        meta = _validate_cache_dir(
+            subdir,
+            artifact_spec,
+            backpack_root,
+            post_process_spec=post_process_spec,
+            perf=perf,
+            verbose=verbose,
+        )
         if meta:
             if verbose:
                 print(f"[cache] Local hit: {subdir}")
@@ -1237,6 +1346,7 @@ def _get_or_build_cache_entry(
             artifact_spec=artifact_spec,
             backpack_root=backpack_root,
             cache_lookup_mode=cache_lookup_mode,
+            post_process_spec=item.get("post_process"),
             perf=perf,
             verbose=verbose,
         )
@@ -1290,6 +1400,14 @@ def _get_or_build_cache_entry(
         meta = _read_cache_metadata(cache_dir)
         if meta is None:
             return None
+        if item.get("post_process") and not _validate_post_process_cache_result(
+            cache_dir,
+            meta,
+            artifact_spec,
+            item["post_process"],
+            verbose=verbose,
+        ):
+            return None
 
         if verbose:
             print(f"[data:fetch] Cache entry built for '{name}': {cache_dir}")
@@ -1320,6 +1438,7 @@ def _materialize_cache_entry_to_target(
         cache_dir,
         target_path,
         target_location=target_location,
+        post_processed=bool(item.get("post_process")),
         mode=data_cache_mode,
         verbose=verbose,
     )
@@ -1356,47 +1475,22 @@ def _fetch_direct_to_target(
     if verbose:
         print(f"[data:fetch] Direct fetch path for '{name}' (source_type={stype})")
 
-    if stype == "multi":
-        sources = item.get("sources", [])
-        if verbose:
-            print(
-                f"[data:fetch] Trying {len(sources)} source(s) for multi item '{name}'"
-            )
-
-        for index, src_entry in enumerate(sources, start=1):
-            if verbose:
-                print(
-                    f"[data:fetch] Multi source {index}/{len(sources)} for '{name}': type={src_entry.get('source_type')} source={src_entry.get('source')}"
-                )
-            if _attempt_fetch_source(
-                src_entry,
-                target_path,
-                backpack_root,
-                verbose=verbose,
-                force=force,
-            ):
-                if verbose:
-                    print(
-                        f"[data:fetch] Multi source {index}/{len(sources)} succeeded for '{name}' -> {target_path}"
-                    )
-                return True
-
-        if verbose:
-            print(f"[data:fetch] All multi sources failed for '{name}'")
-        return False
-
-    if verbose:
-        print(
-            f"[data:fetch] Fetching single source for '{name}': source_type={stype} source={item.get('source')} -> {target_path}"
+    if item.get("post_process"):
+        return _fetch_post_processed_to_target(
+            item,
+            target_path,
+            backpack_root,
+            force=force,
+            verbose=verbose,
         )
 
     perf.start_timer(f"direct_fetch_{name}")
-    ok = _attempt_fetch_source(
+    ok = _fetch_unprocessed_to_target(
         item,
         target_path,
         backpack_root,
-        verbose=verbose,
         force=force,
+        verbose=verbose,
     )
     perf.end_timer(f"direct_fetch_{name}", f"Direct fetch for '{name}'")
 
@@ -1407,6 +1501,178 @@ def _fetch_direct_to_target(
             print(f"[data:fetch] Direct fetch failed for '{name}'")
 
     return ok
+
+
+def _fetch_unprocessed_to_target(
+    item: Dict[str, Any],
+    target_path: Path,
+    backpack_root: Path,
+    *,
+    force: bool,
+    verbose: bool,
+) -> bool:
+    """Download one ordinary item into staging and publish it when complete."""
+    name = item.get("name", "<unnamed>")
+    staging_root = target_path.parent / ".floability-data-staging"
+    build_dir: Optional[Path] = None
+
+    try:
+        staging_root.mkdir(parents=True, exist_ok=True)
+        build_dir = Path(tempfile.mkdtemp(prefix="build-", dir=staging_root))
+        staged_result = _download_item_to_staging(
+            item,
+            build_dir,
+            backpack_root,
+            name=name,
+            verbose=verbose,
+        )
+        if staged_result is None:
+            return False
+
+        _publish_staged_result(staged_result, target_path, build_dir, force=force)
+        return True
+    except Exception as error:
+        if verbose:
+            print(f"[data:fetch] Failed staging '{name}': {error}")
+        return False
+    finally:
+        if build_dir is not None:
+            shutil.rmtree(build_dir, ignore_errors=True)
+        try:
+            staging_root.rmdir()
+        except OSError:
+            pass
+
+
+def _fetch_post_processed_to_target(
+    item: Dict[str, Any],
+    target_path: Path,
+    backpack_root: Path,
+    *,
+    force: bool,
+    verbose: bool,
+) -> bool:
+    """Download, extract, and atomically publish one uncached data item."""
+    name = item.get("name", "<unnamed>")
+    staging_root = target_path.parent / ".floability-data-staging"
+    build_dir: Optional[Path] = None
+
+    checksum = _extract_checksum_field(item)
+    if checksum:
+        print(
+            "[post-process] Warning: checksum validation is not currently "
+            f"supported for post-processed data; the checksum for '{name}' "
+            "will be ignored."
+        )
+
+    try:
+        staging_root.mkdir(parents=True, exist_ok=True)
+        build_dir = Path(tempfile.mkdtemp(prefix="build-", dir=staging_root))
+        source_dir = build_dir / "source"
+        result_dir = build_dir / "result"
+
+        archive_path = _download_item_to_staging(
+            item,
+            source_dir,
+            backpack_root,
+            name=name,
+            verbose=verbose,
+        )
+        if archive_path is None:
+            if verbose:
+                print(f"[post-process] All source downloads failed for '{name}'")
+            return False
+        if not archive_path.is_file():
+            raise ValueError(
+                f"Post-process source for '{name}' must resolve to one archive file"
+            )
+
+        summary = extract_archive(
+            archive_path,
+            result_dir,
+            item["post_process"],
+            item_label=f"Data item '{name}'",
+        )
+        _publish_staged_result(result_dir, target_path, build_dir, force=force)
+
+        if verbose:
+            print(
+                f"[post-process] Published '{name}' to {target_path} "
+                f"({summary.file_count} files, "
+                f"{summary.total_uncompressed_bytes} bytes)"
+            )
+        return True
+    except Exception as error:
+        if verbose:
+            print(f"[post-process] Failed for '{name}': {error}")
+        return False
+    finally:
+        if build_dir is not None:
+            shutil.rmtree(build_dir, ignore_errors=True)
+        try:
+            staging_root.rmdir()
+        except OSError:
+            pass
+
+
+def _download_item_to_staging(
+    item: Dict[str, Any],
+    staging_dir: Path,
+    backpack_root: Path,
+    *,
+    name: str,
+    verbose: bool,
+) -> Optional[Path]:
+    """Try item sources in order and return one completely downloaded path."""
+    sources = item.get("sources") if item.get("source_type") == "multi" else None
+    source_entries = sources or [item]
+
+    for index, source_entry in enumerate(source_entries, start=1):
+        attempt_dir = staging_dir / f"attempt-{index}"
+        attempt_dir.mkdir(parents=True)
+        attempt_path = attempt_dir / "result"
+
+        if verbose and len(source_entries) > 1:
+            print(
+                f"[data:download] Attempt {index}/{len(source_entries)} for "
+                f"'{name}': {source_entry.get('source')}"
+            )
+
+        if _download_source_to_path(
+            source_entry,
+            attempt_path,
+            backpack_root,
+            verbose=verbose,
+        ):
+            return attempt_path
+
+        shutil.rmtree(attempt_dir, ignore_errors=True)
+
+    return None
+
+
+def _publish_staged_result(
+    result_dir: Path,
+    target_path: Path,
+    build_dir: Path,
+    *,
+    force: bool,
+) -> None:
+    """Publish a complete result while preserving an existing target on failure."""
+    target_exists = target_path.exists() or target_path.is_symlink()
+    if target_exists and not force:
+        raise FileExistsError(f"Target already exists: {target_path}")
+
+    backup_path = build_dir / "previous-result"
+    if target_exists:
+        target_path.rename(backup_path)
+
+    try:
+        result_dir.rename(target_path)
+    except BaseException:
+        if backup_path.exists() or backup_path.is_symlink():
+            backup_path.rename(target_path)
+        raise
 
 
 def _fetch_single_item(
@@ -1710,7 +1976,7 @@ def _create_artifact_spec(item: Dict[str, Any], backpack_root: Path) -> Dict[str
     # Post-processing (if specified)
     post_process = item.get("post_process")
     if post_process:
-        artifact["post_process"] = post_process
+        artifact["post_process"] = post_process_cache_identity(post_process)
 
     return artifact
 
@@ -1988,6 +2254,7 @@ def _write_cache_metadata(
     source_key: Optional[str] = None,
     source_meta: Optional[Dict[str, Any]] = None,
     source_fingerprint: Optional[Dict[str, Any]] = None,
+    post_process_result: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Write cache metadata to .meta.json."""
     meta: Dict[str, Any] = {
@@ -2007,6 +2274,9 @@ def _write_cache_metadata(
     if source_fingerprint:
         meta["source_fingerprint"] = source_fingerprint.get("fingerprint")
         meta["fingerprint_mode"] = "meta"
+    if post_process_result:
+        meta["status"] = "complete"
+        meta["post_process"] = post_process_result
 
     meta_file = cache_dir / ".meta.json"
     with meta_file.open("w", encoding="utf-8") as f:
@@ -2109,6 +2379,18 @@ def _build_cache_entry(
             print("[cache] ERROR: Missing target_location in item")
         return False
 
+    if item.get("post_process"):
+        return _build_post_processed_cache_entry(
+            item,
+            cache_dir,
+            backpack_root,
+            artifact_spec=artifact_spec,
+            source_key=source_key,
+            source_meta=source_meta,
+            verbose=verbose,
+            perf=perf,
+        )
+
     cached_data_dir = cache_dir / "cached_data"
     cache_file = cached_data_dir / target_location
     cache_file.parent.mkdir(parents=True, exist_ok=True)
@@ -2120,7 +2402,7 @@ def _build_cache_entry(
     try:
         if stype == "multi":
             success = any(
-                _download_to_cache(src_entry, cache_file, backpack_root, verbose)
+                _download_source_to_path(src_entry, cache_file, backpack_root, verbose)
                 for src_entry in item.get("sources", [])
             )
             if not success:
@@ -2128,15 +2410,10 @@ def _build_cache_entry(
                     print("[cache] ERROR: All sources failed")
                 return False
         else:
-            if not _download_to_cache(item, cache_file, backpack_root, verbose):
+            if not _download_source_to_path(item, cache_file, backpack_root, verbose):
                 if verbose:
                     print("[cache] ERROR: Download failed")
                 return False
-
-        if item.get("post_process"):
-            print(
-                f"[cache] WARNING: post_process not yet implemented: {item['post_process']}"
-            )
 
         # Fingerprint only for local sources (fs/backpack), always "meta" mode.
         source_fingerprint = None
@@ -2181,17 +2458,188 @@ def _build_cache_entry(
         return False
 
 
-def _download_to_cache(
+def _build_post_processed_cache_entry(
+    item: Dict[str, Any],
+    cache_dir: Path,
+    backpack_root: Path,
+    *,
+    artifact_spec: Dict[str, Any],
+    source_key: Optional[str],
+    source_meta: Optional[Dict[str, Any]],
+    verbose: bool,
+    perf: Any,
+) -> bool:
+    """Build one extracted cache result without exposing partial data."""
+    name = item.get("name", "<unnamed>")
+    staging_root = cache_dir / ".staging"
+    build_dir: Optional[Path] = None
+
+    checksum = _extract_checksum_field(item)
+    if checksum:
+        print(
+            "[post-process] Warning: checksum validation is not currently "
+            f"supported for post-processed data; the checksum for '{name}' "
+            "will be ignored."
+        )
+
+    try:
+        staging_root.mkdir(parents=True, exist_ok=True)
+        build_dir = Path(tempfile.mkdtemp(prefix="build-", dir=staging_root))
+        archive_path = _download_item_to_staging(
+            item,
+            build_dir / "source",
+            backpack_root,
+            name=name,
+            verbose=verbose,
+        )
+        if archive_path is None:
+            if verbose:
+                print(f"[cache] All source downloads failed for '{name}'")
+            return False
+        if not archive_path.is_file():
+            raise ValueError(
+                f"Post-process source for '{name}' must resolve to one archive file"
+            )
+
+        result_dir = build_dir / "cached_data" / "result"
+        summary = extract_archive(
+            archive_path,
+            result_dir,
+            item["post_process"],
+            item_label=f"Data item '{name}'",
+        )
+        source_fingerprint = _compute_local_source_fingerprint(
+            item,
+            backpack_root,
+            perf=perf,
+            verbose=verbose,
+        )
+        _write_cache_metadata(
+            build_dir,
+            artifact_spec,
+            content_sha256="placeholder",
+            actual_size=summary.total_uncompressed_bytes,
+            source_key=source_key,
+            source_meta=source_meta,
+            source_fingerprint=source_fingerprint,
+            post_process_result={
+                "identity": post_process_cache_identity(item["post_process"]),
+                "result_path": "cached_data/result",
+                "result_type": "directory",
+                "file_count": summary.file_count,
+                "directory_count": summary.directory_count,
+                "total_uncompressed_bytes": summary.total_uncompressed_bytes,
+                "largest_file_bytes": summary.largest_file_bytes,
+            },
+        )
+        _publish_cache_build(build_dir, cache_dir)
+
+        if verbose:
+            print(
+                f"[cache] Built extracted cache entry for '{name}' "
+                f"({summary.file_count} files, "
+                f"{summary.total_uncompressed_bytes} bytes)"
+            )
+        return True
+    except Exception as error:
+        if verbose:
+            print(f"[cache] Failed building extracted cache for '{name}': {error}")
+        return False
+    finally:
+        if build_dir is not None:
+            shutil.rmtree(build_dir, ignore_errors=True)
+        try:
+            staging_root.rmdir()
+        except OSError:
+            pass
+
+
+def _compute_local_source_fingerprint(
+    item: Dict[str, Any],
+    backpack_root: Path,
+    *,
+    perf: Any,
+    verbose: bool,
+) -> Optional[Dict[str, Any]]:
+    """Compute the existing metadata fingerprint for one local source."""
+    if item.get("source_type") not in ("fs", "backpack"):
+        return None
+
+    try:
+        from .fingerprint import compute_fingerprint
+
+        source_path = Path(item.get("source", ""))
+        if not source_path.is_absolute():
+            source_path = (backpack_root / source_path).resolve()
+        if not source_path.exists():
+            return None
+
+        perf.start_timer(f"fingerprint_compute_{source_path.name}")
+        fingerprint = compute_fingerprint(
+            str(source_path), mode="meta", verbose=verbose
+        )
+        perf.end_timer(
+            f"fingerprint_compute_{source_path.name}",
+            f"Fingerprint for {source_path.name}",
+        )
+        return fingerprint
+    except Exception as error:
+        if verbose:
+            print(f"[cache] Warning: Failed to compute source fingerprint: {error}")
+        return None
+
+
+def _publish_cache_build(build_dir: Path, cache_dir: Path) -> None:
+    """Publish cached data first and its completion metadata last."""
+    staged_data = build_dir / "cached_data"
+    staged_meta = build_dir / ".meta.json"
+    cached_data = cache_dir / "cached_data"
+    cache_meta = cache_dir / ".meta.json"
+    previous_data = build_dir / "previous-cached-data"
+    previous_meta = build_dir / "previous-meta.json"
+    moved_previous_data = False
+    moved_previous_meta = False
+    published_data = False
+    published_meta = False
+
+    if not staged_data.is_dir() or not staged_meta.is_file():
+        raise ValueError("Cache build is missing staged data or metadata")
+
+    try:
+        if cached_data.exists() or cached_data.is_symlink():
+            cached_data.rename(previous_data)
+            moved_previous_data = True
+        if cache_meta.exists() or cache_meta.is_symlink():
+            cache_meta.rename(previous_meta)
+            moved_previous_meta = True
+
+        staged_data.rename(cached_data)
+        published_data = True
+        staged_meta.rename(cache_meta)
+        published_meta = True
+    except BaseException:
+        if published_meta and cache_meta.exists():
+            cache_meta.unlink()
+        if published_data and cached_data.exists():
+            cached_data.rename(staged_data)
+        if moved_previous_data and previous_data.exists():
+            previous_data.rename(cached_data)
+        if moved_previous_meta and previous_meta.exists():
+            previous_meta.rename(cache_meta)
+        raise
+
+
+def _download_source_to_path(
     item: Dict[str, Any],
     cache_file: Path,
     backpack_root: Path,
     verbose: bool = False,
 ) -> bool:
-    """Download or copy data to cache file.
+    """Download or copy one source to a requested staging or cache path.
 
     Args:
         item: Data item (or source entry for multi-source)
-        cache_file: Target file path in cache
+        cache_file: Target file or directory path
         backpack_root: Base path for resolving relative sources
         verbose: Print progress messages
 
@@ -2340,13 +2788,15 @@ def _materialize_from_cache(
     cache_dir: Path,
     target_path: Path,
     target_location: Optional[str] = None,
+    post_processed: bool = False,
     mode: str = "symlink",
     verbose: bool = False,
 ) -> bool:
     """Materialize target from cache using specified mode.
-    The cache structure in cached_data/ mirrors the target structure.
-    This function creates symlinks/copies from cached_data/* into the workflow directory,
-    preserving the exact directory structure.
+
+    Ordinary cache entries mirror target_location below cached_data/. Extracted
+    cache entries use the fixed cached_data/result directory so they can be
+    materialized at different workflow target locations.
 
     Modes:
     - symlink: Create symbolic links (default, read-only convention)
@@ -2356,6 +2806,8 @@ def _materialize_from_cache(
     Args:
         cache_dir: Cache directory path
         target_path: Target path to create (e.g., workflow/data/samples/)
+        target_location: Ordinary item's relative path below cached_data/
+        post_processed: Select the fixed extracted-result cache layout
         mode: Materialization mode
         verbose: Print progress messages
 
@@ -2370,7 +2822,13 @@ def _materialize_from_cache(
 
     # Determine exact cached target for this item.
     cached_target: Optional[Path] = None
-    if target_location:
+    if post_processed:
+        cached_target = cached_data_dir / "result"
+        if cached_target.is_symlink() or not cached_target.is_dir():
+            if verbose:
+                print("[cache] Cannot materialize: extracted result is missing")
+            return False
+    elif target_location:
         cached_target = cached_data_dir / target_location
         if not cached_target.exists():
             if verbose:
