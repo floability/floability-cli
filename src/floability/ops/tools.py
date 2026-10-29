@@ -489,6 +489,27 @@ def _add_cache_targets(
         plan.protected_env_archives = protected
         plan.targets.extend(targets)
 
+        tool_cache_dir = env_cache_dir / "tool_cache"
+        pixi_package_cache = tool_cache_dir / "pixi"
+        if clean_env and (
+            pixi_package_cache.exists() or pixi_package_cache.is_symlink()
+        ):
+            plan.targets.append(
+                CleanupTarget(
+                    "env tool cache",
+                    pixi_package_cache,
+                    tool_cache_dir,
+                )
+            )
+        elif clean_incomplete:
+            _protected, targets = _select_unreferenced_entries(
+                tool_cache_dir,
+                set(),
+                "env tool cache",
+                staged_only=True,
+            )
+            plan.targets.extend(targets)
+
 
 def _safe_instance_target(instance: Path, base_dir: Path) -> bool:
     return (
@@ -627,6 +648,7 @@ def _print_cleanup_plan(plans: list[BaseCleanupPlan], jobs: int) -> None:
             f"{counts['data cache']} data entry/entries, "
             f"{counts['env extracted']} env dir(s), "
             f"{counts['env archive']} env archive(s), "
+            f"{counts['env tool cache']} env tool cache(s), "
             f"{counts['incomplete/staged']} staged/incomplete entry/entries"
         )
         for warning in plan.warnings:

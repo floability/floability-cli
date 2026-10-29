@@ -439,7 +439,7 @@ data-cache directory can be used only with one selected base.
 | Value | What is removed |
 |---|---|
 | `data-only` | Unreferenced entries in `floability-data-cache/` |
-| `env-only` | Unreferenced extracted environments and archives in `flo_common_env/` |
+| `env-only` | Unreferenced extracted environments and archives, plus the base-owned Pixi package cache in `flo_common_env/` |
 | `data-and-env` | Both unreferenced cache types |
 | `instances-only` | Inactive `fi_*/` instance directories; caches remain |
 | `all` | All inactive instances and cache entries not needed by retained instances |
@@ -462,6 +462,10 @@ for a retained instance also stops cleanup instead of guessing.
 Parallel deletion requires `find`, `xargs`, and `rm`. Selected entries are
 first renamed within their cache/base filesystem, then removed. If deletion is
 interrupted, a later cleanup recognizes and removes the staged entry.
+
+Environment cleanup removes Floability's default Pixi package cache at
+`<base-dir>/flo_common_env/tool_cache/pixi`. It does not remove a custom
+external `PIXI_CACHE_DIR`.
 
 **Examples:**
 

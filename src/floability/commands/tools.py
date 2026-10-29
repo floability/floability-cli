@@ -91,9 +91,10 @@ class ToolsCommand(BaseCommand):
             ),
             help=(
                 "Required cleanup category: unreferenced data, unreferenced "
-                "environments, both cache types, inactive instances, all inactive "
-                "storage, everything except the latest run, or only remnants from "
-                "an interrupted cleanup."
+                "environments and base-owned environment-tool caches, both cache "
+                "types, inactive instances, all inactive storage, everything "
+                "except the latest run, or only remnants from an interrupted "
+                "cleanup."
             ),
         )
 
