@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Dict, Any, Iterable, List, Tuple, Optional, Callable
 import yaml
 import hashlib
@@ -9,8 +9,6 @@ import time
 import os
 import shutil
 import tempfile
-import errno
-import stat as statmod
 
 
 # Reuse existing low-level helpers
@@ -43,10 +41,7 @@ from .post_process import (
     post_process_cache_identity,
     validate_post_process_spec,
 )
-from .storage import (
-    StorageCapacityError,
-    ensure_filesystem_capacity,
-)
+from .storage import ensure_filesystem_capacity
 
 
 from floability.performance_tracker import NullPerf as _NullPerf
@@ -69,8 +64,12 @@ class SourcePreflightError(RuntimeError):
     """Raised when a source cannot pass metadata or capacity preflight."""
 
 
-class DataWriteError(RuntimeError):
-    """Raised when storage is exhausted during an active transfer."""
+class SourceAcquisitionError(RuntimeError):
+    """Raised when one selected source cannot be downloaded or copied."""
+
+
+class DataProcessingError(RuntimeError):
+    """Raised when acquired data cannot be processed or published."""
 
 
 def _prepare_cache_base_dir(
@@ -1575,8 +1574,9 @@ def _fetch_unprocessed_to_target(
         _publish_staged_result(staged_result, target_path, build_dir, force=force)
         return True
     except Exception as error:
-        if verbose:
-            print(f"[data:fetch] Failed staging '{name}': {error}")
+        if isinstance(error, SourceAcquisitionError):
+            raise
+        print(f"[data:fetch] Failed staging '{name}': {error}")
         return False
     finally:
         if build_dir is not None:
@@ -1648,9 +1648,11 @@ def _fetch_post_processed_to_target(
             )
         return True
     except Exception as error:
-        if verbose:
-            print(f"[post-process] Failed for '{name}': {error}")
-        return False
+        if isinstance(error, SourceAcquisitionError):
+            raise
+        raise DataProcessingError(
+            f"Post-processing failed for '{name}': {error}"
+        ) from error
     finally:
         if build_dir is not None:
             shutil.rmtree(build_dir, ignore_errors=True)
@@ -1669,32 +1671,32 @@ def _download_item_to_staging(
     source_estimate: SourceEstimate,
     verbose: bool,
 ) -> Optional[Path]:
-    """Try item sources in order and return one completely downloaded path."""
-    sources = item.get("sources") if item.get("source_type") == "multi" else None
-    source_entries = sources or [item]
+    """Download one selected source into an isolated staging path."""
+    if (
+        item.get("source_type") != source_estimate.source_type
+        or str(item.get("source", "") or "") != source_estimate.source
+    ):
+        raise ValueError(
+            f"Selected source for '{name}' does not match its prepared estimate"
+        )
 
-    for index, source_entry in enumerate(source_entries, start=1):
-        attempt_dir = staging_dir / f"attempt-{index}"
-        attempt_dir.mkdir(parents=True)
-        attempt_path = attempt_dir / "result"
+    attempt_dir = staging_dir / "attempt-1"
+    attempt_dir.mkdir(parents=True)
+    attempt_path = attempt_dir / "result"
 
-        if verbose and len(source_entries) > 1:
-            print(
-                f"[data:download] Attempt {index}/{len(source_entries)} for "
-                f"'{name}': {source_entry.get('source')}"
-            )
+    if _download_source_to_path(
+        item,
+        attempt_path,
+        backpack_root,
+        verbose=verbose,
+    ):
+        return attempt_path
 
-        if _download_source_to_path(
-            source_entry,
-            attempt_path,
-            backpack_root,
-            verbose=verbose,
-        ):
-            return attempt_path
-
-        shutil.rmtree(attempt_dir, ignore_errors=True)
-
-    return None
+    shutil.rmtree(attempt_dir, ignore_errors=True)
+    raise SourceAcquisitionError(
+        f"failed to acquire {source_estimate.source_type} source "
+        f"{source_estimate.source!r}"
+    )
 
 
 def _publish_staged_result(
@@ -1719,6 +1721,28 @@ def _publish_staged_result(
         if backup_path.exists() or backup_path.is_symlink():
             backup_path.rename(target_path)
         raise
+
+
+def _source_entries_for_item(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return the ordered source attempts configured for one data item."""
+    if item.get("source_type") == "multi":
+        return list(item.get("sources") or [])
+    return [item]
+
+
+def _item_for_source_attempt(
+    item: Dict[str, Any], source_entry: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Return the data item configured to use exactly one selected source."""
+    attempt_item = dict(item)
+    attempt_item.pop("sources", None)
+    attempt_item["source_type"] = source_entry.get("source_type")
+    attempt_item["source"] = source_entry.get("source")
+    if "source_object_type" in source_entry:
+        attempt_item["source_object_type"] = source_entry["source_object_type"]
+    else:
+        attempt_item.pop("source_object_type", None)
+    return attempt_item
 
 
 def _fetch_single_item(
@@ -1760,79 +1784,108 @@ def _fetch_single_item(
             )
         return None
 
-    try:
-        source_estimate = _prepare_source_estimate(
-            item,
-            backpack_root,
-            name=name,
-            perf=perf,
-            verbose=verbose,
-        )
-    except SourcePreflightError as error:
-        print(f"[data:fetch] Cannot prepare source for '{name}': {error}")
-        return None
+    source_errors: List[str] = []
+    source_entries = _source_entries_for_item(item)
 
-    if data_cache_mode != "off" and cache_base_dir is not None:
-        perf.start_timer(f"total_lookup_{name}")
+    for index, source_entry in enumerate(source_entries, start=1):
+        source = str(source_entry.get("source", "") or "")
+        if verbose and len(source_entries) > 1:
+            print(
+                f"[data:fetch] Preparing source {index}/{len(source_entries)} "
+                f"for '{name}': {source}"
+            )
 
-        cache_ctx = _prepare_cache_context(
-            item,
-            backpack_root,
-            source_estimate=source_estimate,
-            cache_lookup_mode=cache_lookup_mode,
-            perf=perf,
-            verbose=verbose,
-        )
-
-        cache_result = _get_or_build_cache_entry(
-            item,
-            backpack_root,
-            Path(cache_base_dir),
-            cache_ctx=cache_ctx,
-            source_estimate=source_estimate,
-            data_cache_mode=data_cache_mode,
-            force_data_cache=force_data_cache,
-            cache_lookup_mode=cache_lookup_mode,
-            perf=perf,
-            verbose=verbose,
-        )
-
-        perf.end_timer(f"total_lookup_{name}", f"Total cache lookup for '{name}'")
-
-        if cache_result is not None:
-            cache_dir, _cache_meta = cache_result
-            if _materialize_cache_entry_to_target(
+        try:
+            source_estimate = _prepare_source_estimate(
                 item,
-                cache_dir,
+                backpack_root,
+                source_entry=source_entry,
+                name=name,
+                perf=perf,
+                verbose=verbose,
+            )
+        except (OSError, ValueError, SourcePreflightError) as error:
+            source_errors.append(f"{source or '<missing source>'}: {error}")
+            continue
+
+        attempt_item = _item_for_source_attempt(item, source_entry)
+
+        try:
+            if data_cache_mode != "off" and cache_base_dir is not None:
+                perf.start_timer(f"total_lookup_{name}")
+                try:
+                    cache_ctx = _prepare_cache_context(
+                        item,
+                        backpack_root,
+                        source_estimate=source_estimate,
+                        cache_lookup_mode=cache_lookup_mode,
+                        perf=perf,
+                        verbose=verbose,
+                    )
+
+                    cache_result = _get_or_build_cache_entry(
+                        attempt_item,
+                        backpack_root,
+                        Path(cache_base_dir),
+                        cache_ctx=cache_ctx,
+                        source_estimate=source_estimate,
+                        data_cache_mode=data_cache_mode,
+                        force_data_cache=force_data_cache,
+                        cache_lookup_mode=cache_lookup_mode,
+                        perf=perf,
+                        verbose=verbose,
+                    )
+                finally:
+                    perf.end_timer(
+                        f"total_lookup_{name}",
+                        f"Total cache lookup for '{name}'",
+                    )
+
+                if cache_result is not None:
+                    cache_dir, _cache_meta = cache_result
+                    if _materialize_cache_entry_to_target(
+                        item,
+                        cache_dir,
+                        target_path,
+                        data_cache_mode=data_cache_mode,
+                        perf=perf,
+                        verbose=verbose,
+                    ):
+                        if _out_cache_dirs is not None:
+                            _out_cache_dirs.append(str(cache_dir))
+                        if verbose:
+                            print(f"[data:fetch] Finished cached fetch for '{name}'")
+                        return item
+
+                    if verbose:
+                        print(
+                            f"[data:fetch] Cache materialization failed for "
+                            f"'{name}', falling back to direct fetch"
+                        )
+
+            if _fetch_direct_to_target(
+                attempt_item,
                 target_path,
-                data_cache_mode=data_cache_mode,
+                backpack_root,
+                source_estimate=source_estimate,
+                force=force,
                 perf=perf,
                 verbose=verbose,
             ):
-                if _out_cache_dirs is not None:
-                    _out_cache_dirs.append(str(cache_dir))
                 if verbose:
-                    print(f"[data:fetch] Finished cached fetch for '{name}'")
+                    print(f"[data:fetch] Finished direct fetch for '{name}'")
                 return item
 
-            if verbose:
-                print(f"[data:fetch] Cache materialization failed for '{name}', falling back to direct fetch")
+            return None
+        except SourceAcquisitionError as error:
+            source_errors.append(f"{source or '<missing source>'}: {error}")
+            continue
+        except DataProcessingError as error:
+            print(f"[post-process] {error}")
+            return None
 
-    if _fetch_direct_to_target(
-        item,
-        target_path,
-        backpack_root,
-        source_estimate=source_estimate,
-        force=force,
-        perf=perf,
-        verbose=verbose,
-    ):
-        if verbose:
-            print(f"[data:fetch] Finished direct fetch for '{name}'")
-        return item
-
-    if verbose:
-        print(f"[data:fetch] FAILED '{name}'")
+    details = "; ".join(source_errors) if source_errors else "no sources configured"
+    print(f"[data:fetch] Could not acquire a source for '{name}': {details}")
     return None
 
 
@@ -2172,127 +2225,136 @@ def _prepare_source_estimate(
     item: Dict[str, Any],
     backpack_root: Path,
     *,
+    source_entry: Dict[str, Any],
     name: str,
     perf: Optional[Any] = None,
     verbose: bool = False,
 ) -> SourceEstimate:
-    """Inspect one usable source and estimate the storage needed to fetch it."""
-    source_entries = (
-        item.get("sources", [])
-        if item.get("source_type") == "multi"
-        else [item]
-    )
-    errors: List[str] = []
+    """Inspect one selected source and estimate the storage needed to fetch it."""
+    source_type = str(source_entry.get("source_type", "") or "")
+    source = str(source_entry.get("source", "") or "")
 
-    for source_entry in source_entries:
-        source_type = str(source_entry.get("source_type", "") or "")
-        source = str(source_entry.get("source", "") or "")
+    if source_type in ("fs", "backpack"):
+        source_path = Path(source)
+        if not source_path.is_absolute():
+            source_path = (backpack_root / source_path).resolve()
 
-        try:
-            if source_type in ("fs", "backpack"):
-                source_path = Path(source)
-                if not source_path.is_absolute():
-                    source_path = (backpack_root / source_path).resolve()
+        from .fingerprint import compute_fingerprint
 
-                from .fingerprint import compute_fingerprint
-
-                fingerprint = compute_fingerprint(
-                    str(source_path), mode="meta", verbose=verbose
-                )
-                parameters = fingerprint.get("params", {})
-                object_type = "directory" if source_path.is_dir() else "file"
-                required_bytes = int(
-                    parameters.get("total_size", parameters.get("size", 0)) or 0
-                )
-                required_entries = int(
-                    parameters.get("file_count", 1) or 0
-                )
-                metadata: Dict[str, Any] = {
-                    "ok": True,
-                    "object_type": object_type,
-                    "size": required_bytes if object_type == "file" else None,
-                    "total_size": (
-                        required_bytes if object_type == "directory" else None
-                    ),
-                    "file_count": (
-                        required_entries if object_type == "directory" else None
-                    ),
-                    "source_fingerprint": fingerprint,
-                }
-                size_basis = "local metadata fingerprint"
-            elif source_type == "http":
-                perf = perf or _NullPerf()
-                perf.start_timer(f"metadata_fetch_{name}")
-                http_metadata = http_file_metadata(source)
-                perf.end_timer(
-                    f"metadata_fetch_{name}",
-                    f"HTTP metadata fetch for '{name}'",
-                )
-                if not http_metadata.get("exists"):
-                    raise SourcePreflightError(
-                        str(http_metadata.get("raw", {}).get("error") or "not found")
-                    )
-                object_type = "file"
-                required_bytes = int(http_metadata.get("size") or 0)
-                required_entries = 1
-                metadata = {
-                    **http_metadata,
-                    "ok": True,
-                    "object_type": object_type,
-                }
-                size_basis = (
-                    "remote metadata"
-                    if http_metadata.get("size") is not None
-                    else "unknown"
-                )
-            else:
-                metadata = _fetch_source_metadata_for_item(
-                    source_entry,
-                    name=name,
-                    perf=perf,
-                    verbose=verbose,
-                ) or {}
-                if not metadata.get("ok"):
-                    raise SourcePreflightError(
-                        str(metadata.get("error") or "metadata unavailable")
-                    )
-                object_type = str(metadata.get("object_type") or "file")
-                if object_type == "directory":
-                    required_bytes = int(metadata.get("total_size") or 0)
-                    required_entries = int(metadata.get("file_count") or 0)
-                else:
-                    required_bytes = int(metadata.get("size") or 0)
-                    required_entries = 1
-                size_basis = (
-                    "remote metadata"
-                    if (
-                        metadata.get("total_size") is not None
-                        or metadata.get("size") is not None
-                    )
-                    else "unknown"
-                )
-
-            if item.get("source_type") == "multi":
-                metadata = {
-                    **metadata,
-                    "used_source": source,
-                    "used_source_type": source_type,
-                }
-
-            return SourceEstimate(
-                source_type=source_type,
-                source=source,
-                object_type=object_type,
-                required_bytes=required_bytes,
-                required_entries=required_entries,
-                size_basis=size_basis,
-                metadata=metadata,
+        fingerprint = compute_fingerprint(
+            str(source_path), mode="meta", verbose=verbose
+        )
+        parameters = fingerprint.get("params", {})
+        object_type = "directory" if source_path.is_dir() else "file"
+        required_bytes = int(
+            parameters.get("total_size", parameters.get("size", 0)) or 0
+        )
+        required_entries = int(parameters.get("file_count", 1) or 0)
+        metadata: Dict[str, Any] = {
+            "ok": True,
+            "object_type": object_type,
+            "size": required_bytes if object_type == "file" else None,
+            "total_size": required_bytes if object_type == "directory" else None,
+            "file_count": required_entries if object_type == "directory" else None,
+            "source_fingerprint": fingerprint,
+        }
+        size_basis = "local metadata fingerprint"
+    elif source_type == "http":
+        perf = perf or _NullPerf()
+        perf.start_timer(f"metadata_fetch_{name}")
+        http_metadata = http_file_metadata(source)
+        perf.end_timer(
+            f"metadata_fetch_{name}",
+            f"HTTP metadata fetch for '{name}'",
+        )
+        if not http_metadata.get("exists"):
+            raise SourcePreflightError(
+                str(http_metadata.get("raw", {}).get("error") or "not found")
             )
-        except (OSError, ValueError, SourcePreflightError) as error:
-            errors.append(f"{source or '<missing source>'}: {error}")
+        object_type = "file"
+        metadata = {
+            **http_metadata,
+            "ok": True,
+            "object_type": object_type,
+        }
+        required_bytes, size_basis = _resolve_required_download_bytes(
+            item,
+            metadata.get("size"),
+            name=name,
+        )
+        required_entries = 1
+    else:
+        metadata = _fetch_source_metadata_for_item(
+            source_entry,
+            name=name,
+            perf=perf,
+            verbose=verbose,
+        ) or {}
+        if not metadata.get("ok"):
+            raise SourcePreflightError(
+                str(metadata.get("error") or "metadata unavailable")
+            )
+        object_type = str(metadata.get("object_type") or "file")
+        reported_size = (
+            metadata.get("total_size")
+            if object_type == "directory"
+            else metadata.get("size")
+        )
+        required_bytes, size_basis = _resolve_required_download_bytes(
+            item,
+            reported_size,
+            name=name,
+        )
+        required_entries = (
+            int(metadata.get("file_count") or 0)
+            if object_type == "directory"
+            else 1
+        )
 
-    details = "; ".join(errors) if errors else "no sources were configured"
-    raise SourcePreflightError(details)
+    if item.get("source_type") == "multi":
+        metadata = {
+            **metadata,
+            "used_source": source,
+            "used_source_type": source_type,
+        }
+
+    return SourceEstimate(
+        source_type=source_type,
+        source=source,
+        object_type=object_type,
+        required_bytes=required_bytes,
+        required_entries=required_entries,
+        size_basis=size_basis,
+        metadata=metadata,
+    )
+
+
+def _resolve_required_download_bytes(
+    item: Dict[str, Any],
+    reported_size: Any,
+    *,
+    name: str,
+) -> tuple[int, str]:
+    """Resolve required download bytes from metadata or configured expectation."""
+    if isinstance(reported_size, int) and not isinstance(reported_size, bool):
+        if reported_size < 0:
+            raise SourcePreflightError(
+                f"source metadata reported a negative size for '{name}'"
+            )
+        return reported_size, "remote metadata"
+
+    expected_size = item.get("expected_size")
+    if isinstance(expected_size, int) and not isinstance(expected_size, bool):
+        if expected_size < 0:
+            raise SourcePreflightError(
+                f"expected_size for '{name}' must be zero or greater"
+            )
+        return expected_size, "configured expected_size"
+
+    raise SourcePreflightError(
+        f"source metadata did not report a size for '{name}'; "
+        "add an integer expected_size to this data item"
+    )
 
 
 def _fetch_source_metadata_for_item(
@@ -2561,7 +2623,6 @@ def _build_cache_entry(
     so we avoid redundant computation here.
     """
     perf = perf or _NullPerf()
-    stype = item.get("source_type")
     target_location = item.get("target_location") or item.get("target_path")
     if not target_location:
         if verbose:
@@ -2590,24 +2651,15 @@ def _build_cache_entry(
         print(f"[cache] Downloading to: {cache_file}")
 
     try:
-        if stype == "multi":
-            success = any(
-                _download_source_to_path(src_entry, cache_file, backpack_root, verbose)
-                for src_entry in item.get("sources", [])
+        if not _download_source_to_path(item, cache_file, backpack_root, verbose):
+            raise SourceAcquisitionError(
+                f"failed to acquire {source_estimate.source_type} source "
+                f"{source_estimate.source!r}"
             )
-            if not success:
-                if verbose:
-                    print("[cache] ERROR: All sources failed")
-                return False
-        else:
-            if not _download_source_to_path(item, cache_file, backpack_root, verbose):
-                if verbose:
-                    print("[cache] ERROR: Download failed")
-                return False
 
         # Fingerprint only for local sources (fs/backpack), always "meta" mode.
         source_fingerprint = None
-        if stype in ("fs", "backpack"):
+        if item.get("source_type") in ("fs", "backpack"):
             try:
                 from .fingerprint import compute_fingerprint
 
@@ -2642,6 +2694,8 @@ def _build_cache_entry(
             print(f"[cache] Cache entry built: source_key={source_key}")
         return True
 
+    except SourceAcquisitionError:
+        raise
     except Exception as e:
         if verbose:
             print(f"[cache] ERROR building cache entry: {e}")
@@ -2734,9 +2788,11 @@ def _build_post_processed_cache_entry(
             )
         return True
     except Exception as error:
-        if verbose:
-            print(f"[cache] Failed building extracted cache for '{name}': {error}")
-        return False
+        if isinstance(error, SourceAcquisitionError):
+            raise
+        raise DataProcessingError(
+            f"Post-processing failed for '{name}': {error}"
+        ) from error
     finally:
         if build_dir is not None:
             shutil.rmtree(build_dir, ignore_errors=True)

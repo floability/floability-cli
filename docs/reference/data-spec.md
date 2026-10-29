@@ -160,6 +160,11 @@ Extraction always creates a directory at `target_location`. The archive's
 internal layout is preserved below that directory, whether the archive contains
 one file, one top-level directory, or a nested directory tree.
 
+Before downloading, Floability uses source metadata to estimate the required
+filesystem space. If the source does not report its size, configure an integer
+`expected_size` on the data item. Floability rejects the fetch before transfer
+when neither value is available.
+
 The optional limits are checked before extraction:
 
 - `max_extracted_bytes` limits the total declared uncompressed size; and

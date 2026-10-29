@@ -120,7 +120,9 @@ def test_uncached_post_process_tries_next_source_only_after_download_failure(
 
 
 @pytest.mark.unit
-def test_uncached_post_process_does_not_fallback_after_download(tmp_path: Path):
+def test_uncached_post_process_does_not_fallback_after_download(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
     invalid_archive = tmp_path / "invalid.zip"
     invalid_archive.write_bytes(b"not a ZIP archive")
     valid_archive = tmp_path / "valid.zip"
@@ -147,6 +149,7 @@ def test_uncached_post_process_does_not_fallback_after_download(tmp_path: Path):
     assert result is None
     assert not (workflow / "data/result").exists()
     assert not (workflow / "data/.floability-data-staging").exists()
+    assert "Invalid ZIP archive" in capsys.readouterr().out
 
 
 @pytest.mark.unit
@@ -328,6 +331,30 @@ def test_cached_fetch_builds_and_materializes_extracted_result(
     assert metadata["post_process"]["result_path"] == "cached_data/result"
     assert metadata["post_process"]["file_count"] == 1
     assert (metadata_files[0].parent / "cached_data/result").is_dir()
+
+
+@pytest.mark.unit
+def test_cached_post_process_failure_is_visible_without_verbose(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    archive_path = tmp_path / "invalid.zip"
+    archive_path.write_bytes(b"not a ZIP archive")
+    item = {
+        "name": "archive",
+        "source_type": "fs",
+        "source": str(archive_path),
+        "target_location": "data/result",
+        "post_process": {"operation": "unzip"},
+    }
+
+    assert _fetch_single_item(
+        item,
+        tmp_path,
+        data_cache_mode="symlink",
+        cache_base_dir=tmp_path / "cache",
+        target_prefix=tmp_path / "workflow",
+    ) is None
+    assert "Invalid ZIP archive" in capsys.readouterr().out
 
 
 @pytest.mark.unit
