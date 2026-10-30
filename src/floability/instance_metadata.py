@@ -317,6 +317,8 @@ def persist_prepared_environment(
     environment_spec: Optional[str],
     worker_environment_spec: Optional[str],
     per_instance_env: bool,
+    environment_plan: Optional[Dict[str, Any]] = None,
+    worker_environment_plan: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Persist the complete, rebuildable environment preparation result.
 
@@ -369,6 +371,8 @@ def persist_prepared_environment(
                 "env_dir": resolved_env_dir,
                 "manager_pack": resolved_manager_pack,
                 "worker_pack": resolved_worker_pack,
+                "manager_plan": environment_plan,
+                "worker_plan": worker_environment_plan or environment_plan,
             },
         },
         merge=True,
@@ -398,4 +402,6 @@ def read_prepared_environment(metadata: Dict[str, Any]) -> Dict[str, Any]:
         or environment.get("manager_pack"),
         "worker_environment_pack": metadata.get("worker_environment_pack")
         or environment.get("worker_pack"),
+        "environment_plan": environment.get("manager_plan"),
+        "worker_environment_plan": environment.get("worker_plan"),
     }

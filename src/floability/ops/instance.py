@@ -176,16 +176,18 @@ def _create_instance_impl(args):
 
         per_instance_env = getattr(args, "per_instance_env", False)
         worker_environment_spec = getattr(args, "worker_environment", None)
-        env_dir, worker_environment_pack, manager_environment_pack = (
-            setup_manager_and_worker_envs(
-                environment_spec=env_spec,
-                worker_environment_spec=worker_environment_spec,
-                base_dir=args.base_dir,
-                instance_root=instance_root,
-                per_instance_env=per_instance_env,
-                perf=perf if perf_enabled else None,
-            )
+        setup_result = setup_manager_and_worker_envs(
+            environment_spec=env_spec,
+            worker_environment_spec=worker_environment_spec,
+            base_dir=args.base_dir,
+            instance_root=instance_root,
+            per_instance_env=per_instance_env,
+            environment_creator=getattr(args, "environment_creator", "auto"),
+            perf=perf if perf_enabled else None,
         )
+        env_dir, worker_environment_pack, manager_environment_pack = setup_result
+        manager_plan = getattr(setup_result, "manager_plan", None)
+        worker_plan = getattr(setup_result, "worker_plan", None)
 
         persist_prepared_environment(
             metadata_file,
@@ -195,6 +197,8 @@ def _create_instance_impl(args):
             environment_spec=env_spec,
             worker_environment_spec=worker_environment_spec,
             per_instance_env=per_instance_env,
+            environment_plan=manager_plan.as_metadata() if manager_plan else None,
+            worker_environment_plan=worker_plan.as_metadata() if worker_plan else None,
         )
         finalize_instance_preparation(metadata_file, success=True)
     except BaseException as error:

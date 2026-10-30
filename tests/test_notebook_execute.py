@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from floability import instance_lock_manager, jupyter_runner
+from floability.environment_toolchain import build_prefix_run_command
 from floability.cleanup import CleanupManager
 from floability.ops import run as run_ops
 
@@ -631,7 +632,6 @@ def test_worker_startup_requires_factory_process(monkeypatch, tmp_path):
 def test_execute_notebook_uses_selected_environment(monkeypatch, tmp_path):
     commands = []
     cleanup = _Cleanup()
-    monkeypatch.setenv("CONDA_EXE", "/opt/conda/bin/conda")
     monkeypatch.setattr(
         jupyter_runner.subprocess,
         "Popen",
@@ -649,19 +649,17 @@ def test_execute_notebook_uses_selected_environment(monkeypatch, tmp_path):
 
     assert result is True
     assert commands == [
-        [
-            "/opt/conda/bin/conda",
-            "run",
-            "--prefix",
+        build_prefix_run_command(
             "/backpack/env",
-            "--no-capture-output",
+            [
             "/backpack/env/bin/jupyter-nbconvert",
             "--to",
             "notebook",
             "--execute",
             "--inplace",
             "workflow.ipynb",
-        ]
+            ],
+        )
     ]
     assert len(cleanup.subprocesses) == 1
     assert cleanup.subprocesses[0].pid == 1234
@@ -672,7 +670,6 @@ def test_start_jupyterlab_uses_dedicated_binary_without_lab_argument(
     monkeypatch, tmp_path
 ):
     launches = []
-    monkeypatch.setenv("CONDA_EXE", "/opt/conda/bin/conda")
     _Thread.instances.clear()
     monkeypatch.setattr(
         jupyter_runner.subprocess,
@@ -693,21 +690,19 @@ def test_start_jupyterlab_uses_dedicated_binary_without_lab_argument(
 
     assert process.pid == 1234
     command, popen_kwargs = launches[0]
-    assert command == [
-        "/opt/conda/bin/conda",
-        "run",
-        "--prefix",
+    assert command == build_prefix_run_command(
         "/backpack/env",
-        "--no-capture-output",
-        "/backpack/env/bin/jupyter-lab",
-        "--no-browser",
-        "--port",
-        "8899",
-        "--ip",
-        "0.0.0.0",
-        "--allow-root",
-        "workflow.ipynb",
-    ]
+        [
+            "/backpack/env/bin/jupyter-lab",
+            "--no-browser",
+            "--port",
+            "8899",
+            "--ip",
+            "0.0.0.0",
+            "--allow-root",
+            "workflow.ipynb",
+        ],
+    )
     assert popen_kwargs["env"] == {"VINE_MANAGER_NAME": "test-manager"}
     assert popen_kwargs["start_new_session"] is True
     assert _Thread.instances[0].options["daemon"] is True

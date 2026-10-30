@@ -6,7 +6,8 @@ import os
 import time
 import re
 
-from .utils import get_conda_executable, get_system_information
+from .environment_toolchain import build_prefix_run_command
+from .utils import get_system_information
 
 
 def print_instructions_for_accessing_jupyter(port, token, stdout_file):
@@ -90,15 +91,10 @@ def start_jupyterlab(
 
     if conda_env_dir:
         jupyterlab_path = os.path.join(conda_env_dir, "bin", "jupyter-lab")
-        cmd = [
-            get_conda_executable(),
-            "run",
-            "--prefix",
+        cmd = build_prefix_run_command(
             conda_env_dir,
-            "--no-capture-output",
-            jupyterlab_path,
-            *jupyterlab_args,
-        ]
+            [jupyterlab_path, *jupyterlab_args],
+        )
     else:
         cmd = ["jupyter", "lab", *jupyterlab_args]
 
@@ -107,9 +103,8 @@ def start_jupyterlab(
 
         print(f"[jupyter] JupyterLab stdout: {os.path.abspath(stdout_file)}")
 
-        # note: conda run opens a temporary bash process to run the command.
-        # This bash process is the parent of the jupyterlab process.
-        # os.setsid creates a new process group so cleanup.py can kill the entire group.
+        # The prefix launcher uses a short-lived shell as JupyterLab's parent.
+        # A new process group lets cleanup.py terminate the complete tree.
         with open(stdout_file, "w") as stdout:
             proc = subprocess.Popen(
                 cmd,
@@ -161,15 +156,10 @@ def execute_notebook(
 
     if conda_env_dir:
         nbconvert_path = os.path.join(conda_env_dir, "bin", "jupyter-nbconvert")
-        cmd = [
-            get_conda_executable(),
-            "run",
-            "--prefix",
+        cmd = build_prefix_run_command(
             conda_env_dir,
-            "--no-capture-output",
-            nbconvert_path,
-            *nbconvert_args,
-        ]
+            [nbconvert_path, *nbconvert_args],
+        )
     else:
         cmd = ["jupyter", "nbconvert", *nbconvert_args]
 

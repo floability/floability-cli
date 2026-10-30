@@ -45,6 +45,15 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
         "--worker-environment",
         help="Path to worker-environment.yml (optional).",
     )
+    parser.add_argument(
+        "--environment-creator",
+        choices=["auto", "conda", "pixi"],
+        default="auto",
+        help=(
+            "Tool used to create the Python environment: auto preserves Conda "
+            "when available and otherwise uses Pixi (default: auto)."
+        ),
+    )
 
     parser.add_argument(
         "--jupyter-port",
@@ -176,13 +185,13 @@ def add_execution_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--env-vars",
         required=False,
-        help="Comma-separated list of KEY=VALUE pairs to set inside the conda environment.",
+        help="Comma-separated KEY=VALUE pairs to set in workflow processes.",
     )
     
     parser.add_argument(
         "--per-instance-env",
         action="store_true",
-        help="Use a separate conda environment for each instance (default: use shared environment).",
+        help="Use a separate Python environment for each instance (default: use shared environment).",
     )
 
     # vine_factory specific arguments

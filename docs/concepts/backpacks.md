@@ -71,6 +71,23 @@ select a unique filename with `--entrypoint`.
 
 ### Software (`software/environment.yml`)
 
+Floability treats current backpack software specifications as Python
+environments. Conda remains the default creator when it is available. To use
+Pixi's faster solver and installer with the same file, pass
+`--environment-creator pixi` to `run`, `execute`, or `instance create`.
+Floability then imports the YAML with Pixi and still builds the portable worker
+archive with `conda-pack`.
+
+The initial Pixi adapter rejects top-level `variables:` and pip entries such as
+`-r requirements.txt`, index options, editable installs, and bare VCS URLs.
+Use `--environment-creator conda` for those specifications. This does not
+affect Floability's per-run manager variables or values supplied with
+`--env-vars`.
+
+On systems with small home quotas, set `PIXI_CACHE_DIR` to a directory on the
+same filesystem as `--base-dir`. Floability otherwise places Pixi's package
+cache below the selected base directory.
+
 Defines the execution environment.
 Use a standard Conda environment file and pin critical dependencies where needed.
 

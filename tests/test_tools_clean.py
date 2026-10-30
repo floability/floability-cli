@@ -76,6 +76,17 @@ def _make_environment(base_dir: Path, name: str) -> tuple[Path, Path]:
     return env_dir, archive
 
 
+def _make_pixi_environment(base_dir: Path, name: str) -> tuple[Path, Path, Path]:
+    cache_root = base_dir / "flo_common_env" / "extracted_envs" / name
+    env_dir = cache_root / ".pixi" / "envs" / "default"
+    archive = base_dir / "flo_common_env" / "tarballs" / f"{name}.tar.gz"
+    (env_dir / "bin").mkdir(parents=True)
+    (env_dir / "bin" / "python").write_text("executable")
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    archive.write_bytes(b"archive")
+    return cache_root, env_dir, archive
+
+
 def _register_run(
     instance: Path,
     base_dir: Path,
@@ -134,6 +145,61 @@ def test_data_and_env_removes_unreferenced_entries(tmp_path, monkeypatch):
     assert not removed_data.exists()
     assert not removed_env.exists()
     assert not removed_archive.exists()
+
+
+def test_env_cleanup_handles_nested_pixi_env_and_owned_package_cache(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    base_dir = tmp_path / "base"
+    base_dir.mkdir()
+    kept_root, kept_env, kept_archive = _make_pixi_environment(
+        base_dir, "env_pixi_kept"
+    )
+    removed_root, _removed_env, removed_archive = _make_pixi_environment(
+        base_dir, "env_pixi_removed"
+    )
+    pixi_package_cache = base_dir / "flo_common_env" / "tool_cache" / "pixi"
+    (pixi_package_cache / "packages").mkdir(parents=True)
+    (pixi_package_cache / "packages" / "cached-package").write_text("cached")
+    pixi_package_cache.chmod(0o555)
+    (pixi_package_cache / "packages").chmod(0o555)
+
+    instance = _write_instance(
+        base_dir,
+        "fi_kept",
+        env_dir=kept_env,
+        env_archive=kept_archive,
+    )
+    _register_run(instance, base_dir, ran_at="2026-08-25T01:00:00Z")
+
+    result = tools_ops.run_tools_command(
+        _args(base_dir=str(base_dir), mode="env-only", yes=True, jobs=2)
+    )
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert kept_root.is_dir()
+    assert kept_archive.is_file()
+    assert not removed_root.exists()
+    assert not removed_archive.exists()
+    assert not pixi_package_cache.exists()
+    assert "1 env tool cache(s)" in output
+
+
+def test_data_only_preserves_owned_pixi_package_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    base_dir = tmp_path / "base"
+    base_dir.mkdir()
+    pixi_package_cache = base_dir / "flo_common_env" / "tool_cache" / "pixi"
+    pixi_package_cache.mkdir(parents=True)
+
+    result = tools_ops.run_tools_command(
+        _args(base_dir=str(base_dir), mode="data-only", yes=True, jobs=1)
+    )
+
+    assert result == 0
+    assert pixi_package_cache.is_dir()
 
 
 def test_keep_last_uses_last_run_and_preserves_its_dependencies(tmp_path, monkeypatch):
