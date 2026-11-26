@@ -85,8 +85,8 @@ class InstanceCommand(BaseCommand):
             choices=["auto", "conda", "pixi"],
             default="auto",
             help=(
-                "Tool used to create the Python environment: auto preserves "
-                "Conda when available and otherwise uses Pixi (default: auto)."
+                "Tool used to create the Python environment: auto selects Conda "
+                "(default: auto). Conda is still required at runtime."
             ),
         )
         create_parser.add_argument(

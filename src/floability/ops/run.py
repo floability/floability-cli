@@ -17,6 +17,7 @@ from ..performance_tracker import PerformanceTracker
 from ..environment_manager import setup_manager_and_worker_envs
 from ..environment_toolchain import (
     build_prefix_run_command,
+    conda_run_environment,
     format_prefix_run_command,
 )
 from ..workers_manager import (
@@ -1514,6 +1515,7 @@ def _get_env_python_version(prefix: str) -> str:
         command,
         capture_output=True,
         text=True,
+        env=conda_run_environment(),
         check=True,
     )
     return result.stdout.strip()
@@ -1535,19 +1537,7 @@ def _build_instance_env(
       - Correct Python version detection from target conda prefix
     """
 
-    env = os.environ.copy()
-
-    # Do not leak the currently activated environment into subprocesses that
-    # will be launched through the selected prefix.
-    for key in (
-        "CONDA_PREFIX",
-        "CONDA_DEFAULT_ENV",
-        "CONDA_PROMPT_MODIFIER",
-        "CONDA_SHLVL",
-        "_CE_CONDA",
-        "_CE_M",
-    ):
-        env.pop(key, None)
+    env = conda_run_environment()
 
     # Always resolve workflow tools from the selected backpack environment.
     # Keeping an already-active environment ahead of this prefix can make the

@@ -40,6 +40,7 @@ from .utils import (
 )
 from .environment_toolchain import (
     build_prefix_run_command,
+    conda_run_environment,
     format_prefix_run_command,
 )
 
@@ -243,16 +244,7 @@ def resolve_instance_worker_runtime(instance_path: Path) -> Tuple[str, Dict]:
 
     saved_args = metadata.get("cli_args") or {}
     manager_ports = metadata.get("manager_ports") or saved_args.get("manager_ports")
-    instance_env = os.environ.copy()
-    for key in (
-        "CONDA_PREFIX",
-        "CONDA_DEFAULT_ENV",
-        "CONDA_PROMPT_MODIFIER",
-        "CONDA_SHLVL",
-        "_CE_CONDA",
-        "_CE_M",
-    ):
-        instance_env.pop(key, None)
+    instance_env = conda_run_environment()
 
     instance_env["PATH"] = (
         str(env_dir / "bin") + os.pathsep + instance_env.get("PATH", "")

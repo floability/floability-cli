@@ -12,6 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SUPPORTED_ENVIRONMENT_CREATORS = ("auto", "conda", "pixi")
+_MISSING_CONDA_RUNNER = (
+    "Conda is required to launch Python environments, including those created "
+    "by Pixi. Activate the Floability environment or install conda into the "
+    "environment running Floability, then check 'floability --version --verbose'."
+)
 
 
 class EnvironmentToolResolutionError(RuntimeError):
@@ -163,8 +168,8 @@ def resolve_environment_plan(
 ) -> EnvironmentPlan:
     """Resolve a complete initial Python-environment toolchain.
 
-    The automatic policy intentionally preserves Conda when available. Pixi is
-    the fallback and can be requested explicitly.
+    Conda is the runtime launcher and the default creator. Pixi may be
+    selected for creation without changing how the prefix is launched.
     """
     preference = (creator_preference or "auto").strip().lower()
     if preference not in SUPPORTED_ENVIRONMENT_CREATORS:
@@ -178,35 +183,25 @@ def resolve_environment_plan(
         which=which,
         python_executable=python_executable,
     )
-    pixi = discover_pixi_executable(
-        environ=environ,
-        which=which,
-        home=home,
-        python_executable=python_executable,
-    )
+    if not conda:
+        raise EnvironmentToolResolutionError(_MISSING_CONDA_RUNNER)
 
-    if preference == "conda":
-        creator_family, creator_executable = "conda", conda
-    elif preference == "pixi":
-        creator_family, creator_executable = "pixi", pixi
-    elif conda:
-        creator_family, creator_executable = "conda", conda
-    else:
-        creator_family, creator_executable = "pixi", pixi
-
-    if not creator_executable:
-        if preference == "auto":
+    if preference == "pixi":
+        creator_family = "pixi"
+        creator_executable = discover_pixi_executable(
+            environ=environ,
+            which=which,
+            home=home,
+            python_executable=python_executable,
+        )
+        if not creator_executable:
             raise EnvironmentToolResolutionError(
-                "No supported Python environment creator was found. Floability "
-                "looked for Conda and Pixi. Install one of them, activate the "
-                "Floability environment, and verify with "
+                "Pixi was requested to create this Python environment, but no Pixi "
+                "executable was found. Add it to PATH and verify with "
                 "'floability --version --verbose'."
             )
-        raise EnvironmentToolResolutionError(
-            f"{creator_family.capitalize()} was requested to create this Python "
-            f"environment, but no {creator_family} executable was found. Add it "
-            "to PATH and verify with 'floability --version --verbose'."
-        )
+    else:
+        creator_family, creator_executable = "conda", conda
 
     packer_executable = discover_conda_pack_executable(
         which=which,
@@ -219,7 +214,10 @@ def resolve_environment_plan(
             "'floability --version --verbose'."
         )
 
-    creator_version = _probe_version(creator_executable, "--version")
+    conda_version = _probe_version(conda, "--version")
+    creator_version = conda_version
+    if creator_family == "pixi":
+        creator_version = _probe_version(creator_executable, "--version")
     packer_version = _probe_version(packer_executable, "--version")
     return EnvironmentPlan(
         environment_type="python",
@@ -245,9 +243,9 @@ def resolve_environment_plan(
         ),
         runner=EnvironmentTool(
             capability="run",
-            family="prefix-activation",
-            executable="/bin/bash",
-            version=None,
+            family="conda-run",
+            executable=conda,
+            version=conda_version,
         ),
     )
 
@@ -265,55 +263,43 @@ def print_environment_plan(plan: EnvironmentPlan, spec_path: str | Path) -> None
     print(f"[environment] Runtime       : {plan.runner.family}")
 
 
-_PREFIX_RUN_SCRIPT = r"""
-prefix=$1
-shift
-export CONDA_PREFIX="$prefix"
-export CONDA_DEFAULT_ENV="$prefix"
-export CONDA_SHLVL="${CONDA_SHLVL:-1}"
-export PATH="$prefix/bin${PATH:+:$PATH}"
-if [ -f "$prefix/conda-meta/state" ] && [ -x "$prefix/bin/python" ]; then
-    eval "$("$prefix/bin/python" -c '
-import json
-import pathlib
-import re
-import shlex
-import sys
-
-try:
-    state = json.loads(pathlib.Path(sys.argv[1]).read_text())
-except (OSError, ValueError):
-    state = {}
-for key, value in state.get("env_vars", {}).items():
-    if isinstance(key, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-        print(f"export {key}={shlex.quote(str(value))}")
-' "$prefix/conda-meta/state")"
-fi
-if [ -d "$prefix/etc/conda/activate.d" ]; then
-    for activation_script in "$prefix"/etc/conda/activate.d/*.sh; do
-        [ -e "$activation_script" ] || continue
-        . "$activation_script"
-    done
-fi
-exec "$@"
-""".strip()
-
-
 def build_prefix_run_command(
-    environment_prefix: str | os.PathLike[str], command: Sequence[str]
+    environment_prefix: str | os.PathLike[str],
+    command: Sequence[str],
+    *,
+    conda_executable: str | None = None,
 ) -> list[str]:
-    """Run an argv vector with prefix activation, without requiring Conda."""
+    """Use Conda to activate a prepared prefix, regardless of its creator."""
     if not command:
         raise ValueError("environment command must not be empty")
+    conda = conda_executable or discover_conda_executable()
+    if not conda:
+        raise EnvironmentToolResolutionError(_MISSING_CONDA_RUNNER)
+
     prefix = str(Path(environment_prefix).expanduser().resolve())
     return [
-        "/bin/bash",
-        "-c",
-        _PREFIX_RUN_SCRIPT,
-        "floability-prefix-run",
+        conda,
+        "run",
+        "--prefix",
         prefix,
+        "--no-capture-output",
         *[str(argument) for argument in command],
     ]
+
+
+def conda_run_environment() -> dict[str, str]:
+    """Copy the host environment without an inherited Conda activation stack."""
+    env = os.environ.copy()
+    for key in (
+        "CONDA_PREFIX",
+        "CONDA_DEFAULT_ENV",
+        "CONDA_PROMPT_MODIFIER",
+        "CONDA_SHLVL",
+        "_CE_CONDA",
+        "_CE_M",
+    ):
+        env.pop(key, None)
+    return env
 
 
 def format_prefix_run_command(

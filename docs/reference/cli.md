@@ -53,8 +53,8 @@ floability run --instance <instance-name-or-path>
 - `--environment PATH`: manager environment spec. Required for new instances unless auto-resolved from the backpack's `software/environment.yml`.
 - `--worker-environment PATH`: worker environment spec (optional; auto-resolved from `software/worker-environment.yml` if present)
 - `--environment-creator auto|conda|pixi`: select the tool that creates the
-  Python environment. `auto` keeps using Conda when available and otherwise
-  uses Pixi. An explicit selection never silently falls back.
+  Python environment. `auto` selects Conda. Select `pixi` explicitly to use
+  Pixi for creation; launching the prepared environment still uses Conda.
 - `--entrypoint FILENAME`: explicitly select the file that runs first from `workflow/`; normally unnecessary unless automatic selection is ambiguous
 
 Entrypoint discovery is recursive. `run` considers only `.ipynb` files;
@@ -165,7 +165,7 @@ Options:
 - `--environment PATH`: manager environment spec
 - `--worker-environment PATH`: worker environment spec
 - `--environment-creator auto|conda|pixi`: select the Python-environment
-  creator; `auto` prefers Conda when available
+  creator; `auto` selects Conda
 - `--per-instance-env`: extract a private environment inside the instance
   instead of using the shared environment cache
 - `--manager-name NAME`: TaskVine manager name (auto-generated if omitted)

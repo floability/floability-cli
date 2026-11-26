@@ -3,12 +3,17 @@
 ## Prerequisites
 
 Floability requires a current Conda installation with `conda env create` and
-`conda run`. The CLI does not currently enforce a specific minimum Conda
-version. We recommend
+`conda run` on the machine running the CLI. Pixi is an optional environment
+creator; Floability still uses Conda to launch the prepared environment. You
+do not need Conda installed on TaskVine worker nodes. The CLI does not
+currently enforce a specific minimum Conda version. We recommend
 [Miniforge](https://github.com/conda-forge/miniforge) — it uses
 conda-forge by default and gives the best compatibility with Floability's
 dependencies. [Miniconda](https://docs.conda.io/en/latest/miniconda.html)
 also works.
+
+If Floability runs inside a Pixi workspace and no existing Conda executable is
+available, add `conda` to that workspace, not to the backpack.
 
 Check your current version:
 ```bash

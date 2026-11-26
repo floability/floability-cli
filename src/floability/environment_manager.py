@@ -20,6 +20,7 @@ import yaml  # pyyaml needed
 from .environment_toolchain import (
     EnvironmentPlan,
     build_prefix_run_command,
+    conda_run_environment,
     print_environment_plan,
     resolve_environment_plan,
 )
@@ -686,7 +687,9 @@ def _create_conda_env(
                 build_prefix_run_command(
                     env_path,
                     ["bash", post_install_script],
+                    conda_executable=conda_executable,
                 ),
+                env=conda_run_environment(),
                 check=False,
             )
             if result.returncode != 0:

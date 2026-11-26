@@ -103,8 +103,7 @@ def start_jupyterlab(
 
         print(f"[jupyter] JupyterLab stdout: {os.path.abspath(stdout_file)}")
 
-        # The prefix launcher uses a short-lived shell as JupyterLab's parent.
-        # A new process group lets cleanup.py terminate the complete tree.
+        # A new process group lets cleanup.py stop conda run and its children.
         with open(stdout_file, "w") as stdout:
             proc = subprocess.Popen(
                 cmd,

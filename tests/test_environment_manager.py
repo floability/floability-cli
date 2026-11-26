@@ -30,7 +30,7 @@ def _conda_plan() -> EnvironmentPlan:
         artifact_format="conda-pack",
         packer=EnvironmentTool("pack", "conda-pack", "/tools/conda-pack", "test"),
         unpacker=EnvironmentTool("unpack", "conda-unpack", None),
-        runner=EnvironmentTool("run", "prefix-activation", "/bin/bash"),
+        runner=EnvironmentTool("run", "conda-run", "/tools/conda", "test"),
     )
 
 
